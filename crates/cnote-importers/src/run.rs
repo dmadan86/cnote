@@ -286,11 +286,12 @@ async fn upsert(ctx: &mut Ctx, job: &mut Job, rec: &Rec, report: &mut Report) ->
                     title: rec.title.clone(),
                     parent_id: None,
                     content_md: Some(rec.body_md.clone()),
-                    types: if rec.item.is_some() {
-                        vec!["item".into()]
-                    } else {
-                        vec![]
-                    },
+                    // Same convention as cnote-projects item.create: the note's type is the item type.
+                    types: rec
+                        .item
+                        .as_ref()
+                        .map(|i| vec![i.item_type.clone()])
+                        .unwrap_or_default(),
                     owner_id: None,
                     verify_by: None,
                 },

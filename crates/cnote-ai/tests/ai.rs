@@ -11,6 +11,9 @@ use uuid::Uuid;
 
 async fn setup() -> (PgPool, Arc<Registry>) {
     let _ = dotenvy::from_path(concat!(env!("CARGO_MANIFEST_DIR"), "/../../.env"));
+    // These tests talk to a mock model server on 127.0.0.1; production rejects private endpoints
+    // (see netguard unit tests). Safe: every test in this binary sets the same value.
+    unsafe { std::env::set_var("AI_ALLOW_PRIVATE_ENDPOINTS", "1") };
     let pool = cnote_db::connect(&std::env::var("DATABASE_URL").expect("DATABASE_URL"), 5)
         .await
         .unwrap();

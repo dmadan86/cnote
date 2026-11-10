@@ -86,7 +86,10 @@ mod tests {
             "https://user:pw@api.openai.com",
             "https://localhost:8080",
         ] {
-            assert!(check_endpoint(bad).await.is_err(), "{bad} should be rejected");
+            assert!(
+                check_endpoint(bad).await.is_err(),
+                "{bad} should be rejected"
+            );
         }
     }
 

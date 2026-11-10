@@ -28,10 +28,9 @@ async fn post_json(
     let status = res.status();
     let text = res.text().await.context("reading model response")?;
     if !status.is_success() {
-        bail!(
-            "model API returned {status}: {}",
-            text.chars().take(300).collect::<String>()
-        );
+        // Upstream bodies stay in server logs; callers only learn the status.
+        tracing::warn!(%status, body = %text.chars().take(500).collect::<String>(), "model API error");
+        bail!("model API returned {status}");
     }
     serde_json::from_str(&text).context("model API returned non-JSON")
 }
@@ -48,7 +47,7 @@ pub struct AnthropicProvider {
 impl AnthropicProvider {
     pub fn new(api_key: String, base_url: Option<String>, model: Option<String>) -> Self {
         Self {
-            http: reqwest::Client::new(),
+            http: crate::netguard::client(),
             base_url: base_url
                 .unwrap_or_else(|| "https://api.anthropic.com".into())
                 .trim_end_matches('/')
@@ -145,7 +144,7 @@ impl OpenAiProvider {
         embedding_model: Option<String>,
     ) -> Self {
         Self {
-            http: reqwest::Client::new(),
+            http: crate::netguard::client(),
             base_url: base_url
                 .unwrap_or_else(|| "https://api.openai.com/v1".into())
                 .trim_end_matches('/')

@@ -3,6 +3,7 @@
 //! below so redaction, audit and metering cannot be skipped.
 
 mod crypto;
+mod netguard;
 mod providers;
 mod redact;
 
@@ -95,6 +96,12 @@ async fn resolve(ctx: &mut Ctx) -> CmdResult<Resolved> {
     let redact = redact_enabled(ctx).await?;
     let (provider, byo) = match stored_config(ctx).await? {
         Some(c) => {
+            // Re-check at call time: DNS may have changed since the URL was saved.
+            if let Some(u) = &c.base_url {
+                netguard::check_endpoint(u)
+                    .await
+                    .map_err(CmdError::forbidden)?;
+            }
             let key = match &c.key_enc {
                 Some(blob) => Some(crypto::decrypt(
                     &crypto::master_key()?,
@@ -280,10 +287,10 @@ async fn set_provider(ctx: &mut Ctx, i: SetProvider) -> CmdResult<Value> {
         .base_url
         .map(|u| u.trim().to_string())
         .filter(|u| !u.is_empty());
-    if let Some(u) = &base_url
-        && !(u.starts_with("https://") || u.starts_with("http://"))
-    {
-        return Err(CmdError::invalid("base_url must be an http(s) URL"));
+    if let Some(u) = &base_url {
+        netguard::check_endpoint(u)
+            .await
+            .map_err(CmdError::invalid)?;
     }
     let ws = ctx.workspace_id();
     let existing = stored_config(ctx).await?;
