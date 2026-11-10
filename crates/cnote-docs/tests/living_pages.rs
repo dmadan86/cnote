@@ -135,6 +135,13 @@ impl T {
                         .fetch_one(&mut *ctx.tx)
                         .await
                         .unwrap();
+                // Same attribution as the real worker (crates/cnote-server/src/worker.rs).
+                ctx.principal.user_id = ev.on_behalf_of.or_else(|| {
+                    ev.actor_id
+                        .as_deref()
+                        .and_then(|a| a.parse().ok())
+                        .filter(|_| ev.actor_type == "user")
+                });
                 for (prefix, h) in self.reg.event_handlers.iter() {
                     if ev.kind.starts_with(prefix) {
                         h(&mut ctx, &ev).await.unwrap();
@@ -687,4 +694,30 @@ async fn capture_drafts_a_page_owned_by_the_caller() {
         .await
         .unwrap_err();
     assert_eq!(e.code, ErrorCode::Invalid);
+}
+
+#[tokio::test]
+async fn pages_cannot_bind_to_notes_their_author_cannot_read() {
+    let (t, ws, owner) = t().await;
+    let member = add_member(&t.pool, ws).await;
+    let private = t.space(&owner, "HID", "private").await;
+    let secret = t.item(&owner, private, "HID-1").await;
+    let open = t.space(&owner, "OPN", "open").await;
+    let page = t
+        .page(&member, open, "Notes", "Tracking HID-1 closely")
+        .await;
+    t.drain(ws).await;
+    let mut tx = cnote_db::begin_tenant(&t.pool, ws).await.unwrap();
+    let bound: i64 = sqlx::query_scalar(
+        "select count(*) from core.relations where from_id = $1 and to_id = $2 and kind = 'binds'",
+    )
+    .bind(page)
+    .bind(secret)
+    .fetch_one(&mut *tx)
+    .await
+    .unwrap();
+    assert_eq!(
+        bound, 0,
+        "member must not bind to an item in a private space"
+    );
 }

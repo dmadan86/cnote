@@ -143,24 +143,37 @@ pub async fn sync(ctx: &mut Ctx, page: Uuid, md: &str) -> CmdResult<()> {
             Binding::Url(u) => external.push(("url", u)),
         }
     }
+    // Only bind to notes the author can read; otherwise a mention could pull private content into
+    // freshness proposals. No known author (system edit) means no note bindings.
+    let readable = match ctx.principal.user_id {
+        Some(u) => readable_space_ids_for(ctx, u).await?,
+        None => vec![],
+    };
     // target note id -> the reference text that produced it (first wins)
     let mut targets: HashMap<Uuid, String> = HashMap::new();
-    let by_key: Vec<(Uuid, String)> =
-        sqlx::query_as("select note_id, key from projects.items where key = any($1)")
-            .bind(&keys)
-            .fetch_all(&mut *ctx.tx)
-            .await?;
-    let by_title: Vec<(Uuid, String)> = sqlx::query_as(
-        "select id, '[[' || title || ']]' from core.notes where lower(title) = any($1) and deleted_at is null",
+    let by_key: Vec<(Uuid, String)> = sqlx::query_as(
+        "select i.note_id, i.key from projects.items i join core.notes n on n.id = i.note_id
+         where i.key = any($1) and n.deleted_at is null and n.space_id = any($2)",
     )
-    .bind(&titles)
+    .bind(&keys)
+    .bind(&readable)
     .fetch_all(&mut *ctx.tx)
     .await?;
-    let by_id: Vec<(Uuid,)> =
-        sqlx::query_as("select id from core.notes where id = any($1) and deleted_at is null")
-            .bind(&ids)
-            .fetch_all(&mut *ctx.tx)
-            .await?;
+    let by_title: Vec<(Uuid, String)> = sqlx::query_as(
+        "select id, '[[' || title || ']]' from core.notes
+         where lower(title) = any($1) and deleted_at is null and space_id = any($2)",
+    )
+    .bind(&titles)
+    .bind(&readable)
+    .fetch_all(&mut *ctx.tx)
+    .await?;
+    let by_id: Vec<(Uuid,)> = sqlx::query_as(
+        "select id from core.notes where id = any($1) and deleted_at is null and space_id = any($2)",
+    )
+    .bind(&ids)
+    .bind(&readable)
+    .fetch_all(&mut *ctx.tx)
+    .await?;
     for (id, r) in by_key.into_iter().chain(by_title) {
         targets.entry(id).or_insert(r);
     }
@@ -204,6 +217,21 @@ pub async fn sync(ctx: &mut Ctx, page: Uuid, md: &str) -> CmdResult<()> {
     )
     .await?;
     Ok(())
+}
+
+/// Spaces a specific user can read (same rules as cnote_core::access::readable_space_ids, but for a user other
+/// than the caller: event handlers run as the system principal).
+pub async fn readable_space_ids_for(ctx: &mut Ctx, user: Uuid) -> CmdResult<Vec<Uuid>> {
+    Ok(sqlx::query_scalar(
+        "select s.id from core.spaces s
+         left join core.memberships m on m.user_id = $1
+         left join core.space_members sm on sm.space_id = s.id and sm.user_id = $1
+         where m.role in ('owner','admin') or sm.user_id is not null
+            or (s.visibility = 'open' and m.role = 'member')",
+    )
+    .bind(user)
+    .fetch_all(&mut *ctx.tx)
+    .await?)
 }
 
 #[cfg(test)]

@@ -126,20 +126,27 @@ pub fn propose_edit_job(ctx: &mut Ctx, payload: Value) -> BoxFuture<'_, CmdResul
         let Some((page, source, event_id)) = row else {
             return Ok(()); // resolved meanwhile, or already proposed (job retry)
         };
-        let (title, content): (String, String) =
-            sqlx::query_as("select title, content_md from core.notes where id = $1")
+        let (title, content, owner): (String, String, Option<Uuid>) =
+            sqlx::query_as("select title, content_md, owner_id from core.notes where id = $1")
                 .bind(page)
                 .fetch_one(&mut *ctx.tx)
                 .await?;
-        let src: Option<(String, String)> = match source {
-            Some(s) => {
-                sqlx::query_as("select title, content_md from core.notes where id = $1")
-                    .bind(s)
-                    .fetch_optional(&mut *ctx.tx)
-                    .await?
-            }
-            None => None,
+        // Quote the source only if the page owner may read it (the proposal is shown to the owner).
+        let readable = match owner {
+            Some(o) => crate::bindings::readable_space_ids_for(ctx, o).await?,
+            None => vec![],
         };
+        let src: Option<(String, String)> =
+            match source {
+                Some(s) => sqlx::query_as(
+                    "select title, content_md from core.notes where id = $1 and space_id = any($2)",
+                )
+                .bind(s)
+                .bind(&readable)
+                .fetch_optional(&mut *ctx.tx)
+                .await?,
+                None => None,
+            };
         let kind: Option<String> = match event_id {
             Some(e) => {
                 sqlx::query_scalar("select kind from core.events where id = $1")
