@@ -6,3 +6,23 @@ publish.workspace = true
 
 [dependencies]
 cnote-core.workspace = true
+cnote-db.workspace = true
+sqlx.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+futures.workspace = true
+async-trait.workspace = true
+tracing.workspace = true
+sha2.workspace = true
+hex.workspace = true
+base64.workspace = true
+rust_decimal.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true
+dotenvy.workspace = true
