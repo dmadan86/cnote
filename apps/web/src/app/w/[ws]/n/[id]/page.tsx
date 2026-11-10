@@ -150,7 +150,7 @@ export default function NotePage({ params }: { params: Promise<{ id: string }> }
 
   async function verify() {
     try {
-      await cmd(ws, 'doc.verify', { id })
+      await cmd(ws, 'doc.verify', { note_id: id })
       setVerifyErr(undefined)
       reloadNote()
       reload()
