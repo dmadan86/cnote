@@ -55,33 +55,36 @@ function Prop({ label, children }: { label: string; children: (id: string) => Re
 function RefProp({
   label,
   value,
+  options,
+  onPick,
   onCreate,
-  onClear,
 }: {
   label: string
   value: string | null
+  options: { id: string; name: string }[]
+  onPick: (id: string | null) => void
   onCreate: (name: string) => void
-  onClear: () => void
 }) {
   return (
     <Prop label={label}>
-      {(id) =>
-        value ? (
-          <span className="flex items-center gap-2 text-[13px]">
-            Set
-            <button
-              type="button"
-              aria-label={`Clear ${label}`}
-              onClick={onClear}
-              className="rounded p-0.5 hover:bg-hover"
-            >
-              <X size={12} />
-            </button>
-          </span>
-        ) : (
-          <input
+      {(id) => (
+        <div className="flex flex-col gap-1">
+          <select
             id={id}
-            placeholder="New name, Enter"
+            value={value ?? ''}
+            onChange={(e) => onPick(e.target.value || null)}
+            className={sel}
+          >
+            <option value="">None</option>
+            {options.map((o) => (
+              <option key={o.id} value={o.id}>
+                {o.name}
+              </option>
+            ))}
+          </select>
+          <input
+            aria-label={`New ${label.toLowerCase()}`}
+            placeholder={`New ${label.toLowerCase()}, Enter`}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && e.currentTarget.value.trim()) {
                 onCreate(e.currentTarget.value.trim())
@@ -90,8 +93,8 @@ function RefProp({
             }}
             className={sel}
           />
-        )
-      }
+        </div>
+      )}
     </Prop>
   )
 }
@@ -106,6 +109,9 @@ export function ItemDetailView({ itemKey }: { itemKey: string }) {
   const history = useCmd<Evt[]>(ws, 'note.history', { id }, !!id)
   const comments = useCmd<Comment[]>(ws, 'comment.list', { note_id: id }, !!id)
   const sprints = useCmd<Sprint[]>(ws, 'sprint.list', { space_id: item.data?.space_id }, !!item.data)
+  type Ref = { id: string; name: string }
+  const versions = useCmd<Ref[]>(ws, 'version.list', { space_id: item.data?.space_id }, !!item.data)
+  const components = useCmd<Ref[]>(ws, 'component.list', { space_id: item.data?.space_id }, !!item.data)
   const [title, setTitle] = useState('')
   const [relErr, setRelErr] = useState<string>()
   const [cErr, setCErr] = useState<string>()
@@ -137,6 +143,7 @@ export function ItemDetailView({ itemKey }: { itemKey: string }) {
     act(async () => {
       const r = await cmd<{ id: string }>(ws, `${kind}.create`, { space_id: it.space_id, name })
       await cmd(ws, 'item.update', { id: it.id, [field]: r.id })
+      ;(kind === 'version' ? versions : components).reload()
     })
 
   async function addComment(e: React.FormEvent<HTMLFormElement>) {
@@ -314,14 +321,16 @@ export function ItemDetailView({ itemKey }: { itemKey: string }) {
           <RefProp
             label="Version"
             value={it.fix_version_id}
+            options={versions.data ?? []}
+            onPick={(v) => update(v ? { fix_version_id: v } : { clear: ['fix_version'] })}
             onCreate={create('version', 'fix_version_id')}
-            onClear={() => update({ clear: ['fix_version'] })}
           />
           <RefProp
             label="Component"
             value={it.component_id}
+            options={components.data ?? []}
+            onPick={(v) => update(v ? { component_id: v } : { clear: ['component'] })}
             onCreate={create('component', 'component_id')}
-            onClear={() => update({ clear: ['component'] })}
           />
           <Prop label="Labels">
             {(pid) => (

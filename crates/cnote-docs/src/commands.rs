@@ -118,6 +118,34 @@ pub struct NoteRef {
     pub note_id: Uuid,
 }
 
+#[derive(Serialize, JsonSchema, sqlx::FromRow)]
+pub struct ArchivedOut {
+    pub id: Uuid,
+    pub space_id: Uuid,
+    pub title: String,
+    pub owner_id: Option<Uuid>,
+    pub archived_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Deserialize, JsonSchema, Default)]
+pub struct ListArchived {
+    #[serde(default)]
+    pub space_id: Option<Uuid>,
+}
+
+async fn doc_archived(ctx: &mut Ctx, i: ListArchived) -> CmdResult<Vec<ArchivedOut>> {
+    let spaces = readable_space_ids(ctx).await?;
+    Ok(sqlx::query_as(
+        "select id, space_id, title, owner_id, archived_at from core.notes
+         where freshness = 'archived' and deleted_at is null and space_id = any($1) and ($2::uuid is null or space_id = $2)
+         order by archived_at desc nulls last limit 200",
+    )
+    .bind(spaces)
+    .bind(i.space_id)
+    .fetch_all(&mut *ctx.tx)
+    .await?)
+}
+
 async fn doc_restore(ctx: &mut Ctx, i: NoteRef) -> CmdResult<Value> {
     page_owner(ctx, i.note_id, true).await?;
     let n = sqlx::query(
@@ -571,6 +599,7 @@ pub fn commands() -> Vec<Command> {
         Command::new("doc.flags", "Your dashboard: pages you own that are stale or lapsed, with the reasons.", Read, handler!(doc_flags)),
         Command::new("doc.proposals", "List AI-proposed page edits waiting for review (never applied automatically).", Read, handler!(doc_proposals)),
         Command::new("doc.proposal_decide", "Approve (applies the edit to the page) or reject an AI-proposed edit. Page owner or admin.", WriteNotes, handler!(doc_proposal_decide)),
+        Command::new("doc.archived", "List archived pages you can read (restorable).", Read, handler!(doc_archived)),
         Command::new("doc.restore", "Bring an archived page back into search; it returns stale until re-verified.", WriteNotes, handler!(doc_restore)),
         Command::new("doc.freshness_score", "Share of pages verified within the window, for the workspace and per space.", Read, handler!(doc_freshness_score)),
         Command::new("doc.ask", "Ask a question; answers cite the pages used with their freshness. If no page answers, a capture request is routed to the likely owner.", Read, handler!(doc_ask)).core(),

@@ -164,12 +164,9 @@ export function Dashboard() {
           onSubmit={async (e) => {
             e.preventDefault()
             try {
-              const r = await cmd<Hit[]>(ws, 'search.notes', {
-                q: new FormData(e.currentTarget).get('q'),
-                include_archived: true,
-                limit: 50,
-              })
-              setArchived(r.filter((h) => h.freshness === 'archived'))
+              const q = String(new FormData(e.currentTarget).get('q') ?? '').toLowerCase()
+              const r = await cmd<Hit[]>(ws, 'doc.archived', {})
+              setArchived(r.filter((h) => h.title.toLowerCase().includes(q)))
             } catch (x) {
               setErr((x as Error).message)
             }
@@ -177,13 +174,12 @@ export function Dashboard() {
         >
           <input
             name="q"
-            required
             aria-label="Find archived pages"
             placeholder="Search archived pages..."
             className={inputCls}
           />
           <button type="submit" className={btn}>
-            Find
+            List
           </button>
         </form>
         {archived?.length === 0 && <p className="mt-2 text-muted">No archived pages match.</p>}

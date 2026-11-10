@@ -253,6 +253,30 @@ pub struct VersionOut {
     release_date: Option<NaiveDate>,
 }
 
+#[derive(Deserialize, JsonSchema)]
+pub struct BySpace {
+    pub space_id: Uuid,
+}
+
+async fn version_list(ctx: &mut Ctx, i: BySpace) -> CmdResult<Vec<VersionOut>> {
+    assert_space_access(ctx, i.space_id, false).await?;
+    Ok(sqlx::query_as(
+        "select id, space_id, name, released, release_date from projects.versions where space_id = $1
+         order by released, release_date nulls last, name",
+    )
+    .bind(i.space_id)
+    .fetch_all(&mut *ctx.tx)
+    .await?)
+}
+
+async fn component_list(ctx: &mut Ctx, i: BySpace) -> CmdResult<Vec<ComponentOut>> {
+    assert_space_access(ctx, i.space_id, false).await?;
+    Ok(sqlx::query_as("select id, space_id, name, lead_id from projects.components where space_id = $1 order by name")
+        .bind(i.space_id)
+        .fetch_all(&mut *ctx.tx)
+        .await?)
+}
+
 async fn version_create(ctx: &mut Ctx, i: CreateVersion) -> CmdResult<VersionOut> {
     assert_space_access(ctx, i.space_id, true).await?;
     let v: VersionOut = sqlx::query_as(
@@ -528,6 +552,18 @@ pub fn commands() -> Vec<Command> {
             "List sprints, optionally by Space and state.",
             ToolGroup::Read,
             handler!(sprint_list),
+        ),
+        Command::new(
+            "version.list",
+            "List versions in a Space.",
+            ToolGroup::Read,
+            handler!(version_list),
+        ),
+        Command::new(
+            "component.list",
+            "List components in a Space.",
+            ToolGroup::Read,
+            handler!(component_list),
         ),
         Command::new(
             "version.create",
