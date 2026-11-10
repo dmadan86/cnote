@@ -12,3 +12,4 @@ coverage
 .vercel
 target
 .claude/
+*.tsbuildinfo
