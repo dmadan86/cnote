@@ -183,8 +183,9 @@ pub struct Module {
     pub sweeps: Vec<(&'static str, u64, SweepHandler)>,
 }
 
-#[derive(Default)]
 pub struct Registry {
+    /// AI provider for this process (ADR-009). Per-workspace BYO-LLM keys are resolved by `cnote-ai`.
+    pub ai: Arc<dyn crate::ai::ModelProvider>,
     pub commands: HashMap<&'static str, Command>,
     pub workspace_hooks: Vec<WorkspaceHook>,
     pub event_handlers: Vec<(&'static str, EventHandler)>,
@@ -200,7 +201,18 @@ pub struct ExecOptions {
 
 impl Registry {
     pub fn new(modules: Vec<Module>) -> Arc<Self> {
-        let mut r = Registry::default();
+        Self::with_ai(modules, Arc::new(crate::ai::LocalProvider))
+    }
+
+    pub fn with_ai(modules: Vec<Module>, ai: Arc<dyn crate::ai::ModelProvider>) -> Arc<Self> {
+        let mut r = Registry {
+            ai,
+            commands: HashMap::new(),
+            workspace_hooks: vec![],
+            event_handlers: vec![],
+            job_handlers: HashMap::new(),
+            sweeps: vec![],
+        };
         for m in modules {
             for c in m.commands {
                 assert!(
