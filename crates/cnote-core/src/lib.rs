@@ -20,6 +20,24 @@ pub fn module() -> Module {
     commands.extend(admin::commands());
     Module {
         commands,
+        workspace_hooks: vec![default_space],
         ..Default::default()
     }
+}
+
+/// Every workspace starts with one open space so pages, contacts and deals have a home on day one.
+fn default_space<'a>(
+    tx: &'a mut cnote_db::Tx,
+    workspace_id: uuid::Uuid,
+    _owner: uuid::Uuid,
+) -> futures::future::BoxFuture<'a, anyhow::Result<()>> {
+    Box::pin(async move {
+        sqlx::query(
+            "insert into core.spaces (workspace_id, key, name, template) values ($1, 'GEN', 'General', 'blank')",
+        )
+        .bind(workspace_id)
+        .execute(&mut **tx)
+        .await?;
+        Ok(())
+    })
 }

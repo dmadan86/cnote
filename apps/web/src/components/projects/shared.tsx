@@ -148,6 +148,6 @@ export const typing = (e: KeyboardEvent) => {
     e.altKey ||
     ['INPUT', 'TEXTAREA', 'SELECT'].includes(t.tagName) ||
     t.isContentEditable ||
-    !!t.closest('dialog')
+    !!t.closest('dialog[open]')
   )
 }
