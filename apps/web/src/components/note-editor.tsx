@@ -81,6 +81,7 @@ function Surface({
   const [status, setStatus] = useState<'saved' | 'saving' | 'error'>('saved')
   const last = useRef(initialMd)
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined)
+  const pending = useRef<(() => string) | null>(null) // set until the latest edit is saved
 
   const editor = useEditor({
     immediatelyRender: false,
@@ -98,12 +99,17 @@ function Surface({
     },
     onUpdate: ({ editor }) => {
       clearTimeout(timer.current)
+      pending.current = () => editor.getMarkdown()
       timer.current = setTimeout(async () => {
         const md = editor.getMarkdown()
-        if (md === last.current) return setStatus('saved')
+        if (md === last.current) {
+          pending.current = null
+          return setStatus('saved')
+        }
         setStatus('saving')
         try {
           await cmd(ws, 'note.update', { id, content_md: md })
+          pending.current = null
           last.current = md
           setStatus('saved')
           onSaved()
@@ -115,7 +121,35 @@ function Surface({
     },
   })
 
-  useEffect(() => () => clearTimeout(timer.current), [])
+  // A debounced save still pending on navigation or tab close would be lost: send it now.
+  // keepalive lets the request outlive the page; sendBeacon cannot (the API needs JSON + cookie).
+  useEffect(() => {
+    const flush = () => {
+      clearTimeout(timer.current)
+      const get = pending.current
+      pending.current = null
+      if (!get) return
+      try {
+        const md = get()
+        if (md === last.current) return
+        last.current = md
+        fetch(`/api/w/${ws}/commands/note.update`, {
+          method: 'POST',
+          keepalive: true,
+          credentials: 'same-origin',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ id, content_md: md }),
+        }).catch(() => {})
+      } catch {} // editor already destroyed: nothing left to read
+    }
+    window.addEventListener('pagehide', flush)
+    window.addEventListener('beforeunload', flush)
+    return () => {
+      window.removeEventListener('pagehide', flush)
+      window.removeEventListener('beforeunload', flush)
+      flush()
+    }
+  }, [ws, id])
 
   return (
     <div>
