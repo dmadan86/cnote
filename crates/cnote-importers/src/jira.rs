@@ -39,7 +39,10 @@ impl JiraClient for ReqwestJira {
         if let Some(t) = page_token {
             q.push(("nextPageToken", t.into()));
         }
-        let res = reqwest::Client::new()
+        let res = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .timeout(std::time::Duration::from_secs(30))
+            .build()?
             .get(format!(
                 "{}/rest/api/3/search/jql",
                 base_url.trim_end_matches('/')
@@ -57,6 +60,24 @@ impl JiraClient for ReqwestJira {
     }
 }
 
+/// Jira Cloud only: https, no credentials in the URL, host under atlassian.net. Anything else could point the
+/// server at internal addresses.
+pub fn validate_base_url(base_url: &str) -> anyhow::Result<()> {
+    let u =
+        url::Url::parse(base_url).map_err(|_| anyhow::anyhow!("base_url is not a valid URL"))?;
+    let host = u.host_str().unwrap_or("").to_lowercase();
+    let host = host.trim_end_matches('.');
+    if u.scheme() != "https"
+        || !u.username().is_empty()
+        || u.password().is_some()
+        || !host.ends_with(".atlassian.net")
+        || host == ".atlassian.net"
+    {
+        anyhow::bail!("base_url must be an https URL on a *.atlassian.net host");
+    }
+    Ok(())
+}
+
 const MAX_ISSUES: usize = 10_000;
 
 /// Page through the search results. Only a base_url that is a public https host is accepted.
@@ -67,19 +88,7 @@ pub async fn fetch_issues(
     token: &str,
     jql: &str,
 ) -> anyhow::Result<Value> {
-    let host = base_url
-        .strip_prefix("https://")
-        .map(|r| r.split('/').next().unwrap_or(""))
-        .unwrap_or("");
-    let bare = host.split(':').next().unwrap_or("");
-    if !bare.contains('.')
-        || bare == "localhost"
-        || bare.chars().all(|c| c.is_ascii_digit() || c == '.')
-        || bare.ends_with(".internal")
-        || bare.ends_with(".local")
-    {
-        anyhow::bail!("base_url must be an https URL on a public host");
-    }
+    validate_base_url(base_url)?;
     let mut issues: Vec<Value> = vec![];
     let mut token_next: Option<String> = None;
     loop {
@@ -530,5 +539,22 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(v["issues"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn base_url_must_be_jira_cloud() {
+        for bad in [
+            "http://acme.atlassian.net",
+            "https://localhost",
+            "https://169.254.169.254",
+            "https://evil.com",
+            "https://user:pw@x.atlassian.net",
+            "https://x.atlassian.net.evil.com",
+            "https://.atlassian.net",
+        ] {
+            assert!(validate_base_url(bad).is_err(), "{bad}");
+        }
+        assert!(validate_base_url("https://acme.atlassian.net").is_ok());
+        assert!(validate_base_url("https://ACME.atlassian.net./").is_ok());
     }
 }
