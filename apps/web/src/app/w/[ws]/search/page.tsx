@@ -1,17 +1,37 @@
 'use client'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
-import { Suspense } from 'react'
+import { Suspense, useEffect, useState } from 'react'
 import { useShell } from '@/components/shell'
 import { FreshnessPill } from '@/components/ui'
-import { useCmd } from '@/lib/hooks'
+import { api, cmd } from '@/lib/api'
 
 type Hit = { id: string; title: string; freshness: string; snippet: string }
 
 function Results() {
   const { ws } = useShell()
   const q = useSearchParams().get('q') ?? ''
-  const { data, loading } = useCmd<Hit[]>(ws, 'search.notes', { q, limit: 50 }, q.length > 0)
+  const [data, setData] = useState<Hit[]>()
+  const loading = !data && q.length > 0
+  useEffect(() => {
+    if (!q) return
+    let live = true
+    setData(undefined)
+    // search.hybrid ships with the AI module; fall back to plain full-text where it is missing or fails.
+    api<{ name: string }[]>('/api/commands')
+      .then((l) => l.some((c) => c.name === 'search.hybrid'))
+      .catch(() => false)
+      .then((hy) =>
+        (hy ? cmd<Hit[]>(ws, 'search.hybrid', { q, limit: 50 }) : Promise.reject()).catch(() =>
+          cmd<Hit[]>(ws, 'search.notes', { q, limit: 50 }),
+        ),
+      )
+      .then((d) => live && setData(d))
+      .catch(() => live && setData([]))
+    return () => {
+      live = false
+    }
+  }, [ws, q])
   return (
     <div className="mx-auto max-w-3xl space-y-4 px-6 py-8">
       <h1 className="text-xl font-semibold">Results for "{q}"</h1>

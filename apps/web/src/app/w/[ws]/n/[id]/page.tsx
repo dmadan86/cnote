@@ -1,11 +1,12 @@
 'use client'
-import { BadgeCheck, PanelRight, Plus } from 'lucide-react'
+import { PanelRight, Plus } from 'lucide-react'
 import Link from 'next/link'
 import { use, useEffect, useState } from 'react'
+import { DocActions, Proposals } from '@/components/docs/note-tools'
 import { NoteEditor } from '@/components/note-editor'
 import { useShell } from '@/components/shell'
-import { Avatar, btn, btnPrimary, ErrorText, FreshnessPill, inputCls } from '@/components/ui'
-import { api, cmd, type NoteDetail } from '@/lib/api'
+import { Avatar, btn, ErrorText, FreshnessPill, inputCls } from '@/components/ui'
+import { cmd, type NoteDetail } from '@/lib/api'
 import { ago, useCmd } from '@/lib/hooks'
 
 type Tab = 'relations' | 'history' | 'comments'
@@ -120,17 +121,9 @@ export default function NotePage({ params }: { params: Promise<{ id: string }> }
   const { ws, members, reload, newPage } = useShell()
   const { data: note, error, reload: reloadNote } = useCmd<NoteDetail>(ws, 'note.get', { id })
   const [panel, setPanel] = useState(true)
-  const [canVerify, setCanVerify] = useState(false)
+  const [rev, setRev] = useState(0) // bumps when an approved proposal rewrites the content
   const [title, setTitle] = useState('')
-  const [verifyErr, setVerifyErr] = useState<string>()
 
-  useEffect(() => {
-    // doc.verify ships with the docs module; hide the button where it is not registered.
-    api<{ name: string }[]>('/api/commands').then(
-      (l) => setCanVerify(l.some((c) => c.name === 'doc.verify')),
-      () => {},
-    )
-  }, [])
   // Only on page change: later reloads must not clobber what the user is typing.
   // biome-ignore lint/correctness/useExhaustiveDependencies: keyed by id on purpose
   useEffect(() => {
@@ -140,7 +133,6 @@ export default function NotePage({ params }: { params: Promise<{ id: string }> }
   if (error)
     return <p className="p-6 text-muted">This page does not exist or you do not have access to it.</p>
   if (!note) return null
-  const owner = members.find((m) => m.user_id === note.owner_id)
 
   async function saveTitle() {
     if (!note || title.trim() === note.title) return
@@ -148,33 +140,22 @@ export default function NotePage({ params }: { params: Promise<{ id: string }> }
     reload()
   }
 
-  async function verify() {
-    try {
-      await cmd(ws, 'doc.verify', { note_id: id })
-      setVerifyErr(undefined)
-      reloadNote()
-      reload()
-    } catch (e) {
-      setVerifyErr((e as Error).message)
-    }
-  }
-
   return (
     <div className="flex min-h-full">
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2 border-b border-line px-6 py-2">
           <FreshnessPill freshness={note.freshness} verifyBy={note.verify_by} />
-          <span className="flex items-center gap-1.5 text-[12px] text-muted">
-            <Avatar name={owner?.name} size={20} /> {owner?.name ?? 'No owner'} · Updated{' '}
-            {ago(note.updated_at)}
-          </span>
+          <span className="text-[12px] text-muted">Updated {ago(note.updated_at)}</span>
           <div className="ml-auto flex items-center gap-2">
-            <ErrorText error={verifyErr} />
-            {canVerify && (
-              <button type="button" onClick={verify} className={btnPrimary}>
-                <BadgeCheck size={14} /> Verify
-              </button>
-            )}
+            <DocActions
+              ws={ws}
+              note={note}
+              members={members}
+              onChange={() => {
+                reloadNote()
+                reload()
+              }}
+            />
             <button
               type="button"
               onClick={() => newPage({ spaceId: note.space_id, parentId: note.id })}
@@ -193,6 +174,14 @@ export default function NotePage({ params }: { params: Promise<{ id: string }> }
             </button>
           </div>
         </div>
+        <Proposals
+          ws={ws}
+          note={note}
+          onApplied={() => {
+            setRev((r) => r + 1)
+            reloadNote()
+          }}
+        />
         <article className="mx-auto max-w-[720px] px-6 py-10">
           <input
             aria-label="Page title"
@@ -203,7 +192,7 @@ export default function NotePage({ params }: { params: Promise<{ id: string }> }
             onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
             className="mb-6 w-full bg-transparent text-3xl font-bold placeholder:text-muted"
           />
-          <NoteEditor key={id} ws={ws} id={id} initialMd={note.content_md} onSaved={reloadNote} />
+          <NoteEditor key={`${id}-${rev}`} ws={ws} id={id} initialMd={note.content_md} onSaved={reloadNote} />
         </article>
       </div>
       {panel && <Panel ws={ws} note={note} />}
