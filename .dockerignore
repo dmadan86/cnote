@@ -1,0 +1,7 @@
+target
+node_modules
+apps
+e2e
+.git
+.claude
+.env
