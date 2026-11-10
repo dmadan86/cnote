@@ -25,6 +25,8 @@ enum Cmd {
     },
     /// Background jobs: event dispatch, automations, freshness engine, imports
     Worker,
+    /// MCP over stdio for one API key (CNOTE_API_KEY), for clients that spawn a local process
+    McpStdio,
     /// Apply database migrations with DATABASE_ADMIN_URL
     Migrate {
         #[arg(long)]
@@ -50,6 +52,15 @@ async fn main() -> anyhow::Result<()> {
             let url = std::env::var("DATABASE_ADMIN_URL")?;
             cnote_db::migrate(&url, reset).await?;
             tracing::info!("migrations applied");
+        }
+        Cmd::McpStdio => {
+            let key = std::env::var("CNOTE_API_KEY")
+                .map_err(|_| anyhow::anyhow!("CNOTE_API_KEY is required"))?;
+            let state = api::AppState::from_env().await?;
+            let principal = cnote_core::auth::principal_from_api_key(&state.pool, &key)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("CNOTE_API_KEY is not a valid API key"))?;
+            cnote_mcp::serve_stdio(state.pool, state.registry, principal).await?;
         }
         Cmd::Worker => {
             let state = api::AppState::from_env().await?;
