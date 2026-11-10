@@ -1213,14 +1213,16 @@ async fn automation_actions_use_the_command_layer_with_creator_permissions() {
     let t = setup().await;
     let space = t.space("ENG").await;
     let member = t.member("member").await;
-    // A member's automation tries to run an admin-only command: the command layer refuses it.
-    let a = t
-        .as_(&member, "automation.create", json!({
+    // A member cannot save a rule that runs an admin-only command.
+    let e = t
+        .try_as(&member, "automation.create", json!({
             "space_id": space, "name": "escalate",
             "trigger": {"kind": "event", "event": "item.created"},
             "actions": [{"type": "command", "name": "workflow.update", "input": {"space_id": space, "definition": {"statuses": [{"name": "X", "category": "todo"}], "transitions": []}}}]
         }))
-        .await;
+        .await
+        .unwrap_err();
+    assert_eq!(e.code, ErrorCode::Forbidden);
     // A workspace-wide rule needs an admin.
     let e = t.try_as(&member, "automation.create", json!({
         "name": "wide", "trigger": {"kind": "event", "event": "item.created"}, "actions": [{"type": "comment", "body": "x"}]
@@ -1251,18 +1253,21 @@ async fn automation_actions_use_the_command_layer_with_creator_permissions() {
         ev[0].0, "system",
         "automation changes are attributed to the system, not a person"
     );
-    // Now fire the escalating rule: it fails and leaves the workflow untouched.
-    let since = t.last_event().await;
-    t.item(space, "again", json!({})).await;
-    t.dispatch(since).await;
-    let runs = t.runs(&a["id"]).await;
-    assert_eq!(runs.len(), 2, "fired for both new items");
-    assert_eq!(runs[0]["status"], "failed");
-    assert!(
-        runs[0]["log"].to_string().contains("requires role admin"),
-        "{}",
-        runs[0]["log"]
-    );
+    // Machines cannot author automations (they would run unattended without tool-group limits).
+    let agent = t.run("agent.create", json!({"name": "bot"})).await;
+    let agent_p =
+        cnote_core::auth::principal_from_api_key(&t.pool, agent["api_key"].as_str().unwrap())
+            .await
+            .unwrap()
+            .unwrap();
+    let e = t
+        .try_as(&agent_p, "automation.create", json!({
+            "space_id": space, "name": "bot rule", "trigger": {"kind": "event", "event": "item.created"},
+            "actions": [{"type": "comment", "body": "x"}]
+        }))
+        .await
+        .unwrap_err();
+    assert_eq!(e.code, ErrorCode::Forbidden);
     assert_eq!(
         t.run("workflow.get", json!({"space_id": space})).await["version"],
         1

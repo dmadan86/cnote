@@ -67,6 +67,12 @@ pub enum Action {
 }
 
 fn validate(ctx: &Ctx, t: &Trigger, conds: &[Condition], actions: &[Action]) -> CmdResult<()> {
+    // Automations run unattended with the author's role and no tool-group gating, so only people author them.
+    if ctx.principal.kind != PrincipalKind::User {
+        return Err(CmdError::forbidden(
+            "only people can create or edit automations",
+        ));
+    }
     let q = |s: &str| {
         crate::cnql::parse(s)
             .map(|_| ())
@@ -97,9 +103,17 @@ fn validate(ctx: &Ctx, t: &Trigger, conds: &[Condition], actions: &[Action]) -> 
     }
     for a in actions {
         match a {
-            Action::Command { name, .. } if ctx.registry.get(name).is_none() => {
-                return Err(CmdError::invalid(format!("unknown command '{name}'")));
-            }
+            Action::Command { name, .. } => match ctx.registry.get(name) {
+                None => return Err(CmdError::invalid(format!("unknown command '{name}'"))),
+                // The rule runs with its author's role; never let it do what the author could not.
+                Some(c) if c.min_role > ctx.principal.role => {
+                    return Err(CmdError::forbidden(format!(
+                        "you cannot use '{name}' in an automation (requires {})",
+                        c.min_role.as_str()
+                    )));
+                }
+                Some(_) => {}
+            },
             Action::Assign { user_id, agent_id } if user_id.is_some() && agent_id.is_some() => {
                 return Err(CmdError::invalid(
                     "assign: give user_id or agent_id, not both",
@@ -263,7 +277,8 @@ async fn automation_update(ctx: &mut Ctx, i: UpdateAutomation) -> CmdResult<Auto
     validate(ctx, &trigger, &conds, &actions)?;
     let a: AutomationOut = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "update projects.automations set name = coalesce($2, name), enabled = coalesce($3, enabled),
-           draft = coalesce($4, draft), trigger = $5, conditions = $6, actions = $7
+           draft = coalesce($4, draft), trigger = $5, conditions = $6, actions = $7,
+           created_by = $8  -- the editor becomes the author: the rule now runs with their role
          where id = $1 returning {AUTO_COLS}"
     )))
     .bind(i.id)
@@ -273,6 +288,7 @@ async fn automation_update(ctx: &mut Ctx, i: UpdateAutomation) -> CmdResult<Auto
     .bind(serde_json::to_value(&trigger)?)
     .bind(serde_json::to_value(&conds)?)
     .bind(serde_json::to_value(&actions)?)
+    .bind(ctx.principal.user_id)
     .fetch_one(&mut *ctx.tx)
     .await?;
     ctx.emit(
