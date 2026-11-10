@@ -99,6 +99,8 @@ pub struct Command {
     pub confirm: bool,
     /// In the compact default MCP tool list (~25 tools); the rest are reachable through `discover`.
     pub core: bool,
+    /// Result contains a secret (e.g. a new API key): never stored for idempotency replay.
+    pub returns_secret: bool,
     pub input_schema: Value,
     handler: ErasedHandler,
 }
@@ -139,6 +141,7 @@ impl Command {
             },
             confirm: false,
             core: false,
+            returns_secret: false,
             input_schema: schema,
             handler,
         }
@@ -153,6 +156,10 @@ impl Command {
     }
     pub fn core(mut self) -> Self {
         self.core = true;
+        self
+    }
+    pub fn returns_secret(mut self) -> Self {
+        self.returns_secret = true;
         self
     }
 }
@@ -313,11 +320,23 @@ impl Registry {
             }
         }
 
-        if let Some(key) = &opts.idempotency_key {
+        let actor = format!(
+            "{:?}:{}:{}",
+            p.kind,
+            p.user_id.unwrap_or_default(),
+            p.agent_id.unwrap_or_default()
+        );
+        // Commands whose results carry secrets (new API keys) are never cached.
+        let idem_key = opts
+            .idempotency_key
+            .as_ref()
+            .filter(|_| !cmd.returns_secret);
+        if let Some(key) = idem_key {
             let hit: Option<(String, Value)> = sqlx::query_as(
-                "select command, result from core.idempotency where workspace_id = $1 and key = $2",
+                "select command, result from core.idempotency where workspace_id = $1 and actor = $2 and key = $3",
             )
             .bind(p.workspace_id)
+            .bind(&actor)
             .bind(key)
             .fetch_optional(&mut *ctx.tx)
             .await?;
@@ -384,9 +403,10 @@ impl Registry {
 
         let out = (cmd.handler)(ctx, input).await?;
 
-        if let Some(key) = &opts.idempotency_key {
-            sqlx::query("insert into core.idempotency (workspace_id, key, command, result) values ($1,$2,$3,$4)")
+        if let Some(key) = idem_key {
+            sqlx::query("insert into core.idempotency (workspace_id, actor, key, command, result) values ($1,$2,$3,$4,$5)")
                 .bind(p.workspace_id)
+                .bind(&actor)
                 .bind(key)
                 .bind(name)
                 .bind(&out)

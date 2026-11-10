@@ -241,3 +241,172 @@ async fn agents_are_gated_by_tool_groups_and_idempotent() {
         .is_err()
     );
 }
+
+#[tokio::test]
+async fn security_regressions() {
+    let (pool, reg) = setup().await;
+    let (_, owner) = tenant(&pool, &reg).await;
+    let o = ExecOptions::default();
+
+    // Idempotency keys never replay another principal's result.
+    let space = reg
+        .execute(
+            &pool,
+            "space.create",
+            json!({"key": "SEC", "name": "Sec"}),
+            &owner,
+            &o,
+        )
+        .await
+        .unwrap();
+    let admin = reg
+        .execute(
+            &pool,
+            "member.add",
+            json!({"email": format!("{}@t.local", Uuid::new_v4()), "role": "admin"}),
+            &owner,
+            &o,
+        )
+        .await
+        .unwrap();
+    let admin_p = Principal::user(
+        admin["user_id"].as_str().unwrap().parse().unwrap(),
+        owner.workspace_id,
+        cnote_core::Role::Admin,
+    );
+    let io = ExecOptions {
+        idempotency_key: Some("same".into()),
+        ..Default::default()
+    };
+    let a = reg
+        .execute(
+            &pool,
+            "note.create",
+            json!({"space_id": space["id"], "title": "mine"}),
+            &owner,
+            &io,
+        )
+        .await
+        .unwrap();
+    let b = reg
+        .execute(
+            &pool,
+            "note.create",
+            json!({"space_id": space["id"], "title": "theirs"}),
+            &admin_p,
+            &io,
+        )
+        .await
+        .unwrap();
+    assert_ne!(a["id"], b["id"]);
+
+    // Secrets are never cached for replay.
+    let k1 = reg
+        .execute(&pool, "apikey.create", json!({"name": "k"}), &owner, &io)
+        .await
+        .unwrap();
+    let k2 = reg
+        .execute(&pool, "apikey.create", json!({"name": "k"}), &owner, &io)
+        .await
+        .unwrap();
+    assert_ne!(k1["api_key"], k2["api_key"]);
+
+    // An admin cannot demote the owner.
+    let e = reg
+        .execute(
+            &pool,
+            "member.add",
+            json!({"email": "x", "role": "guest"}),
+            &admin_p,
+            &o,
+        )
+        .await;
+    assert!(e.is_ok(), "adding a new guest is fine");
+    let owner_email: String = {
+        let mut tx = cnote_db::begin_tenant(&pool, owner.workspace_id)
+            .await
+            .unwrap();
+        sqlx::query_scalar("select u.email from core.users u join core.memberships m on m.user_id = u.id where m.role = 'owner'")
+            .fetch_one(&mut *tx)
+            .await
+            .unwrap()
+    };
+    let e = reg
+        .execute(
+            &pool,
+            "member.add",
+            json!({"email": owner_email, "role": "guest"}),
+            &admin_p,
+            &o,
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(e.code, cnote_core::ErrorCode::Forbidden);
+
+    // Relations to private notes don't leak titles.
+    let private = reg
+        .execute(
+            &pool,
+            "space.create",
+            json!({"key": "PRV", "name": "Private", "visibility": "private"}),
+            &owner,
+            &o,
+        )
+        .await
+        .unwrap();
+    let secret = reg
+        .execute(
+            &pool,
+            "note.create",
+            json!({"space_id": private["id"], "title": "Secret plan"}),
+            &owner,
+            &o,
+        )
+        .await
+        .unwrap();
+    let open_note = reg
+        .execute(
+            &pool,
+            "note.create",
+            json!({"space_id": space["id"], "title": "Open"}),
+            &owner,
+            &o,
+        )
+        .await
+        .unwrap();
+    reg.execute(
+        &pool,
+        "relation.add",
+        json!({"from_id": open_note["id"], "to_id": secret["id"], "kind": "relates"}),
+        &owner,
+        &o,
+    )
+    .await
+    .unwrap();
+    let member = reg
+        .execute(
+            &pool,
+            "member.add",
+            json!({"email": format!("{}@t.local", Uuid::new_v4()), "role": "member"}),
+            &owner,
+            &o,
+        )
+        .await
+        .unwrap();
+    let member_p = Principal::user(
+        member["user_id"].as_str().unwrap().parse().unwrap(),
+        owner.workspace_id,
+        cnote_core::Role::Member,
+    );
+    let seen = reg
+        .execute(
+            &pool,
+            "note.get",
+            json!({"id": open_note["id"]}),
+            &member_p,
+            &o,
+        )
+        .await
+        .unwrap();
+    assert_eq!(seen["relations"].as_array().unwrap().len(), 0);
+}

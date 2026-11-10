@@ -358,13 +358,18 @@ pub async fn add_relation(
     Ok(())
 }
 
+/// Relations whose other end the caller can read (no titles leak from private spaces).
 async fn list_relations(ctx: &mut Ctx, id: Uuid) -> CmdResult<Vec<RelationOut>> {
+    let ids = readable_space_ids(ctx).await?;
     Ok(sqlx::query_as(
-        "select r.id, r.from_id, r.to_id, r.kind, r.external_ref,
-                (select title from core.notes n where n.id = case when r.from_id = $1 then r.to_id else r.from_id end) as other_title
-         from core.relations r where r.from_id = $1 or r.to_id = $1 order by r.created_at",
+        "select r.id, r.from_id, r.to_id, r.kind, r.external_ref, o.title as other_title
+         from core.relations r
+         join core.notes o on o.id = case when r.from_id = $1 then r.to_id else r.from_id end
+         where (r.from_id = $1 or r.to_id = $1) and o.deleted_at is null and o.space_id = any($2)
+         order by r.created_at",
     )
     .bind(id)
+    .bind(ids)
     .fetch_all(&mut *ctx.tx)
     .await?)
 }

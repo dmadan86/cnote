@@ -204,11 +204,12 @@ CREATE TABLE core.views (
 -- Idempotency keys for write commands (ADR-004).
 CREATE TABLE core.idempotency (
   workspace_id uuid NOT NULL REFERENCES core.workspaces(id) ON DELETE CASCADE,
+  actor text NOT NULL,                       -- keys are scoped to the caller; results never cross principals
   key text NOT NULL,
   command text NOT NULL,
   result jsonb NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY (workspace_id, key)
+  PRIMARY KEY (workspace_id, actor, key)
 );
 
 -- Human confirmations for money-moving/outbound commands (ADR-004 elicitation).

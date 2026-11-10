@@ -56,6 +56,21 @@ async fn member_add(ctx: &mut Ctx, i: AddMember) -> CmdResult<Member> {
     .bind(&name)
     .fetch_one(&mut *ctx.tx)
     .await?;
+    // Admins cannot touch the owner or peers at/above their own level; nobody can grant above themselves.
+    let existing: Option<String> =
+        sqlx::query_scalar("select role from core.memberships where user_id = $1")
+            .bind(user_id)
+            .fetch_optional(&mut *ctx.tx)
+            .await?;
+    let me = ctx.principal.role;
+    if let Some(cur) = existing.map(|r| Role::parse(&r))
+        && (cur == Role::Owner || (cur >= me && me != Role::Owner))
+    {
+        return Err(CmdError::forbidden("cannot change this member's role"));
+    }
+    if role > me {
+        return Err(CmdError::forbidden("cannot grant a role above your own"));
+    }
     sqlx::query(
         "insert into core.memberships (workspace_id, user_id, role) values ($1,$2,$3)
          on conflict (workspace_id, user_id) do update set role = excluded.role",
@@ -392,7 +407,8 @@ pub fn commands() -> Vec<Command> {
             ToolGroup::Admin,
             handler!(agent_create),
         )
-        .min_role(Role::Admin),
+        .min_role(Role::Admin)
+        .returns_secret(),
         Command::new(
             "agent.list",
             "List agent principals.",
@@ -404,7 +420,8 @@ pub fn commands() -> Vec<Command> {
             "Create a personal API key for MCP or REST.",
             ToolGroup::Admin,
             handler!(apikey_create),
-        ),
+        )
+        .returns_secret(),
         Command::new(
             "apikey.list",
             "List API keys (no secrets).",
