@@ -198,11 +198,14 @@ async fn doc_proposals(ctx: &mut Ctx, i: ListProposals) -> CmdResult<Vec<Proposa
         "select p.id, p.note_id, n.title, p.proposed_md, p.rationale, p.status, p.created_at
          from docs.edit_proposals p join core.notes n on n.id = p.note_id
          where n.space_id = any($1) and n.deleted_at is null and p.status = $2 and ($3::uuid is null or p.note_id = $3)
+           and (n.owner_id = $4 or $5)  -- proposals may quote sources only the owner can read
          order by p.created_at desc limit 100",
     )
     .bind(spaces)
     .bind(i.status.unwrap_or_else(|| "pending".into()))
     .bind(i.note_id)
+    .bind(ctx.principal.user_id)
+    .bind(ctx.principal.role >= Role::Admin)
     .fetch_all(&mut *ctx.tx)
     .await?)
 }
