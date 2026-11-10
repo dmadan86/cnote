@@ -18,7 +18,7 @@ export const MODULES: ModuleDef[] = [
   { key: 'projects', label: 'Projects', icon: FolderKanban },
   { key: 'crm', label: 'CRM', icon: Users },
   { key: 'billing', label: 'Billing', icon: Receipt },
-  { key: 'whiteboard', label: 'Whiteboard', icon: Presentation, soon: true },
+  { key: 'whiteboard', label: 'Whiteboard', icon: Presentation },
 ]
 
 export const PageIcon = FileText
