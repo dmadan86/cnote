@@ -45,7 +45,7 @@ export class ItemEmbedUtil extends ShapeUtil<ItemEmbedShape> {
         }}
       >
         <a
-          href={s.props.href}
+          href={safeHref(s.props.href)}
           onPointerDown={(e) => e.stopPropagation()}
           style={{ fontWeight: 600, textDecoration: 'underline' }}
         >
@@ -62,4 +62,9 @@ export class ItemEmbedUtil extends ShapeUtil<ItemEmbedShape> {
     p.rect(0, 0, s.props.w, s.props.h)
     return p
   }
+}
+
+/** Shape props arrive from collaborators over Yjs: only same-origin app paths may become links (no javascript:, no //host). */
+export function safeHref(h: string): string | undefined {
+  return /^\/w\/[\w-]+\/[\w\-/]*$/.test(h) ? h : undefined
 }
