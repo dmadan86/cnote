@@ -222,7 +222,24 @@ pub fn router(state: AppState) -> Router {
         .route("/api/workspaces", post(create_workspace))
         .route("/api/commands", get(list_commands))
         .route("/api/w/{ws}/commands/{name}", post(run_command))
+        .route("/api/hooks/github/{ws}", post(github_hook))
         // EXTRA_ROUTES: modules mount routers here (mcp, collab, webhooks)
         .layer(tower_http::trace::TraceLayer::new_for_http())
         .with_state(state)
+}
+
+/// GitHub webhook (cnote-projects): signature-verified, creates evidence for items named in PRs and deployments.
+async fn github_hook(
+    State(s): State<AppState>,
+    Path(ws): Path<Uuid>,
+    headers: HeaderMap,
+    body: axum::body::Bytes,
+) -> ApiResult<Json<Value>> {
+    let sig = headers
+        .get("x-hub-signature-256")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    Ok(Json(
+        cnote_projects::handle_github_webhook(&s.pool, &s.registry, ws, sig, &body).await?,
+    ))
 }
