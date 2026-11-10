@@ -434,7 +434,20 @@ dependencies = [
 name = "cnote-docs"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "chrono",
  "cnote-core",
+ "cnote-db",
+ "dotenvy",
+ "futures",
+ "regex",
+ "schemars",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "tokio",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]
