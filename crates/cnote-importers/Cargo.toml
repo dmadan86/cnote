@@ -6,3 +6,21 @@ publish.workspace = true
 
 [dependencies]
 cnote-core.workspace = true
+cnote-db.workspace = true
+anyhow.workspace = true
+async-trait.workspace = true
+chrono.workspace = true
+csv.workspace = true
+futures.workspace = true
+regex.workspace = true
+reqwest = { workspace = true, features = ["query"] }
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sqlx.workspace = true
+url.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+dotenvy.workspace = true
+tokio.workspace = true

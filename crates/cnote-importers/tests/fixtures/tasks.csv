@@ -1,0 +1,4 @@
+Ref,Summary,Details,State,Severity,Owner,Tags,Team
+T-1,Fix login redirect,Users bounce back to /login,In Progress,High,ada@example.com,"auth,web",Platform
+T-2,Update pricing page,Copy from marketing,Done,Low,,web,Growth
+T-3,Rotate API keys,,Backlog,Urgent,bob@example.com,security,Platform

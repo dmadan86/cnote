@@ -13,6 +13,7 @@ pub fn all_modules() -> Vec<Module> {
         cnote_finance::module(),
         cnote_projects::module(),
         cnote_ai::module(),
+        cnote_importers::module(),
         // MODULES: each crate exposes `pub fn module() -> cnote_core::Module`
     ]
 }
