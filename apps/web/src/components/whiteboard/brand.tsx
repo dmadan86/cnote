@@ -114,7 +114,9 @@ export function BrandPanel({
           </button>
         ))}
       </div>
-      {kit.logo_url && <img src={kit.logo_url} alt="Brand logo" className="max-h-12" />}
+      {/^https:\/\//i.test(kit.logo_url) && (
+        <img src={kit.logo_url} referrerPolicy="no-referrer" alt="Brand logo" className="max-h-12" />
+      )}
       {admin && (
         <div className="space-y-2 border-t border-line pt-2">
           <input
