@@ -37,6 +37,7 @@ yrs = "0.28"
 rmcp = { version = "3.9", features = ["server", "macros", "transport-streamable-http-server", "transport-io"] }
 dotenvy = "0.15"
 csv = "1"
+rust_decimal = "1"
 cnote-db = { path = "crates/cnote-db" }
 cnote-core = { path = "crates/cnote-core" }
 cnote-finance = { path = "crates/cnote-finance" }
