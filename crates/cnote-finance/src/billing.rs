@@ -607,15 +607,11 @@ async fn invoice_list(ctx: &mut Ctx, i: ListInvoices) -> CmdResult<Vec<InvoiceRo
     .await?)
 }
 
-// ---------- issue ----------
+/// (lines, tax, place of supply, buyer GSTIN)
+type DraftTax = (Vec<Ln>, gst::InvoiceTax, String, Option<String>);
 
-async fn invoice_issue(ctx: &mut Ctx, i: ById) -> CmdResult<InvoiceOut> {
-    assert_note_access(ctx, i.id, true).await?;
-    let inv = load_invoice(ctx, i.id, true).await?;
-    if inv.kind != "invoice" || inv.status != "draft" {
-        return Err(CmdError::conflict("only a draft invoice can be issued"));
-    }
-    let s = seller(ctx).await?;
+/// Lines and GST for a draft as issue would compute them; also the buyer GSTIN and place of supply.
+async fn draft_tax(ctx: &mut Ctx, inv: &InvoiceRow, s: &Seller) -> CmdResult<DraftTax> {
     let contact = match inv.contact_id {
         Some(c) => Some(contact_info(ctx, c).await?),
         None => None,
@@ -636,12 +632,41 @@ async fn invoice_issue(ctx: &mut Ctx, i: ById) -> CmdResult<InvoiceOut> {
         .ok_or_else(|| {
             CmdError::invalid("place of supply is unknown: set it or give the contact a state code")
         })?;
-    let lines = load_lines(ctx, i.id).await?;
+    let lines = load_lines(ctx, inv.id).await?;
     if lines.is_empty() {
         return Err(CmdError::invalid("an invoice needs at least one line"));
     }
     let g: Vec<_> = lines.iter().map(|l| l.g.clone()).collect();
     let tax = gst::compute_invoice(&g, &s.state, &place, inv.reverse_charge).map_err(gst_err)?;
+    Ok((lines, tax, place, buyer_gstin))
+}
+
+/// Read-only: the totals `invoice.issue` would produce for this draft, so the UI can show them before issuing.
+async fn invoice_preview(ctx: &mut Ctx, i: ById) -> CmdResult<Value> {
+    assert_note_access(ctx, i.id, false).await?;
+    let inv = load_invoice(ctx, i.id, false).await?;
+    if inv.status != "draft" {
+        return Err(CmdError::conflict("only a draft can be previewed"));
+    }
+    let s = seller(ctx).await?;
+    let (_, t, place, _) = draft_tax(ctx, &inv, &s).await?;
+    Ok(
+        json!({"intra_state": t.supply == gst::Supply::Intra, "place_of_supply": place, "supplier_state": s.state,
+        "reverse_charge": t.reverse_charge, "subtotal_minor": t.subtotal_minor, "cgst_minor": t.cgst_minor,
+        "sgst_minor": t.sgst_minor, "igst_minor": t.igst_minor, "total_minor": t.total_minor}),
+    )
+}
+
+// ---------- issue ----------
+
+async fn invoice_issue(ctx: &mut Ctx, i: ById) -> CmdResult<InvoiceOut> {
+    assert_note_access(ctx, i.id, true).await?;
+    let inv = load_invoice(ctx, i.id, true).await?;
+    if inv.kind != "invoice" || inv.status != "draft" {
+        return Err(CmdError::conflict("only a draft invoice can be issued"));
+    }
+    let s = seller(ctx).await?;
+    let (lines, tax, place, buyer_gstin) = draft_tax(ctx, &inv, &s).await?;
     write_lines(ctx, i.id, &lines, Some(&tax)).await?;
 
     let date = inv.invoice_date.unwrap_or_else(today_ist);
@@ -1123,6 +1148,7 @@ pub fn commands() -> Vec<Command> {
         Command::new("invoice.update_draft", "Edit a draft invoice (issued invoices are immutable; use credit notes).", ManageInvoices, handler!(invoice_update_draft)),
         Command::new("invoice.get", "Get an invoice with lines, payments and outstanding balance.", Read, handler!(invoice_get)),
         Command::new("invoice.list", "List invoices and credit notes.", Read, handler!(invoice_list)),
+        Command::new("invoice.preview", "Preview the GST totals a draft invoice would get when issued (read-only).", Read, handler!(invoice_preview)),
         Command::new("invoice.issue", "Issue a draft: assigns the FY number, computes GST, posts the ledger entry. Agents need human confirmation.", ManageInvoices, handler!(invoice_issue)).confirm().core(),
         Command::new("invoice.generate_irn", "Generate the e-invoice IRN through the GSP (30-day window enforced for AATO above Rs 10 crore).", ManageInvoices, handler!(invoice_generate_irn)),
         Command::new("invoice.cancel_irn", "Cancel an IRN within 24 hours of acknowledgement.", ManageInvoices, handler!(invoice_cancel_irn)).confirm(),
