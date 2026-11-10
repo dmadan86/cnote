@@ -1,0 +1,19 @@
+{
+  "name": "cnote",
+  "private": true,
+  "packageManager": "pnpm@10.27.0",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "dev:web": "pnpm --filter @cnote/web dev",
+    "build:web": "pnpm --filter @cnote/web build",
+    "lint": "biome check apps e2e",
+    "e2e": "playwright test"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.6.6",
+    "@playwright/test": "1.65.0",
+    "@types/node": "^24.0.0",
+    "typescript": "6.0.3"
+  },
+  "pnpm": { "onlyBuiltDependencies": ["esbuild", "sharp", "@biomejs/biome"] }
+}

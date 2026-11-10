@@ -1,0 +1,54 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "UNLICENSED"
+publish = false
+
+[workspace.dependencies]
+anyhow = "1"
+thiserror = "2"
+async-trait = "0.1"
+axum = { version = "0.8", features = ["ws", "macros"] }
+tokio = { version = "1", features = ["full"] }
+tower = "0.5"
+tower-http = { version = "0.7", features = ["cors", "trace"] }
+sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "tls-rustls", "postgres", "uuid", "chrono", "json", "migrate", "macros"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+schemars = { version = "1", features = ["chrono04", "uuid1"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+argon2 = "0.6"
+rand = "0.9"
+sha2 = "0.10"
+hex = "0.4"
+base64 = "0.22"
+futures = "0.3"
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "http2"] }
+clap = { version = "4", features = ["derive", "env"] }
+regex = "1"
+yrs = "0.28"
+rmcp = { version = "3.9", features = ["server", "macros", "transport-streamable-http-server", "transport-io"] }
+dotenvy = "0.15"
+csv = "1"
+cnote-db = { path = "crates/cnote-db" }
+cnote-core = { path = "crates/cnote-core" }
+cnote-finance = { path = "crates/cnote-finance" }
+cnote-projects = { path = "crates/cnote-projects" }
+cnote-docs = { path = "crates/cnote-docs" }
+cnote-ai = { path = "crates/cnote-ai" }
+cnote-mcp = { path = "crates/cnote-mcp" }
+cnote-importers = { path = "crates/cnote-importers" }
+cnote-collab = { path = "crates/cnote-collab" }
+
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+opt-level = 1

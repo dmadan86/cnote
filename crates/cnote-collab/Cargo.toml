@@ -1,0 +1,8 @@
+[package]
+name = "cnote-collab"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+cnote-core.workspace = true

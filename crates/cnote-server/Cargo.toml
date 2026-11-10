@@ -1,0 +1,38 @@
+[package]
+name = "cnote-server"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "cnote"
+path = "src/main.rs"
+
+[dependencies]
+cnote-db.workspace = true
+cnote-core.workspace = true
+cnote-finance.workspace = true
+cnote-projects.workspace = true
+cnote-docs.workspace = true
+cnote-ai.workspace = true
+cnote-mcp.workspace = true
+cnote-importers.workspace = true
+cnote-collab.workspace = true
+axum.workspace = true
+tokio.workspace = true
+tower.workspace = true
+tower-http.workspace = true
+sqlx.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+clap.workspace = true
+dotenvy.workspace = true
+futures.workspace = true
+
+[dev-dependencies]
+reqwest.workspace = true

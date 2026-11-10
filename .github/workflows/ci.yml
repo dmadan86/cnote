@@ -1,0 +1,116 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# No credentials live in this file: the throwaway Postgres uses trust auth and the app-role
+# password is generated per run.
+env:
+  CARGO_TERM_COLOR: always
+  DATABASE_ADMIN_URL: postgres://postgres@localhost:5432/cnote
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_DB: cnote
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Generate throwaway DB credentials
+        run: |
+          PW=$(openssl rand -hex 16)
+          echo "::add-mask::$PW"
+          echo "DB_APP_PASSWORD=$PW" >> "$GITHUB_ENV"
+          echo "DATABASE_URL=postgres://cnote_app:$PW@localhost:5432/cnote" >> "$GITHUB_ENV"
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings -A clippy::type_complexity -A clippy::too_many_arguments
+      - name: Migrate
+        run: |
+          cargo run -q -p cnote-server -- migrate
+          echo "alter role cnote_app password :'pw';" | psql "$DATABASE_ADMIN_URL" -v pw="$DB_APP_PASSWORD"
+      - run: cargo test --workspace
+
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm --filter @cnote/web typecheck
+      - run: pnpm build:web
+
+  e2e:
+    runs-on: ubuntu-latest
+    needs: [rust, web]
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_DB: cnote
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Generate throwaway credentials
+        run: |
+          PW=$(openssl rand -hex 16)
+          echo "::add-mask::$PW"
+          echo "DB_APP_PASSWORD=$PW" >> "$GITHUB_ENV"
+          echo "DATABASE_URL=postgres://cnote_app:$PW@localhost:5432/cnote" >> "$GITHUB_ENV"
+      - name: Build and migrate
+        run: |
+          cargo build -p cnote-server
+          ./target/debug/cnote migrate
+          echo "alter role cnote_app password :'pw';" | psql "$DATABASE_ADMIN_URL" -v pw="$DB_APP_PASSWORD"
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm build:web
+      - name: Start API and web
+        run: |
+          ./target/debug/cnote serve --with-worker > api.log 2>&1 &
+          pnpm --filter @cnote/web start > web.log 2>&1 &
+          npx --yes wait-on -t 120000 http://localhost:4000/healthz http://localhost:3000
+        env:
+          API_URL: http://localhost:4000
+      - run: pnpm e2e
+        env:
+          BASE_URL: http://localhost:3000
+          API_URL: http://localhost:4000
+      - if: failure()
+        run: tail -n 200 api.log web.log
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report

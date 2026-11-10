@@ -1,0 +1,8 @@
+[package]
+name = "cnote-mcp"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+cnote-core.workspace = true

@@ -1,0 +1,28 @@
+[package]
+name = "cnote-core"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+cnote-db.workspace = true
+sqlx.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+futures.workspace = true
+tracing.workspace = true
+argon2.workspace = true
+rand.workspace = true
+sha2.workspace = true
+hex.workspace = true
+base64.workspace = true
+regex.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true
+dotenvy.workspace = true
