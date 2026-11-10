@@ -222,6 +222,10 @@ pub fn router(state: AppState) -> Router {
         .route("/api/workspaces", post(create_workspace))
         .route("/api/commands", get(list_commands))
         .route("/api/w/{ws}/commands/{name}", post(run_command))
+        .route_service(
+            "/collab/{workspace_id}/{note_id}",
+            cnote_collab::router(state.pool.clone(), state.registry.clone()),
+        )
         // EXTRA_ROUTES: modules mount routers here (mcp, collab, webhooks)
         .layer(tower_http::trace::TraceLayer::new_for_http())
         .with_state(state)
