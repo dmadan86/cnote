@@ -1,0 +1,100 @@
+{
+  "issues": [
+    {
+      "id": "10001",
+      "key": "ENG-1",
+      "self": "https://acme.atlassian.net/rest/api/3/issue/10001",
+      "fields": {
+        "summary": "Checkout revamp",
+        "description": {"type": "doc", "version": 1, "content": [
+          {"type": "paragraph", "content": [{"type": "text", "text": "Rebuild the checkout flow."}]}
+        ]},
+        "issuetype": {"name": "Epic"},
+        "status": {"name": "In Progress", "statusCategory": {"key": "indeterminate"}},
+        "priority": {"name": "High"},
+        "assignee": {"displayName": "Ada Example", "emailAddress": "ada@example.com"},
+        "reporter": {"displayName": "Ada Example", "emailAddress": "ada@example.com"},
+        "labels": ["checkout"],
+        "created": "2024-01-10T09:00:00.000+0530"
+      },
+      "changelog": {"histories": []}
+    },
+    {
+      "id": "10002",
+      "key": "ENG-2",
+      "self": "https://acme.atlassian.net/rest/api/3/issue/10002",
+      "fields": {
+        "summary": "Add UPI payment option",
+        "description": "Support UPI collect and intent flows.",
+        "issuetype": {"name": "Story"},
+        "status": {"name": "Done", "statusCategory": {"key": "done"}},
+        "priority": {"name": "Highest"},
+        "assignee": {"displayName": "Ada Example", "emailAddress": "ada@example.com"},
+        "reporter": {"displayName": "Bob Sample", "emailAddress": "bob@example.com"},
+        "labels": ["payments", "india"],
+        "components": [{"name": "Payments"}, {"name": "Web"}],
+        "fixVersions": [{"name": "1.4", "released": true, "releaseDate": "2024-03-01"}],
+        "customfield_10016": 5,
+        "customfield_10020": [
+          {"id": 1, "name": "Sprint 1", "state": "closed", "boardId": 7, "startDate": "2024-01-15T00:00:00.000Z", "endDate": "2024-01-29T00:00:00.000Z"},
+          {"id": 2, "name": "Sprint 2", "state": "closed", "boardId": 7, "startDate": "2024-01-29T00:00:00.000Z", "endDate": "2024-02-12T00:00:00.000Z"}
+        ],
+        "customfield_10099": "legacy-risk-score-3",
+        "parent": {"key": "ENG-1"},
+        "duedate": "2024-02-10",
+        "resolutiondate": "2024-02-09T12:00:00.000+0530",
+        "created": "2024-01-11T10:00:00.000+0530",
+        "issuelinks": [
+          {"type": {"name": "Blocks"}, "outwardIssue": {"key": "ENG-3"}},
+          {"type": {"name": "Relates"}, "outwardIssue": {"key": "ENG-99"}}
+        ],
+        "comment": {"comments": [
+          {"id": "20001", "author": {"displayName": "Bob Sample", "emailAddress": "bob@example.com"},
+           "created": "2024-01-12T11:00:00.000+0530",
+           "body": {"type": "doc", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "Which PSP are we using?"}]}]}},
+          {"id": "20002", "author": {"displayName": "Carol Nobody", "emailAddress": "carol@example.com"},
+           "created": "2024-01-13T11:00:00.000+0530", "body": "Razorpay, per the spec."}
+        ]},
+        "attachment": [
+          {"id": "30001", "filename": "upi-flow.png", "mimeType": "image/png", "size": 20480,
+           "content": "https://acme.atlassian.net/rest/api/3/attachment/content/30001"}
+        ]
+      },
+      "changelog": {"histories": [
+        {"id": "40001", "author": {"displayName": "Ada Example"}, "created": "2024-01-20T09:00:00.000+0530",
+         "items": [{"field": "status", "fromString": "To Do", "toString": "In Progress"}]},
+        {"id": "40002", "author": {"displayName": "Ada Example"}, "created": "2024-02-09T12:00:00.000+0530",
+         "items": [{"field": "status", "fromString": "In Progress", "toString": "Done"},
+                   {"field": "resolution", "fromString": null, "toString": "Done"}]}
+      ]}
+    },
+    {
+      "id": "10003",
+      "key": "ENG-3",
+      "self": "https://acme.atlassian.net/rest/api/3/issue/10003",
+      "fields": {
+        "summary": "Payment callback times out",
+        "description": "Callback handler exceeds 30s under load.",
+        "issuetype": {"name": "Bug"},
+        "status": {"name": "To Do", "statusCategory": {"key": "new"}},
+        "priority": {"name": "Low"},
+        "assignee": {"displayName": "Dave Unknown", "emailAddress": "dave@example.com"},
+        "labels": [],
+        "created": "2024-02-01T09:30:00.000+0530",
+        "issuelinks": [
+          {"type": {"name": "Blocks"}, "inwardIssue": {"key": "ENG-2"}}
+        ]
+      },
+      "changelog": {"histories": []}
+    }
+  ],
+  "filters": [
+    {"id": "5001", "name": "My open bugs", "jql": "assignee = currentUser() AND type = Bug AND resolution = Unresolved"},
+    {"id": "5002", "name": "Payments backlog", "jql": "project = ENG AND labels = payments ORDER BY created DESC"}
+  ],
+  "automation_rules": [
+    {"name": "Auto-assign bugs to triage", "trigger": {"type": "issue_created"},
+     "conditions": [{"field": "issuetype", "equals": "Bug"}],
+     "actions": [{"type": "assign", "to": "triage"}]}
+  ]
+}
