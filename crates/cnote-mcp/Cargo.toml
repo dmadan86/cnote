@@ -15,9 +15,10 @@ serde.workspace = true
 serde_json.workspace = true
 uuid.workspace = true
 anyhow.workspace = true
+chrono.workspace = true
+schemars.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
 reqwest.workspace = true
 dotenvy.workspace = true
-schemars.workspace = true

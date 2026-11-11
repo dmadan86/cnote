@@ -642,6 +642,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
+ "chrono",
  "cnote-core",
  "cnote-db",
  "dotenvy",
@@ -684,6 +685,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
+ "base64 0.22.1",
  "chrono",
  "clap",
  "cnote-ai",
@@ -697,15 +699,18 @@ dependencies = [
  "cnote-projects",
  "dotenvy",
  "futures",
+ "rand 0.9.5",
  "reqwest",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "sqlx",
  "tokio",
  "tower",
  "tower-http 0.7.1",
  "tracing",
  "tracing-subscriber",
+ "url",
  "uuid",
 ]
 

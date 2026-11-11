@@ -22,6 +22,9 @@ Environment: `DATABASE_URL`, `DATABASE_ADMIN_URL` (migrate job only), `COOKIE_SE
 `CNOTE_MASTER_KEY` (base64 32 bytes, encrypts BYO-LLM keys), optional `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
 `OPENAI_BASE_URL`, `AI_MODEL`, `COLLAB_ALLOWED_ORIGINS` (the web origin), `GSP_MODE=sandbox` until a GSP is contracted.
 Do not set `AI_ALLOW_PRIVATE_ENDPOINTS` on multi-tenant deployments.
+MCP OAuth: `PUBLIC_BASE_URL` (the public origin of API/MCP) is **required**; without it OAuth and its metadata are served only
+for loopback hosts. Set `TRUST_PROXY=1` only behind a proxy that sets `X-Forwarded-For`, so rate limits key on the real
+client IP. Never set `OAUTH_CIMD_ALLOW_PRIVATE`. See docs/mcp-oauth.md.
 
 ## Web (Vercel)
 Project root `apps/web` (vercel.json installs from the monorepo root). Environment:

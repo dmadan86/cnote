@@ -82,9 +82,14 @@ pub async fn principal_for(
     workspace_id: Uuid,
 ) -> Result<Principal, CmdError> {
     if let Some(key) = bearer(headers).filter(|k| !k.starts_with(NATIVE_SESSION_PREFIX)) {
-        let p = auth::principal_from_api_key(pool, &key)
+        let p = auth::principal_from_bearer(pool, &key, &cnote_mcp::mcp_resource(headers))
             .await?
-            .ok_or_else(|| CmdError::new(ErrorCode::Unauthenticated, "invalid API key"))?;
+            .ok_or_else(|| {
+                CmdError::new(
+                    ErrorCode::Unauthenticated,
+                    "invalid API key or access token",
+                )
+            })?;
         if p.workspace_id != workspace_id {
             return Err(CmdError::forbidden("API key belongs to another workspace"));
         }
@@ -260,6 +265,7 @@ pub fn router(state: AppState) -> Router {
             state.pool.clone(),
             state.registry.clone(),
         ))
+        .merge(crate::oauth::router())
         // EXTRA_ROUTES: modules mount routers here (mcp, collab, webhooks)
         .layer(tower_http::trace::TraceLayer::new_for_http())
         .with_state(state)

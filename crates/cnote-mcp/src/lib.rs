@@ -2,6 +2,8 @@
 //! `discover` and `invoke`; notes and saved views are resources. Every call runs through `Registry::execute`,
 //! so permission checks, tool groups, idempotency and confirmations are the same as for REST and the UI.
 
+pub mod apps;
+
 use axum::Router;
 use axum::extract::{Request, State};
 use axum::http::{HeaderValue, StatusCode, header, request::Parts};
@@ -43,7 +45,7 @@ pub struct McpServer {
     fixed: Option<Principal>,
 }
 
-/// Streamable HTTP endpoint at `/mcp`, stateless, authenticated with `Authorization: Bearer cn_...`.
+/// Streamable HTTP endpoint at `/mcp`, stateless, authenticated with `Authorization: Bearer` (a `cn_` API key or a `cno_` OAuth access token).
 /// Generic over the caller's router state so it merges into any app router.
 pub fn router<S: Clone + Send + Sync + 'static>(
     pool: PgPool,
@@ -71,19 +73,47 @@ pub fn router<S: Clone + Send + Sync + 'static>(
         .layer(middleware::from_fn_with_state(pool, authenticate))
 }
 
-fn unauthorized(error: Option<&str>) -> Response {
-    let challenge = match error {
-        Some(e) => format!("Bearer realm=\"cnote\", error=\"{e}\""),
-        None => "Bearer realm=\"cnote\"".to_string(),
+/// Public origin of this server (no trailing slash), for OAuth metadata and challenges. Production sets
+/// PUBLIC_BASE_URL. Without it only loopback hosts are served (local development); any other Host gets None,
+/// so a spoofed Host header can never mint issuer/resource URLs.
+pub fn public_base(headers: &axum::http::HeaderMap) -> Option<String> {
+    if let Ok(v) = std::env::var("PUBLIC_BASE_URL") {
+        return Some(v.trim_end_matches('/').to_string());
+    }
+    let host = headers.get(header::HOST).and_then(|v| v.to_str().ok())?;
+    let name = match host.strip_prefix('[') {
+        Some(rest) => rest.split(']').next()?,
+        None => host.split(':').next()?,
     };
+    matches!(name, "localhost" | "127.0.0.1" | "::1").then(|| format!("http://{host}"))
+}
+
+/// The protected resource tokens are issued for and checked against.
+pub fn mcp_resource(headers: &axum::http::HeaderMap) -> String {
+    public_base(headers)
+        .map(|b| format!("{b}/mcp"))
+        .unwrap_or_default()
+}
+
+/// 401 with the RFC 9728 pointer so MCP clients can discover the authorization server.
+fn unauthorized(headers: &axum::http::HeaderMap, error: Option<&str>) -> Response {
+    let mut challenge = "Bearer realm=\"cnote\"".to_string();
+    if let Some(base) = public_base(headers) {
+        challenge.push_str(&format!(
+            ", resource_metadata=\"{base}/.well-known/oauth-protected-resource/mcp\""
+        ));
+    }
+    if let Some(e) = error {
+        challenge.push_str(&format!(", error=\"{e}\""));
+    }
     let mut res = (
         StatusCode::UNAUTHORIZED,
-        axum::Json(json!({"error": {"code": "unauthenticated", "message": "Authorization: Bearer <cn_ API key> required"}})),
+        axum::Json(json!({"error": {"code": "unauthenticated", "message": "Authorization: Bearer <cn_ API key or cno_ OAuth token> required"}})),
     )
         .into_response();
     res.headers_mut().insert(
         header::WWW_AUTHENTICATE,
-        HeaderValue::from_str(&challenge).expect("static challenge"),
+        HeaderValue::from_str(&challenge).unwrap_or_else(|_| HeaderValue::from_static("Bearer")),
     );
     res
 }
@@ -96,16 +126,16 @@ async fn authenticate(State(pool): State<PgPool>, mut req: Request, next: Next) 
         .and_then(|v| v.strip_prefix("Bearer "))
         .map(|k| k.trim().to_string())
     else {
-        return unauthorized(None);
+        return unauthorized(req.headers(), None);
     };
-    match auth::principal_from_api_key(&pool, &key).await {
+    match auth::principal_from_bearer(&pool, &key, &mcp_resource(req.headers())).await {
         Ok(Some(p)) => {
             req.extensions_mut().insert(p);
             next.run(req).await
         }
-        Ok(None) => unauthorized(Some("invalid_token")),
+        Ok(None) => unauthorized(req.headers(), Some("invalid_token")),
         Err(e) => {
-            tracing::error!(error = %e, "api key lookup failed");
+            tracing::error!(error = %e, "bearer lookup failed");
             StatusCode::INTERNAL_SERVER_ERROR.into_response()
         }
     }

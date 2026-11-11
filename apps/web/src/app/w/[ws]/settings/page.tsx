@@ -6,7 +6,16 @@ import { btn, btnPrimary, ErrorText, Field, inputCls } from '@/components/ui'
 import { cmd } from '@/lib/api'
 import { ago, useCmd } from '@/lib/hooks'
 
-const TABS = ['Workspace', 'Members', 'API keys', 'Agents', 'Tool groups', 'Confirmations', 'Usage'] as const
+const TABS = [
+  'Workspace',
+  'Members',
+  'API keys',
+  'Agents',
+  'Tool groups',
+  'Confirmations',
+  'Connected apps',
+  'Usage',
+] as const
 type TabName = (typeof TABS)[number]
 
 type Ws = { name: string; settings: { agent_tool_groups?: string[] } }
@@ -341,6 +350,37 @@ function ConfirmationsTab({ ws }: { ws: string }) {
   )
 }
 
+type ConnectedApp = { id: string; name: string; created_at: string; last_used_at: string | null }
+
+function AppsTab({ ws }: { ws: string }) {
+  const { data, reload } = useCmd<ConnectedApp[]>(ws, 'oauth_app.list')
+  if (data?.length === 0)
+    return <p className="text-muted">No connected apps. MCP clients you approve through OAuth appear here.</p>
+  return (
+    <ul className="divide-y divide-line rounded-md border border-line">
+      {data?.map((a) => (
+        <li key={a.id} className="flex items-center gap-3 px-3 py-2">
+          <span className="font-medium">{a.name}</span>
+          <span className="text-[12px] text-muted">
+            connected {ago(a.created_at)}, {a.last_used_at ? `used ${ago(a.last_used_at)}` : 'never used'}
+          </span>
+          <button
+            type="button"
+            className={`${btn} ml-auto`}
+            aria-label={`Disconnect ${a.name}`}
+            onClick={async () => {
+              await cmd(ws, 'oauth_app.revoke', { id: a.id })
+              reload()
+            }}
+          >
+            Disconnect
+          </button>
+        </li>
+      ))}
+    </ul>
+  )
+}
+
 function UsageTab({ ws }: { ws: string }) {
   const { data } = useCmd<{ kind: string; quantity: number }[]>(ws, 'usage.summary')
   if (data?.length === 0) return <p className="text-muted">No usage in the last 30 days.</p>
@@ -392,6 +432,7 @@ export default function Settings() {
         {tab === 'Agents' && <AgentsTab ws={ws} />}
         {tab === 'Tool groups' && <GroupsTab ws={ws} />}
         {tab === 'Confirmations' && <ConfirmationsTab ws={ws} />}
+        {tab === 'Connected apps' && <AppsTab ws={ws} />}
         {tab === 'Usage' && <UsageTab ws={ws} />}
       </div>
     </div>
