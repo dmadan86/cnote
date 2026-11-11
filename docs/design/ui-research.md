@@ -47,3 +47,15 @@ Patterns chosen for C Note's web client, with the Mobbin screens they come from.
 ## Visual language
 Neutral light UI (white canvas, #f7f7f8 sidebars), 13-14px UI text, 1px hairline borders, small
 radius (6px), pills for status/priority, one accent color for primary actions, dark mode via tokens.
+
+## Mobile and tablet app (apps/mobile)
+- Home as a grouped list: one rounded badge icon per module, title and hint, chevron; workspace and account
+  sections below. [GitHub iOS home](https://mobbin.com/screens/2210aab7-8323-40e4-98a6-1739eec50ac3)
+- Floating, rounded tab bar that hovers above the content with safe-area inset; on iPad it is centred at a fixed
+  width instead of stretching.
+- Pages list grouped by day (Today, Yesterday, dates) with a floating "New page" pill bottom right.
+  [Notes list with floating create](https://mobbin.com/screens/e563596d-d08a-4b32-a085-711680e3b381)
+- Projects: filter chips (space, status category) over a flat item list, key and priority as subtitle, status
+  pill at right. [GitHub Issues](https://mobbin.com/screens/ac207bf0-458c-4a91-86df-6772d5f421e8)
+- Tablet (width >= 768dp): list on the left, detail on the right, no push navigation. Same components as the
+  phone detail screens. Colours reuse the web tokens (light and dark follow the system).
