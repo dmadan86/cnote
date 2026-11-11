@@ -174,7 +174,7 @@ fn no_store(r: impl IntoResponse) -> Response {
 
 /// Caller address for throttling: the socket peer, or the left-most X-Forwarded-For entry only when the
 /// operator says a trusted proxy sets it (TRUST_PROXY=1).
-fn client_ip(
+pub(crate) fn client_ip(
     headers: &HeaderMap,
     peer: Option<axum::Extension<ConnectInfo<std::net::SocketAddr>>>,
 ) -> String {

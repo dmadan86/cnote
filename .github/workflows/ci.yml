@@ -114,7 +114,7 @@ jobs:
       - run: pnpm build:web
       - name: Start API and web
         run: |
-          COLLAB_ALLOWED_ORIGINS=http://localhost:3000 ./target/debug/cnote serve --with-worker > api.log 2>&1 &
+          CNOTE_PLATFORM_ADMINS=@example.test COLLAB_ALLOWED_ORIGINS=http://localhost:3000 ./target/debug/cnote serve --with-worker > api.log 2>&1 &
           pnpm --filter @cnote/web start > web.log 2>&1 &
           npx --yes wait-on -t 120000 http://localhost:4000/healthz http://localhost:3000
         env:

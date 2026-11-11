@@ -1,6 +1,7 @@
 //! One binary, three entrypoints (ADR-001): `serve` (HTTP API + MCP + collab), `worker` (jobs, events, sweeps), `migrate`.
 
 mod api;
+mod marketplace;
 mod modules;
 mod netguard;
 mod oauth;

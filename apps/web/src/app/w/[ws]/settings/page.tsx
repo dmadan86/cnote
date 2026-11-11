@@ -1,10 +1,11 @@
 'use client'
-import { Check, Copy } from 'lucide-react'
 import { useState } from 'react'
+import { Secret } from '@/components/secret'
 import { useShell } from '@/components/shell'
 import { btn, btnPrimary, ErrorText, Field, inputCls } from '@/components/ui'
 import { cmd } from '@/lib/api'
 import { ago, useCmd } from '@/lib/hooks'
+import { GROUPS } from '@/lib/tool-groups'
 
 const TABS = [
   'Workspace',
@@ -30,47 +31,7 @@ type Key = {
 type Agent = { id: string; name: string; kind: string; scopes: string[] }
 type Confirmation = { id: string; command: string; requested_by: string; created_at: string; input: unknown }
 
-const GROUPS: [string, string][] = [
-  ['read', 'Read notes, spaces and search'],
-  ['write_notes', 'Create and edit pages and comments'],
-  ['write_items', 'Create and edit work items'],
-  ['manage_crm', 'Manage contacts and deals'],
-  ['manage_invoices', 'Money-moving: create and issue invoices'],
-  ['send_messages', 'Outbound: email and WhatsApp'],
-  ['admin', 'Members, keys and settings'],
-  ['destructive', 'Delete data'],
-]
 const DEFAULT_GROUPS = ['read', 'write_notes', 'write_items', 'manage_crm']
-
-function Secret({ value, onDone }: { value: string; onDone: () => void }) {
-  const [copied, setCopied] = useState(false)
-  return (
-    <div role="status" className="space-y-2 rounded-md border border-line bg-warn-bg p-3">
-      <p className="text-[13px] font-medium">Copy this key now. It will not be shown again.</p>
-      <div className="flex items-center gap-2">
-        <code
-          data-testid="secret"
-          className="min-w-0 flex-1 break-all rounded bg-canvas px-2 py-1 text-[13px]"
-        >
-          {value}
-        </code>
-        <button
-          type="button"
-          className={btn}
-          onClick={async () => {
-            await navigator.clipboard.writeText(value).catch(() => {})
-            setCopied(true)
-          }}
-        >
-          {copied ? <Check size={14} /> : <Copy size={14} />} {copied ? 'Copied' : 'Copy'}
-        </button>
-        <button type="button" className={btn} onClick={onDone}>
-          Done
-        </button>
-      </div>
-    </div>
-  )
-}
 
 function WorkspaceTab({ ws }: { ws: string }) {
   const { data, reload } = useCmd<Ws>(ws, 'workspace.get')

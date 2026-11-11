@@ -3,7 +3,7 @@ import { FileText, Navigation, Plus, Search } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { useEffect, useState } from 'react'
 import { cmd } from '@/lib/api'
-import { MODULES } from '@/lib/modules'
+import { MODULES, moduleOn } from '@/lib/modules'
 import { useShell } from './shell'
 import { Modal } from './ui'
 
@@ -11,7 +11,7 @@ type Hit = { id: string; title: string; snippet: string }
 type Item = { key: string; label: string; hint?: string; icon: React.ReactNode; run: () => void }
 
 export function Palette({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { ws, spaces, newPage } = useShell()
+  const { ws, spaces, newPage, modules } = useShell()
   const router = useRouter()
   const [q, setQ] = useState('')
   const [hits, setHits] = useState<Hit[]>([])
@@ -71,7 +71,7 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
         newPage()
       },
     },
-    ...MODULES.map((m) => ({
+    ...MODULES.filter((m) => moduleOn(modules, m.key)).map((m) => ({
       key: `nav-${m.key}`,
       label: `Go to ${m.label}`,
       icon: <Navigation size={14} />,
@@ -81,6 +81,12 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
           : `/w/${ws}${m.key && m.key !== 'docs' ? `/${m.key}` : ''}`,
       ),
     })),
+    {
+      key: 'nav-marketplace',
+      label: 'Go to Marketplace',
+      icon: <Navigation size={14} />,
+      run: go(`/w/${ws}/marketplace`),
+    },
     {
       key: 'nav-settings',
       label: 'Go to Settings',

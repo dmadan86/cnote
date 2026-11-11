@@ -21,4 +21,8 @@ export const MODULES: ModuleDef[] = [
   { key: 'whiteboard', label: 'Whiteboard', icon: Presentation },
 ]
 
+/** settings.modules: missing = all enabled. Home is always on. */
+export const moduleOn = (enabled: string[] | null | undefined, key: string) =>
+  !key || !enabled || enabled.includes(key)
+
 export const PageIcon = FileText

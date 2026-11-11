@@ -7,6 +7,7 @@ pub mod auth;
 pub mod command;
 pub mod error;
 pub mod events;
+pub mod marketplace;
 pub mod notes;
 pub mod principal;
 pub mod ratelimit;
@@ -20,6 +21,7 @@ pub fn module() -> Module {
     let mut commands = notes::commands();
     commands.extend(admin::commands());
     commands.extend(sharing::commands());
+    commands.extend(marketplace::commands());
     Module {
         commands,
         workspace_hooks: vec![default_space],

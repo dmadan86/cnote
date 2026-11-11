@@ -14,7 +14,7 @@ pub fn sha256_hex(s: &str) -> String {
     hex::encode(Sha256::digest(s.as_bytes()))
 }
 
-fn random_token(bytes: usize) -> String {
+pub fn random_token(bytes: usize) -> String {
     let mut buf = vec![0u8; bytes];
     rand::rng().fill_bytes(&mut buf);
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(buf)
@@ -178,13 +178,13 @@ pub async fn principal_from_api_key(pool: &PgPool, key: &str) -> CmdResult<Optio
     if !key.starts_with("cn_") {
         return Ok(None);
     }
-    let row: Option<(Uuid, Uuid, Uuid, Option<Uuid>, Vec<String>)> = sqlx::query_as(
-        "select id, workspace_id, user_id, agent_id, scopes from core.resolve_api_key($1)",
+    let row: Option<(Uuid, Uuid, Option<Uuid>, Vec<String>)> = sqlx::query_as(
+        "select workspace_id, user_id, agent_id, scopes from core.resolve_api_key($1)",
     )
     .bind(sha256_hex(key))
     .fetch_optional(pool)
     .await?;
-    let Some((_, ws, user, agent, scopes)) = row else {
+    let Some((ws, user, agent, scopes)) = row else {
         return Ok(None);
     };
     let Ok(owner) = user_principal(pool, user, ws).await else {

@@ -1,10 +1,10 @@
 'use client'
-import { ChevronDown, ChevronRight, FileText, Lock, Plus, Search, Settings } from 'lucide-react'
+import { ChevronDown, ChevronRight, FileText, Lock, Plus, Search, Settings, Store } from 'lucide-react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { auth, cmd, type Me, type Member, type Note, type SharedNote, type Space } from '@/lib/api'
-import { MODULES } from '@/lib/modules'
+import { MODULES, moduleOn } from '@/lib/modules'
 import { Palette } from './palette'
 import { SpaceDialog } from './space-dialog'
 import { Avatar, btnPrimary } from './ui'
@@ -16,6 +16,8 @@ type Shell = {
   notes: Note[]
   shared: SharedNote[]
   members: Member[]
+  /** settings.modules; null = all enabled. */
+  modules: string[] | null
   reload: () => void
   newPage: (opts?: { spaceId?: string; parentId?: string }) => Promise<void>
   openSpaceDialog: () => void
@@ -246,6 +248,7 @@ export function ShellView({ ws, children }: { ws: string; children: React.ReactN
   const [notes, setNotes] = useState<Note[]>([])
   const [members, setMembers] = useState<Member[]>([])
   const [shared, setShared] = useState<SharedNote[]>([])
+  const [modules, setModules] = useState<string[] | null>(null)
   const [denied, setDenied] = useState(false)
   const [tick, setTick] = useState(0)
   const [spaceDialog, setSpaceDialog] = useState(false)
@@ -266,8 +269,10 @@ export function ShellView({ ws, children }: { ws: string; children: React.ReactN
       cmd<Note[]>(ws, 'note.list', { limit: 500 }),
       cmd<Member[]>(ws, 'member.list'),
       loadShared(ws),
+      cmd<{ settings: { modules?: string[] } }>(ws, 'workspace.get'),
     ]).then(
-      ([s, n, m, sh]) => {
+      ([s, n, m, sh, w]) => {
+        setModules(w.settings.modules ?? null)
         setSpaces(s)
         setNotes([...n, ...sh.roots, ...sh.extra])
         setMembers(m)
@@ -330,6 +335,7 @@ export function ShellView({ ws, children }: { ws: string; children: React.ReactN
     notes,
     shared,
     members,
+    modules,
     reload,
     newPage,
     openSpaceDialog: () => setSpaceDialog(true),
@@ -350,7 +356,7 @@ export function ShellView({ ws, children }: { ws: string; children: React.ReactN
             aria-label="Modules"
             className="flex w-12 shrink-0 flex-col items-center gap-1 border-r border-line bg-side py-2"
           >
-            {MODULES.map((m) => (
+            {MODULES.filter((m) => moduleOn(modules, m.key)).map((m) => (
               <Link
                 key={m.key}
                 href={hrefFor(m.key)}
@@ -362,6 +368,15 @@ export function ShellView({ ws, children }: { ws: string; children: React.ReactN
                 <m.icon size={18} />
               </Link>
             ))}
+            <Link
+              href={`${base}/marketplace`}
+              aria-label="Marketplace"
+              title="Marketplace"
+              aria-current={active('marketplace') ? 'page' : undefined}
+              className="rounded-md p-2 text-muted hover:bg-hover aria-[current=page]:bg-hover aria-[current=page]:text-fg"
+            >
+              <Store size={18} />
+            </Link>
             <Link
               href={`${base}/settings`}
               aria-label="Settings"

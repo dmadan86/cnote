@@ -266,6 +266,7 @@ pub fn router(state: AppState) -> Router {
             state.registry.clone(),
         ))
         .merge(crate::oauth::router())
+        .merge(crate::marketplace::router())
         // EXTRA_ROUTES: modules mount routers here (mcp, collab, webhooks)
         .layer(tower_http::trace::TraceLayer::new_for_http())
         .with_state(state)
