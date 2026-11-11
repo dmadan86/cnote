@@ -28,9 +28,7 @@ export function AuthForm({ mode }: { mode: 'login' | 'signup' }) {
         router.push(r.workspace_id ? `/w/${r.workspace_id}` : '/')
       } else {
         await auth.login({ email: get('email'), password: get('password') })
-        const next = new URLSearchParams(window.location.search).get('next')
-        // Same-origin absolute paths only; "//host" and "/\\host" would leave the site.
-        router.push(next && /^\/[^/\\]/.test(next) ? next : '/')
+        router.push(sameOriginPath(new URLSearchParams(window.location.search).get('next')))
       }
     } catch (err) {
       setError((err as Error).message)
@@ -97,4 +95,15 @@ export function AuthForm({ mode }: { mode: 'login' | 'signup' }) {
       </form>
     </main>
   )
+}
+
+/** `?next=` after sign-in: resolve like the browser does (tabs/backslashes included) and keep it only if same-origin. */
+export function sameOriginPath(next: string | null): string {
+  if (!next) return '/'
+  try {
+    const u = new URL(next, window.location.origin)
+    return u.origin === window.location.origin ? u.pathname + u.search + u.hash : '/'
+  } catch {
+    return '/'
+  }
 }
