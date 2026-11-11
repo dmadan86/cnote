@@ -25,7 +25,10 @@ test('verify a page, ask with citation, unanswered question becomes a capture re
 
   await page.getByRole('button', { name: 'Verify' }).click()
   const dlg = page.getByRole('dialog', { name: 'Verify page' })
+  // New pages already show "Fresh until", so wait for the verify itself before navigating away.
+  const verified = page.waitForResponse((r) => r.url().includes('doc.verify') && r.ok())
   await dlg.getByRole('button', { name: 'Confirm verified' }).click()
+  await verified
   await expect(page.getByText(/Fresh until/)).toBeVisible()
 
   await page.goto(`/w/${ws}/docs`)

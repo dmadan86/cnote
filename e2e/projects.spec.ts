@@ -58,11 +58,13 @@ test('projects: space -> items -> CNQL -> board drag -> detail -> sprint', async
   await page.getByRole('tab', { name: 'List' }).click()
   await page.getByRole('link', { name: 'Gamma task' }).click()
   await expect(page).toHaveURL(/\/projects\/P[0-9A-F]+-\d+$/)
+  const prioritySaved = page.waitForResponse((r) => r.url().includes('item.update') && r.ok())
   await page.getByLabel('Priority').selectOption('high')
   await expect(page.getByLabel('Priority')).toHaveValue('high')
   await page.getByLabel('Add a comment').fill('Ship it')
   await page.getByRole('button', { name: 'Comment', exact: true }).click()
   await expect(page.getByText('Ship it')).toBeVisible()
+  await prioritySaved
   await page.reload()
   await expect(page.getByLabel('Priority')).toHaveValue('high')
 

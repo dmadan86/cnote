@@ -180,7 +180,7 @@ function Surface({
   return (
     <div>
       <div className="prose-note">
-        {editor && <EditorMenus editor={editor} />}
+        {editor && editable && <EditorMenus editor={editor} />}
         <EditorContent editor={editor} />
       </div>
       <p aria-live="polite" className="mt-6 text-[12px] text-muted">

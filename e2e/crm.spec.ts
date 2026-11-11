@@ -32,11 +32,13 @@ test('create deal, drag to Won, create invoice from it', async ({ page }) => {
   const from = (await card.boundingBox())!
   const to = (await page.getByRole('region', { name: 'Won stage' }).boundingBox())!
   await page.mouse.move(from.x + 10, from.y + from.height - 6)
+  const moved = page.waitForResponse((r) => r.url().includes('deal.move_stage') && r.ok())
   await page.mouse.down()
   await page.mouse.move(from.x + 40, from.y + 40, { steps: 5 })
   await page.mouse.move(to.x + 40, to.y + 60, { steps: 15 })
   await page.mouse.up()
   await expect(page.getByTestId('count-won')).toHaveText('1')
+  await moved // the board updates optimistically; reload only after the move is stored
   await page.reload()
   await expect(page.getByTestId('count-won')).toHaveText('1')
   await expect(page.getByTestId('count-lead')).toHaveText('0')
