@@ -5,6 +5,7 @@ use crate::access::{assert_note_access, readable_space_ids, viewer};
 use crate::command::{Command, Ctx, ToolGroup};
 use crate::error::{CmdError, CmdResult};
 use crate::handler;
+use crate::notes::{NOTE_COLS, Note};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -221,10 +222,10 @@ async fn note_unshare(ctx: &mut Ctx, i: Unshare) -> CmdResult<Value> {
 
 #[derive(Serialize, JsonSchema, sqlx::FromRow)]
 pub struct SharedNote {
-    pub id: Uuid,
-    pub space_id: Uuid,
-    pub title: String,
-    pub types: Vec<String>,
+    #[serde(flatten)]
+    #[sqlx(flatten)]
+    pub note: Note,
+    /// Your level on this page: view | edit
     pub level: String,
 }
 
@@ -232,12 +233,14 @@ pub struct SharedNote {
 async fn shared_with_me(ctx: &mut Ctx, _: crate::notes::Empty) -> CmdResult<Vec<SharedNote>> {
     let spaces = readable_space_ids(ctx).await?;
     let (uid, admin) = viewer(ctx);
-    Ok(sqlx::query_as(
-        "select n.id, n.space_id, n.title, n.types, p.level from core.note_permissions p join core.notes n on n.id = p.note_id
-         where p.user_id = $1 and n.deleted_at is null and n.space_id <> all($2)
-           and core.note_access(n.id, $1, $3, $2) <> 'none'
-         order by n.updated_at desc",
-    )
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "select {NOTE_COLS}, (select p.level from core.note_permissions p where p.note_id = notes.id and p.user_id = $1) as level
+         from core.notes
+         where deleted_at is null and space_id <> all($2)
+           and exists (select 1 from core.note_permissions p where p.note_id = notes.id and p.user_id = $1)
+           and core.note_access(id, $1, $3, $2) <> 'none'
+         order by updated_at desc"
+    )))
     .bind(uid)
     .bind(spaces)
     .bind(admin)

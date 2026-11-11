@@ -1,9 +1,9 @@
 'use client'
-import { ChevronDown, ChevronRight, FileText, Plus, Search, Settings } from 'lucide-react'
+import { ChevronDown, ChevronRight, FileText, Lock, Plus, Search, Settings } from 'lucide-react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
-import { auth, cmd, type Me, type Member, type Note, type Space } from '@/lib/api'
+import { auth, cmd, type Me, type Member, type Note, type SharedNote, type Space } from '@/lib/api'
 import { MODULES } from '@/lib/modules'
 import { Palette } from './palette'
 import { SpaceDialog } from './space-dialog'
@@ -14,6 +14,7 @@ type Shell = {
   me: Me
   spaces: Space[]
   notes: Note[]
+  shared: SharedNote[]
   members: Member[]
   reload: () => void
   newPage: (opts?: { spaceId?: string; parentId?: string }) => Promise<void>
@@ -169,6 +170,9 @@ function Tree({
               >
                 <FileText size={13} className="shrink-0 text-muted" />
                 <span className="truncate">{n.title || 'Untitled'}</span>
+                {n.restriction !== 'none' && (
+                  <Lock size={11} className="shrink-0 text-muted" aria-label="Restricted page" />
+                )}
               </Link>
             </div>
             {open && <Tree spaceId={spaceId} notes={notes} parent={n.id} depth={depth + 1} />}
@@ -219,6 +223,21 @@ function Breadcrumb({ s }: { s: Shell }) {
   )
 }
 
+/** Pages shared to me from spaces I cannot read, plus their sub-pages (a few levels deep) for the tree. */
+async function loadShared(ws: string) {
+  const roots = await cmd<SharedNote[]>(ws, 'note.shared_with_me')
+  const extra: Note[] = []
+  let frontier = roots.map((r) => r.id)
+  for (let depth = 0; depth < 4 && frontier.length; depth++) {
+    const kids = (
+      await Promise.all(frontier.map((id) => cmd<Note[]>(ws, 'note.list', { parent_id: id, limit: 500 })))
+    ).flat()
+    extra.push(...kids)
+    frontier = kids.map((k) => k.id)
+  }
+  return { roots, extra: extra.filter((k) => !roots.some((r) => r.id === k.id)) }
+}
+
 export function ShellView({ ws, children }: { ws: string; children: React.ReactNode }) {
   const router = useRouter()
   const path = usePathname()
@@ -226,6 +245,7 @@ export function ShellView({ ws, children }: { ws: string; children: React.ReactN
   const [spaces, setSpaces] = useState<Space[]>([])
   const [notes, setNotes] = useState<Note[]>([])
   const [members, setMembers] = useState<Member[]>([])
+  const [shared, setShared] = useState<SharedNote[]>([])
   const [denied, setDenied] = useState(false)
   const [tick, setTick] = useState(0)
   const [spaceDialog, setSpaceDialog] = useState(false)
@@ -245,11 +265,13 @@ export function ShellView({ ws, children }: { ws: string; children: React.ReactN
       cmd<Space[]>(ws, 'space.list'),
       cmd<Note[]>(ws, 'note.list', { limit: 500 }),
       cmd<Member[]>(ws, 'member.list'),
+      loadShared(ws),
     ]).then(
-      ([s, n, m]) => {
+      ([s, n, m, sh]) => {
         setSpaces(s)
-        setNotes(n)
+        setNotes([...n, ...sh.roots, ...sh.extra])
         setMembers(m)
+        setShared(sh.roots)
       },
       () => setDenied(true),
     )
@@ -306,6 +328,7 @@ export function ShellView({ ws, children }: { ws: string; children: React.ReactN
     me,
     spaces,
     notes,
+    shared,
     members,
     reload,
     newPage,
@@ -411,6 +434,27 @@ export function ShellView({ ws, children }: { ws: string; children: React.ReactN
                 </button>
               </div>
               {spaces.length === 0 && <p className="px-2 text-[13px] text-muted">No spaces yet.</p>}
+              {shared.length > 0 && (
+                <div className="mb-1" data-testid="shared-with-me">
+                  <div className="px-2 py-1 text-[11px] font-semibold uppercase tracking-wide text-muted">
+                    Shared with me
+                  </div>
+                  <ul>
+                    {shared.map((n) => (
+                      <li key={n.id}>
+                        <Link
+                          href={`${base}/n/${n.id}`}
+                          className="flex items-center gap-1.5 rounded py-1 pr-2 pl-4 text-[13px] hover:bg-hover"
+                        >
+                          <FileText size={13} className="shrink-0 text-muted" />
+                          <span className="truncate">{n.title || 'Untitled'}</span>
+                        </Link>
+                        <Tree spaceId={n.space_id} notes={notes} parent={n.id} depth={2} />
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
               {spaces.map((s) => {
                 const open = fold.isOpen(s.id, true)
                 return (

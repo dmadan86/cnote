@@ -41,10 +41,12 @@ pub struct Note {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub version: i32,
+    /// none | edit | view (page restriction, see note.restrict)
+    pub restriction: String,
 }
 
 pub const NOTE_COLS: &str = "id, space_id, parent_id, title, types, content_md, owner_id, verify_by, verified_at, freshness, \
-     source_system, source_id, source_url, created_by, created_at, updated_at, version";
+     source_system, source_id, source_url, created_by, created_at, updated_at, version, restriction";
 
 // ---------- spaces ----------
 
@@ -183,6 +185,8 @@ pub struct NoteDetail {
     pub relations: Vec<RelationOut>,
     /// cnote:// resource URI (ADR-004)
     pub uri: String,
+    /// What the caller may do with this page: view | edit
+    pub level: String,
 }
 
 pub async fn load_note(ctx: &mut Ctx, id: Uuid) -> CmdResult<Note> {
@@ -197,6 +201,11 @@ pub async fn load_note(ctx: &mut Ctx, id: Uuid) -> CmdResult<Note> {
 
 async fn note_get(ctx: &mut Ctx, i: ById) -> CmdResult<NoteDetail> {
     assert_note_access(ctx, i.id, false).await?;
+    let level = if assert_note_access(ctx, i.id, true).await.is_ok() {
+        "edit"
+    } else {
+        "view"
+    };
     let note = load_note(ctx, i.id).await?;
     let relations = list_relations(ctx, i.id).await?;
     let uri = format!("cnote://ws/{}/note/{}", ctx.workspace_id(), note.id);
@@ -204,6 +213,7 @@ async fn note_get(ctx: &mut Ctx, i: ById) -> CmdResult<NoteDetail> {
         note,
         relations,
         uri,
+        level: level.into(),
     })
 }
 

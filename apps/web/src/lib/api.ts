@@ -59,9 +59,14 @@ export type Note = {
   freshness: string
   updated_at: string
   version: number
+  restriction: 'none' | 'edit' | 'view'
 }
 
+export type SharedNote = Note & { level: 'view' | 'edit' }
+
 export type NoteDetail = Note & {
+  /** What the caller may do with this page. */
+  level: 'view' | 'edit'
   relations: { id: string; from_id: string; to_id: string; kind: string; other_title: string | null }[]
 }
 
