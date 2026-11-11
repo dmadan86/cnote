@@ -548,3 +548,88 @@ async fn byo_provider_encrypts_key_never_meters_and_redacts() {
         false
     );
 }
+
+#[tokio::test]
+async fn restricted_pages_never_reach_hybrid_search_or_the_model() {
+    let (pool, reg) = setup().await;
+    let (_, owner) = tenant(&pool, &reg).await;
+    let ws = owner.workspace_id;
+    let email = format!("{}@test.local", Uuid::new_v4());
+    let uid = auth::sign_up(&pool, &email, "Mo", &Uuid::new_v4().to_string())
+        .await
+        .unwrap();
+    ok(
+        &pool,
+        &reg,
+        &owner,
+        "member.add",
+        json!({"email": email, "role": "member"}),
+    )
+    .await;
+    let member = auth::user_principal(&pool, uid, ws).await.unwrap();
+    let space = ok(
+        &pool,
+        &reg,
+        &owner,
+        "space.create",
+        json!({"key": "RS", "name": "RS"}),
+    )
+    .await;
+    let mk = |t: &str, p: Option<&Value>| json!({"space_id": space["id"], "title": t, "parent_id": p, "content_md": "narwhal strategy memo"});
+    let secret = ok(&pool, &reg, &owner, "note.create", mk("Secret memo", None)).await;
+    let kid = ok(
+        &pool,
+        &reg,
+        &owner,
+        "note.create",
+        mk("Secret child", Some(&secret["id"])),
+    )
+    .await;
+    ok(&pool, &reg, &owner, "note.create", mk("Public memo", None)).await;
+    drain(&pool, &reg, ws).await;
+    ok(
+        &pool,
+        &reg,
+        &owner,
+        "note.restrict",
+        json!({"note_id": secret["id"], "restriction": "view"}),
+    )
+    .await;
+
+    let hits = ok(
+        &pool,
+        &reg,
+        &member,
+        "search.hybrid",
+        json!({"q": "narwhal strategy"}),
+    )
+    .await;
+    assert_eq!(titles(&hits), vec!["Public memo".to_string()]);
+    let hits = ok(
+        &pool,
+        &reg,
+        &owner,
+        "search.hybrid",
+        json!({"q": "narwhal strategy"}),
+    )
+    .await;
+    assert_eq!(hits.as_array().unwrap().len(), 3);
+    for id in [&secret["id"], &kid["id"]] {
+        for cmd in ["ai.summarize", "ai.extract_tasks"] {
+            let e = run(&pool, &reg, &member, cmd, json!({"note_id": id}))
+                .await
+                .unwrap_err();
+            assert_eq!(e.code, ErrorCode::NotFound, "{cmd}");
+        }
+        let e = run(
+            &pool,
+            &reg,
+            &member,
+            "ai.draft",
+            json!({"prompt": "x", "note_id": id}),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(e.code, ErrorCode::NotFound);
+    }
+}

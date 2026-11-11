@@ -2,7 +2,7 @@
 
 use crate::billing::today_ist;
 use chrono::{DateTime, Datelike, Duration, NaiveDate, Utc};
-use cnote_core::access::readable_space_ids;
+use cnote_core::access::{readable_space_ids, viewer};
 use cnote_core::{CmdError, CmdResult, Command, Ctx, Role, ToolGroup, handler};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -43,6 +43,7 @@ struct OpenInvoice {
 async fn receivables_ageing(ctx: &mut Ctx, i: AsOf) -> CmdResult<Value> {
     let as_of = i.as_of.unwrap_or_else(today_ist);
     let spaces = readable_space_ids(ctx).await?;
+    let (uid, admin) = viewer(ctx);
     let rows: Vec<OpenInvoice> = sqlx::query_as(
         "select i.note_id as id, i.number, i.contact_id, c.title as contact_name, i.invoice_date,
            i.total_minor - i.paid_minor - i.credited_minor - i.written_off_minor as outstanding_minor
@@ -50,10 +51,13 @@ async fn receivables_ageing(ctx: &mut Ctx, i: AsOf) -> CmdResult<Value> {
          where i.kind = 'invoice' and i.status in ('issued','irn_generated','sent','partly_paid')
            and i.total_minor - i.paid_minor - i.credited_minor - i.written_off_minor > 0
            and i.invoice_date <= $1 and n.space_id = any($2)
+           and core.note_access(n.id, $3, $4, $2) <> 'none'
          order by i.invoice_date",
     )
     .bind(as_of)
     .bind(spaces)
+    .bind(uid)
+    .bind(admin)
     .fetch_all(&mut *ctx.tx)
     .await?;
     let mut totals: BTreeMap<&str, (i64, i64)> = BUCKETS.iter().map(|b| (*b, (0, 0))).collect();
@@ -96,6 +100,7 @@ struct SummaryRow {
 /// Output tax by month and rate; credit notes count negative.
 async fn gst_summary(ctx: &mut Ctx, i: Range) -> CmdResult<Value> {
     let spaces = readable_space_ids(ctx).await?;
+    let (uid, admin) = viewer(ctx);
     let rows: Vec<SummaryRow> = sqlx::query_as(
         "select to_char(i.invoice_date, 'YYYY-MM') as period, l.gst_rate_bp,
            sum(case when i.kind = 'credit_note' then -l.taxable_minor else l.taxable_minor end)::bigint as taxable_minor,
@@ -105,11 +110,14 @@ async fn gst_summary(ctx: &mut Ctx, i: Range) -> CmdResult<Value> {
          from billing.invoice_lines l join billing.invoices i on i.note_id = l.invoice_id
            join core.notes n on n.id = i.note_id
          where i.status <> 'draft' and i.invoice_date between $1 and $2 and n.space_id = any($3)
+           and core.note_access(n.id, $4, $5, $3) <> 'none'
          group by 1, 2 order by 1, 2",
     )
     .bind(i.from)
     .bind(i.to)
     .bind(spaces)
+    .bind(uid)
+    .bind(admin)
     .fetch_all(&mut *ctx.tx)
     .await?;
     let sum = |f: fn(&SummaryRow) -> i64| rows.iter().map(f).sum::<i64>();
@@ -189,6 +197,7 @@ fn item(num: usize, r: &RateRow, sign: i64) -> Value {
 async fn gstr1(ctx: &mut Ctx, i: Period) -> CmdResult<Value> {
     let (from, to) = month_range(&i.period)?;
     let spaces = readable_space_ids(ctx).await?;
+    let (uid, admin) = viewer(ctx);
     let settings: Value = sqlx::query_scalar("select settings from core.workspaces where id = $1")
         .bind(ctx.workspace_id())
         .fetch_one(&mut *ctx.tx)
@@ -198,11 +207,14 @@ async fn gstr1(ctx: &mut Ctx, i: Period) -> CmdResult<Value> {
         "select i.note_id as id, i.kind, i.number, i.invoice_date, i.total_minor, i.place_of_supply, i.buyer_gstin, i.reverse_charge
          from billing.invoices i join core.notes n on n.id = i.note_id
          where i.number is not null and i.invoice_date between $1 and $2 and n.space_id = any($3)
+           and core.note_access(n.id, $4, $5, $3) <> 'none'
          order by i.number",
     )
     .bind(from)
     .bind(to)
     .bind(spaces)
+    .bind(uid)
+    .bind(admin)
     .fetch_all(&mut *ctx.tx)
     .await?;
     let ids: Vec<Uuid> = docs.iter().map(|d| d.id).collect();

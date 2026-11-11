@@ -208,19 +208,7 @@ async fn prepare(
         principal: p.clone(),
         registry: s.registry.clone(),
     };
-    let scope_ok = p
-        .scopes
-        .as_ref()
-        .is_none_or(|sc| sc.iter().any(|g| g == "*" || g == "write_notes"));
-    let write = match assert_note_access(&mut ctx, note, true).await {
-        Ok(_) => scope_ok,
-        // Viewers and read-only guests may watch.
-        Err(e) if e.code == ErrorCode::Forbidden => {
-            assert_note_access(&mut ctx, note, false).await?;
-            false
-        }
-        Err(e) => return Err(e),
-    };
+    let write = may_write(&mut ctx, note).await?;
     let key = (ws, note);
     if let Some(r) = s.rooms.lock().unwrap().get(&key) {
         return Ok((r.clone(), write));
@@ -245,6 +233,36 @@ async fn prepare(
     Ok((room, write))
 }
 
+/// Whether the caller may edit the note; errors when they may not even read it. View-only users (space
+/// viewers, read-only guests, restricted or shared-as-viewer pages) may watch.
+async fn may_write(ctx: &mut Ctx, note: Uuid) -> CmdResult<bool> {
+    let scope_ok = ctx
+        .principal
+        .scopes
+        .as_ref()
+        .is_none_or(|sc| sc.iter().any(|g| g == "*" || g == "write_notes"));
+    match assert_note_access(ctx, note, true).await {
+        Ok(_) => Ok(scope_ok),
+        Err(e) if e.code == ErrorCode::Forbidden => {
+            assert_note_access(ctx, note, false).await?;
+            Ok(false)
+        }
+        Err(e) => Err(e),
+    }
+}
+
+/// Sharing can change while a socket is open: re-check periodically so a revoked user stops reading and a
+/// downgraded user stops writing.
+async fn recheck(s: &AppState, p: &Principal, room: &Room) -> CmdResult<bool> {
+    let tx = cnote_db::begin_tenant(&s.pool, room.key.0).await?;
+    let mut ctx = Ctx {
+        tx,
+        principal: p.clone(),
+        registry: s.registry.clone(),
+    };
+    may_write(&mut ctx, room.key.1).await
+}
+
 fn send_all(st: &RoomState, except: u64, frame: &[u8]) {
     for (id, tx) in &st.peers {
         if *id != except {
@@ -253,7 +271,11 @@ fn send_all(st: &RoomState, except: u64, frame: &[u8]) {
     }
 }
 
+/// How often an open connection re-checks its page access.
+const ACCESS_RECHECK: Duration = Duration::from_secs(10);
+
 async fn serve(socket: WebSocket, s: AppState, room: Arc<Room>, principal: Principal, write: bool) {
+    let mut write = write;
     let (mut sink, mut stream) = socket.split();
     let (tx, mut rx) = mpsc::unbounded_channel::<Vec<u8>>();
     let me = {
@@ -274,11 +296,20 @@ async fn serve(socket: WebSocket, s: AppState, room: Arc<Room>, principal: Princ
         }
     });
 
-    while let Some(Ok(frame)) = stream.next().await {
-        match frame {
-            Ws::Binary(b) => on_frame(&s, &room, me, &tx, &principal, write, &b),
-            Ws::Close(_) => break,
-            _ => {}
+    let mut tick = tokio::time::interval(ACCESS_RECHECK);
+    tick.tick().await;
+    loop {
+        tokio::select! {
+            frame = stream.next() => match frame {
+                Some(Ok(Ws::Binary(b))) => on_frame(&s, &room, me, &tx, &principal, write, &b),
+                Some(Ok(Ws::Close(_))) | None | Some(Err(_)) => break,
+                _ => {}
+            },
+            _ = tick.tick() => match recheck(&s, &principal, &room).await {
+                Ok(w) => write = write && w,
+                Err(e) if e.code == ErrorCode::NotFound || e.code == ErrorCode::Forbidden => break,
+                Err(_) => {} // transient database error: keep the connection, retry next tick
+            },
         }
     }
 

@@ -1,6 +1,6 @@
 //! Core commands over the universal Note (ADR-002): spaces, notes, relations, comments, history, search, views.
 
-use crate::access::{assert_note_access, assert_space_access, readable_space_ids};
+use crate::access::{assert_note_access, assert_space_access, readable_space_ids, viewer};
 use crate::command::{Command, Ctx, ToolGroup};
 use crate::error::{CmdError, CmdResult};
 use crate::handler;
@@ -132,7 +132,8 @@ pub struct CreateNote {
 pub async fn insert_note(ctx: &mut Ctx, i: CreateNote) -> CmdResult<Note> {
     assert_space_access(ctx, i.space_id, true).await?;
     if let Some(parent) = i.parent_id {
-        assert_note_access(ctx, parent, false).await?;
+        // a child inherits the parent's restrictions, so creating one is an edit of the parent
+        assert_note_access(ctx, parent, true).await?;
     }
     let is_page = i.types.is_empty();
     let owner = i.owner_id.or(ctx.principal.user_id);
@@ -226,6 +227,9 @@ pub struct UpdateNote {
 
 async fn note_update(ctx: &mut Ctx, i: UpdateNote) -> CmdResult<Note> {
     assert_note_access(ctx, i.id, true).await?;
+    if let Some(parent) = i.parent_id {
+        assert_note_access(ctx, parent, true).await?;
+    }
     let before = load_note(ctx, i.id).await?;
     if let Some(v) = i.expected_version
         && v != before.version
@@ -289,9 +293,11 @@ pub struct ListNotes {
 
 async fn note_list(ctx: &mut Ctx, i: ListNotes) -> CmdResult<Vec<Note>> {
     let ids = readable_space_ids(ctx).await?;
+    let (uid, admin) = viewer(ctx);
     Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "select {NOTE_COLS} from core.notes
-         where deleted_at is null and freshness <> 'archived' and space_id = any($1)
+         where deleted_at is null and freshness <> 'archived' and (space_id = any($1) or $3::uuid is not null)
+           and core.note_access(id, $6, $7, $1) <> 'none'
            and ($2::uuid is null or space_id = $2) and ($3::uuid is null or parent_id = $3)
            and ($4::text is null or ($4 = 'page' and types = '{{}}') or $4 = any(types))
          order by updated_at desc limit $5"
@@ -301,6 +307,8 @@ async fn note_list(ctx: &mut Ctx, i: ListNotes) -> CmdResult<Vec<Note>> {
     .bind(i.parent_id)
     .bind(i.r#type)
     .bind(i.limit.unwrap_or(100).clamp(1, 500))
+    .bind(uid)
+    .bind(admin)
     .fetch_all(&mut *ctx.tx)
     .await?)
 }
@@ -361,15 +369,19 @@ pub async fn add_relation(
 /// Relations whose other end the caller can read (no titles leak from private spaces).
 async fn list_relations(ctx: &mut Ctx, id: Uuid) -> CmdResult<Vec<RelationOut>> {
     let ids = readable_space_ids(ctx).await?;
+    let (uid, admin) = viewer(ctx);
     Ok(sqlx::query_as(
         "select r.id, r.from_id, r.to_id, r.kind, r.external_ref, o.title as other_title
          from core.relations r
          join core.notes o on o.id = case when r.from_id = $1 then r.to_id else r.from_id end
          where (r.from_id = $1 or r.to_id = $1) and o.deleted_at is null and o.space_id = any($2)
+           and core.note_access(o.id, $3, $4, $2) <> 'none'
          order by r.created_at",
     )
     .bind(id)
     .bind(ids)
+    .bind(uid)
+    .bind(admin)
     .fetch_all(&mut *ctx.tx)
     .await?)
 }
@@ -498,13 +510,16 @@ pub struct SearchHit {
 
 async fn search_notes(ctx: &mut Ctx, i: Search) -> CmdResult<Vec<SearchHit>> {
     let ids = readable_space_ids(ctx).await?;
+    let (uid, admin) = viewer(ctx);
     // Permission filter is applied inside the query, not after (ADR-009).
     Ok(sqlx::query_as(
         "select id, space_id, title, types, freshness, verified_at,
                 ts_headline('english', content_md, websearch_to_tsquery('english', $1), 'MaxWords=30,MinWords=10') as snippet,
                 (ts_rank(search, websearch_to_tsquery('english', $1)) + similarity(title, $1))::real as rank
          from core.notes
-         where deleted_at is null and space_id = any($2) and ($4 or freshness <> 'archived')
+         where deleted_at is null and ($4 or freshness <> 'archived')
+           and (space_id = any($2) or exists (select 1 from core.note_permissions sp where sp.note_id = notes.id and sp.user_id = $5))
+           and core.note_access(id, $5, $6, $2) <> 'none'
            and (search @@ websearch_to_tsquery('english', $1) or title % $1 or title ilike '%' || $1 || '%')
          order by rank desc limit $3",
     )
@@ -512,6 +527,8 @@ async fn search_notes(ctx: &mut Ctx, i: Search) -> CmdResult<Vec<SearchHit>> {
     .bind(ids)
     .bind(i.limit.unwrap_or(20).clamp(1, 100))
     .bind(i.include_archived)
+    .bind(uid)
+    .bind(admin)
     .fetch_all(&mut *ctx.tx)
     .await?)
 }
@@ -564,10 +581,13 @@ pub struct ListViews {
 }
 
 async fn view_list(ctx: &mut Ctx, i: ListViews) -> CmdResult<Vec<ViewOut>> {
+    let spaces = readable_space_ids(ctx).await?;
     Ok(sqlx::query_as(
-        "select id, space_id, name, layout, query, options from core.views where ($1::uuid is null or space_id = $1) order by name",
+        "select id, space_id, name, layout, query, options from core.views
+         where ($1::uuid is null or space_id = $1) and (space_id is null or space_id = any($2)) order by name",
     )
     .bind(i.space_id)
+    .bind(spaces)
     .fetch_all(&mut *ctx.tx)
     .await?)
 }

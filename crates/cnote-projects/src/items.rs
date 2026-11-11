@@ -4,7 +4,7 @@ use crate::cnql;
 use crate::wf::{definition_for, space_wf};
 use crate::workflow::{GuardInput, PostAction};
 use chrono::{DateTime, NaiveDate, Utc};
-use cnote_core::access::{assert_space_access, readable_space_ids};
+use cnote_core::access::{assert_note_access, assert_space_access, readable_space_ids, viewer};
 use cnote_core::notes::{CreateNote, insert_note};
 use cnote_core::{CmdError, CmdResult, Command, Ctx, ToolGroup, handler};
 use schemars::JsonSchema;
@@ -73,7 +73,8 @@ pub async fn load_item(ctx: &mut Ctx, r: &ItemRef, write: bool) -> CmdResult<Ite
     .fetch_optional(&mut *ctx.tx)
     .await?
     .ok_or_else(|| CmdError::not_found("item"))?;
-    assert_space_access(ctx, item.space_id, write).await?;
+    // Item pages can be restricted or shared like any other note.
+    assert_note_access(ctx, item.id, write).await?;
     Ok(item)
 }
 
@@ -783,15 +784,20 @@ async fn list_with(
     limit: Option<i64>,
 ) -> CmdResult<Vec<ItemOut>> {
     let q = cnql::parse(query).map_err(|e| CmdError::invalid(e.to_string()))?;
-    let c = cnql::compile(&q, &cnql_ctx(ctx), 3).map_err(|e| CmdError::invalid(e.to_string()))?;
+    // $1 spaces, $2 limit, $3 user, $4 admin; CNQL binds follow.
+    let c = cnql::compile(&q, &cnql_ctx(ctx), 5).map_err(|e| CmdError::invalid(e.to_string()))?;
     let spaces = readable_space_ids(ctx).await?;
+    let (uid, admin) = viewer(ctx);
     let sql = format!(
-        "{ITEM_SELECT} where n.deleted_at is null and i.space_id = any($1) and {extra} and ({}) order by {} limit $2",
+        "{ITEM_SELECT} where n.deleted_at is null and i.space_id = any($1) and core.note_access(n.id, $3, $4, $1) <> 'none'
+           and {extra} and ({}) order by {} limit $2",
         c.where_sql, c.order_sql
     );
     let mut qb = sqlx::query_as::<_, ItemOut>(sqlx::AssertSqlSafe(sql))
         .bind(spaces)
-        .bind(limit.unwrap_or(50).clamp(1, 200));
+        .bind(limit.unwrap_or(50).clamp(1, 200))
+        .bind(uid)
+        .bind(admin);
     for b in c.binds {
         qb = b.apply(qb);
     }

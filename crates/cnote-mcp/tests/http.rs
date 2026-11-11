@@ -475,3 +475,80 @@ async fn elicitation_capable_client_is_asked_but_its_answer_is_not_approval() {
     assert_eq!(pending["confirmation_required"], true, "{retry}");
     assert!(pending.get("sent_to").is_none());
 }
+
+#[tokio::test]
+async fn restricted_pages_are_invisible_to_a_member_level_agent() {
+    let env = setup().await;
+    let ws = env.user.workspace_id;
+    let email = format!("{}@test.local", Uuid::new_v4());
+    let mo = run(
+        &env,
+        &env.user,
+        "member.add",
+        json!({"email": email, "role": "admin"}),
+    )
+    .await;
+    let mo_id: Uuid = mo["user_id"].as_str().unwrap().parse().unwrap();
+    let mo_admin = Principal::user(mo_id, ws, cnote_core::Role::Admin);
+    let key = run(&env, &mo_admin, "agent.create", json!({"name": "mo-bot"})).await["api_key"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    // Demote Mo: his agent follows his role, so page restrictions now bind it.
+    run(
+        &env,
+        &env.user,
+        "member.add",
+        json!({"email": email, "role": "member"}),
+    )
+    .await;
+
+    let mk = |t: &str| json!({"space_id": env.space["id"], "title": t, "content_md": "pangolin"});
+    let secret = run(&env, &env.user, "note.create", mk("Secret")).await;
+    let open = run(&env, &env.user, "note.create", mk("Open")).await;
+    run(
+        &env,
+        &env.user,
+        "note.restrict",
+        json!({"note_id": secret["id"], "restriction": "view"}),
+    )
+    .await;
+    let sid = secret["id"].as_str().unwrap();
+
+    let (_, _, listed) = rpc(&env, Some(&key), "resources/list", json!({})).await;
+    let uris: Vec<String> = listed["result"]["resources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["uri"].as_str().unwrap().to_string())
+        .collect();
+    assert!(uris.contains(&format!(
+        "cnote://ws/{ws}/note/{}",
+        open["id"].as_str().unwrap()
+    )));
+    assert!(!uris.iter().any(|u| u.ends_with(sid)), "{uris:?}");
+    let (_, _, read) = rpc(
+        &env,
+        Some(&key),
+        "resources/read",
+        json!({"uri": format!("cnote://ws/{ws}/note/{sid}")}),
+    )
+    .await;
+    assert!(read["error"].is_object(), "{read}");
+    let (_, _, got) = rpc(
+        &env,
+        Some(&key),
+        "tools/call",
+        json!({"name": "note_get", "arguments": {"id": sid}}),
+    )
+    .await;
+    assert_eq!(got["result"]["isError"], true, "{got}");
+    let (_, _, found) = rpc(
+        &env,
+        Some(&key),
+        "tools/call",
+        json!({"name": "search_notes", "arguments": {"q": "pangolin"}}),
+    )
+    .await;
+    assert!(!found.to_string().contains(sid), "{found}");
+}

@@ -136,13 +136,20 @@ pub fn propose_edit_job(ctx: &mut Ctx, payload: Value) -> BoxFuture<'_, CmdResul
             Some(o) => crate::bindings::readable_space_ids_for(ctx, o).await?,
             None => vec![],
         };
+        let owner_admin = match owner {
+            Some(o) => crate::bindings::is_admin_user(ctx, o).await?,
+            None => false,
+        };
         let src: Option<(String, String)> =
             match source {
                 Some(s) => sqlx::query_as(
-                    "select title, content_md from core.notes where id = $1 and space_id = any($2)",
+                    "select title, content_md from core.notes where id = $1 and space_id = any($2)
+                       and core.note_access(id, $3, $4, $2) <> 'none'",
                 )
                 .bind(s)
                 .bind(&readable)
+                .bind(owner)
+                .bind(owner_admin)
                 .fetch_optional(&mut *ctx.tx)
                 .await?,
                 None => None,

@@ -318,3 +318,128 @@ async fn viewers_cannot_edit_and_strangers_are_rejected() {
         Some(Message::Sync(SyncMessage::Update(_)))
     ));
 }
+
+#[tokio::test]
+async fn page_restrictions_and_shares_bind_websocket_writers() {
+    let (e, reg) = env().await;
+    let o = ExecOptions::default();
+    let owner_id = e.owner.user_id.unwrap();
+    // A space editor, who could normally write.
+    let email = format!("{}@example.com", Uuid::new_v4());
+    let m = reg
+        .execute(
+            &e.pool,
+            "member.add",
+            json!({"email": email, "role": "member"}),
+            &e.owner,
+            &o,
+        )
+        .await
+        .unwrap();
+    let other: Uuid = m["user_id"].as_str().unwrap().parse().unwrap();
+    let mut tx = cnote_db::begin_tenant(&e.pool, e.ws).await.unwrap();
+    sqlx::query(
+        "insert into core.space_members (workspace_id, space_id, user_id, role)
+         select $1, space_id, $2, 'editor' from core.notes where id = $3",
+    )
+    .bind(e.ws)
+    .bind(other)
+    .bind(e.note)
+    .execute(&mut *tx)
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+    let run = |cmd: &'static str, input: serde_json::Value| {
+        let (pool, reg, owner) = (e.pool.clone(), reg.clone(), e.owner.clone());
+        async move {
+            reg.execute(&pool, cmd, input, &owner, &ExecOptions::default())
+                .await
+        }
+    };
+
+    // View restriction: the editor is turned away like a stranger.
+    run(
+        "note.restrict",
+        json!({"note_id": e.note, "restriction": "view"}),
+    )
+    .await
+    .unwrap();
+    let token = auth::create_session(&e.pool, other).await.unwrap();
+    let mut req = e.url().into_client_request().unwrap();
+    req.headers_mut()
+        .insert("cookie", format!("cn_session={token}").parse().unwrap());
+    let err = connect_async(req).await.unwrap_err();
+    assert!(matches!(err, tokio_tungstenite::tungstenite::Error::Http(r) if r.status() == 404));
+
+    // Shared as viewer: may watch, edits never reach the shared doc.
+    run(
+        "note.share",
+        json!({"note_id": e.note, "user_id": other, "level": "view"}),
+    )
+    .await
+    .unwrap();
+    let (a, v) = (Doc::new(), Doc::new());
+    let mut ca = e.connect_session(owner_id).await;
+    sync(&mut ca, &a).await;
+    let mut cv = e.connect_session(other).await;
+    sync(&mut cv, &v).await;
+    assert!(text(&v).contains("hello world"));
+    let u = append(&v, " HACKED");
+    send(&mut cv, Message::Sync(SyncMessage::Update(u))).await;
+    assert!(
+        recv(&mut ca).await.is_none(),
+        "view-only update must not be relayed"
+    );
+    tokio::time::sleep(Duration::from_millis(1000)).await;
+    assert_eq!(e.note_row().await, ("hello world".to_string(), 1, false));
+
+    // Edit-restricted page: same for a space editor who is not listed.
+    run("note.unshare", json!({"note_id": e.note, "user_id": other}))
+        .await
+        .unwrap();
+    run(
+        "note.restrict",
+        json!({"note_id": e.note, "restriction": "edit"}),
+    )
+    .await
+    .unwrap();
+    let mut cv2 = e.connect_session(other).await;
+    let v2 = Doc::new();
+    sync(&mut cv2, &v2).await;
+    let u = append(&v2, " HACKED");
+    send(&mut cv2, Message::Sync(SyncMessage::Update(u))).await;
+    assert!(recv(&mut ca).await.is_none());
+
+    // Listed as editor: now the change is relayed.
+    run(
+        "note.share",
+        json!({"note_id": e.note, "user_id": other, "level": "edit"}),
+    )
+    .await
+    .unwrap();
+    let mut cv3 = e.connect_session(other).await;
+    let v3 = Doc::new();
+    sync(&mut cv3, &v3).await;
+    let u = append(&v3, "?");
+    send(&mut cv3, Message::Sync(SyncMessage::Update(u))).await;
+    assert!(matches!(
+        recv(&mut ca).await,
+        Some(Message::Sync(SyncMessage::Update(_)))
+    ));
+
+    // Access revoked while connected: the socket is dropped at the next re-check.
+    run(
+        "note.restrict",
+        json!({"note_id": e.note, "restriction": "view"}),
+    )
+    .await
+    .unwrap();
+    run("note.unshare", json!({"note_id": e.note, "user_id": other}))
+        .await
+        .unwrap();
+    let closed = tokio::time::timeout(Duration::from_secs(25), async {
+        while let Some(Ok(_)) = cv3.next().await {}
+    })
+    .await;
+    assert!(closed.is_ok(), "revoked user must be disconnected");
+}

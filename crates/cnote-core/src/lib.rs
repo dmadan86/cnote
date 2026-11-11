@@ -10,6 +10,7 @@ pub mod events;
 pub mod notes;
 pub mod principal;
 pub mod ratelimit;
+pub mod sharing;
 
 pub use command::{Command, Ctx, ExecOptions, Module, Registry, ToolGroup};
 pub use error::{CmdError, CmdResult, ErrorCode};
@@ -18,6 +19,7 @@ pub use principal::{Principal, PrincipalKind, Role};
 pub fn module() -> Module {
     let mut commands = notes::commands();
     commands.extend(admin::commands());
+    commands.extend(sharing::commands());
     Module {
         commands,
         workspace_hooks: vec![default_space],

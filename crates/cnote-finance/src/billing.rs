@@ -3,7 +3,7 @@
 use crate::irn::{self, Window};
 use crate::{gst, ledger};
 use chrono::{DateTime, Duration, NaiveDate, Utc};
-use cnote_core::access::{assert_note_access, readable_space_ids};
+use cnote_core::access::{assert_note_access, readable_space_ids, viewer};
 use cnote_core::notes::{CreateNote, add_relation, insert_note};
 use cnote_core::{CmdError, CmdResult, Command, Ctx, ErrorCode, Role, ToolGroup, handler};
 use rust_decimal::Decimal;
@@ -542,10 +542,18 @@ async fn invoice_detail(ctx: &mut Ctx, id: Uuid) -> CmdResult<InvoiceOut> {
     let invoice = load_invoice(ctx, id, false).await?;
     let contact_name: Option<String> = match invoice.contact_id {
         Some(c) => {
-            sqlx::query_scalar("select title from core.notes where id = $1")
-                .bind(c)
-                .fetch_optional(&mut *ctx.tx)
-                .await?
+            // The contact's name only when the caller may read the contact page.
+            let spaces = readable_space_ids(ctx).await?;
+            let (uid, admin) = viewer(ctx);
+            sqlx::query_scalar(
+                "select title from core.notes where id = $1 and core.note_access(id, $2, $3, $4) <> 'none'",
+            )
+            .bind(c)
+            .bind(uid)
+            .bind(admin)
+            .bind(spaces)
+            .fetch_optional(&mut *ctx.tx)
+            .await?
         }
         None => None,
     };
@@ -592,9 +600,11 @@ pub struct ListInvoices {
 
 async fn invoice_list(ctx: &mut Ctx, i: ListInvoices) -> CmdResult<Vec<InvoiceRow>> {
     let spaces = readable_space_ids(ctx).await?;
+    let (uid, admin) = viewer(ctx);
     Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "select {INV_COLS} from billing.invoices i join core.notes n on n.id = i.note_id
          where n.deleted_at is null and n.space_id = any($1) and ($2::text is null or i.status = $2)
+           and core.note_access(n.id, $6, $7, $1) <> 'none'
            and ($3::uuid is null or i.contact_id = $3) and ($4::text is null or i.kind = $4)
          order by n.created_at desc limit $5"
     )))
@@ -603,6 +613,8 @@ async fn invoice_list(ctx: &mut Ctx, i: ListInvoices) -> CmdResult<Vec<InvoiceRo
     .bind(i.contact_id)
     .bind(i.kind)
     .bind(i.limit.unwrap_or(100).clamp(1, 500))
+    .bind(uid)
+    .bind(admin)
     .fetch_all(&mut *ctx.tx)
     .await?)
 }
