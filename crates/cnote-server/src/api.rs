@@ -13,6 +13,8 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 pub const SESSION_COOKIE: &str = "cn_session";
+/// Native apps (mobile/tablet) can't rely on cookies; they get the session token as `cs_<token>` and send it as a bearer.
+const NATIVE_SESSION_PREFIX: &str = "cs_";
 
 #[derive(Clone)]
 pub struct AppState {
@@ -79,7 +81,7 @@ pub async fn principal_for(
     headers: &HeaderMap,
     workspace_id: Uuid,
 ) -> Result<Principal, CmdError> {
-    if let Some(key) = bearer(headers) {
+    if let Some(key) = bearer(headers).filter(|k| !k.starts_with(NATIVE_SESSION_PREFIX)) {
         let p = auth::principal_from_api_key(pool, &key)
             .await?
             .ok_or_else(|| CmdError::new(ErrorCode::Unauthenticated, "invalid API key"))?;
@@ -96,11 +98,32 @@ pub async fn session_user(
     pool: &PgPool,
     headers: &HeaderMap,
 ) -> Result<auth::SessionUser, CmdError> {
-    let token = cookie(headers, SESSION_COOKIE)
+    let token = session_token(headers)
         .ok_or_else(|| CmdError::new(ErrorCode::Unauthenticated, "sign in required"))?;
     auth::user_from_session(pool, &token)
         .await?
         .ok_or_else(|| CmdError::new(ErrorCode::Unauthenticated, "session expired"))
+}
+
+fn session_token(headers: &HeaderMap) -> Option<String> {
+    bearer(headers)
+        .and_then(|b| b.strip_prefix(NATIVE_SESSION_PREFIX).map(str::to_string))
+        .or_else(|| cookie(headers, SESSION_COOKIE))
+}
+
+fn is_native(headers: &HeaderMap) -> bool {
+    headers.get("x-cnote-client").is_some_and(|v| v == "native")
+}
+
+/// Cookie for browsers; native clients also get the token in the body (they store it in the device keychain).
+fn with_session(mut body: Value, headers: &HeaderMap, token: &str) -> Response {
+    if is_native(headers) {
+        body["token"] = json!(format!("{NATIVE_SESSION_PREFIX}{token}"));
+    }
+    let mut res = Json(body).into_response();
+    res.headers_mut()
+        .insert(header::SET_COOKIE, session_cookie(token, 30 * 86400));
+    res
 }
 
 fn session_cookie(token: &str, max_age: i64) -> HeaderValue {
@@ -124,17 +147,22 @@ struct SignUp {
     workspace_name: Option<String>,
 }
 
-async fn signup(State(s): State<AppState>, Json(b): Json<SignUp>) -> ApiResult<Response> {
+async fn signup(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+    Json(b): Json<SignUp>,
+) -> ApiResult<Response> {
     let user_id = auth::sign_up(&s.pool, &b.email, &b.name, &b.password).await?;
     let ws = match b.workspace_name.filter(|n| !n.trim().is_empty()) {
         Some(n) => Some(auth::create_workspace(&s.pool, &s.registry, user_id, &n).await?),
         None => None,
     };
     let token = auth::create_session(&s.pool, user_id).await?;
-    let mut res = Json(json!({"user_id": user_id, "workspace_id": ws})).into_response();
-    res.headers_mut()
-        .insert(header::SET_COOKIE, session_cookie(&token, 30 * 86400));
-    Ok(res)
+    Ok(with_session(
+        json!({"user_id": user_id, "workspace_id": ws}),
+        &headers,
+        &token,
+    ))
 }
 
 #[derive(Deserialize)]
@@ -143,16 +171,17 @@ struct Login {
     password: String,
 }
 
-async fn login(State(s): State<AppState>, Json(b): Json<Login>) -> ApiResult<Response> {
+async fn login(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+    Json(b): Json<Login>,
+) -> ApiResult<Response> {
     let (user_id, token) = auth::sign_in(&s.pool, &b.email, &b.password).await?;
-    let mut res = Json(json!({"user_id": user_id})).into_response();
-    res.headers_mut()
-        .insert(header::SET_COOKIE, session_cookie(&token, 30 * 86400));
-    Ok(res)
+    Ok(with_session(json!({"user_id": user_id}), &headers, &token))
 }
 
 async fn logout(State(s): State<AppState>, headers: HeaderMap) -> ApiResult<Response> {
-    if let Some(t) = cookie(&headers, SESSION_COOKIE) {
+    if let Some(t) = session_token(&headers) {
         auth::destroy_session(&s.pool, &t).await?;
     }
     let mut res = Json(json!({"ok": true})).into_response();
