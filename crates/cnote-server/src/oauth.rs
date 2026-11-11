@@ -4,7 +4,7 @@
 //! Codes and tokens are opaque; only SHA-256 hashes are stored (migration 0600).
 
 use crate::api::{ApiError, AppState, session_user};
-use axum::extract::State;
+use axum::extract::{ConnectInfo, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -72,9 +72,23 @@ fn json_cached(body: Value) -> Response {
     res
 }
 
+/// Issuer/resource origin, or an error when production has not set PUBLIC_BASE_URL (loopback hosts still work).
+fn base_of(headers: &HeaderMap) -> Result<String, OauthError> {
+    cnote_mcp::public_base(headers).ok_or_else(|| {
+        OauthError(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "server_error",
+            "OAuth is not available: the server has no PUBLIC_BASE_URL configured".into(),
+        )
+    })
+}
+
 /// Both well-known URLs describe the same resource: the MCP endpoint.
 async fn protected_resource(headers: HeaderMap) -> Response {
-    let base = cnote_mcp::public_base(&headers);
+    let base = match base_of(&headers) {
+        Ok(b) => b,
+        Err(e) => return e.into_response(),
+    };
     json_cached(json!({
         "resource": format!("{base}/mcp"),
         "authorization_servers": [base],
@@ -83,17 +97,20 @@ async fn protected_resource(headers: HeaderMap) -> Response {
     }))
 }
 
-fn web_base(headers: &HeaderMap) -> String {
+fn web_base(base: &str) -> String {
     std::env::var("PUBLIC_WEB_URL")
         .map(|v| v.trim_end_matches('/').to_string())
-        .unwrap_or_else(|_| cnote_mcp::public_base(headers))
+        .unwrap_or_else(|_| base.to_string())
 }
 
 async fn authorization_server(headers: HeaderMap) -> Response {
-    let base = cnote_mcp::public_base(&headers);
+    let base = match base_of(&headers) {
+        Ok(b) => b,
+        Err(e) => return e.into_response(),
+    };
     json_cached(json!({
         "issuer": base,
-        "authorization_endpoint": format!("{}/oauth/authorize", web_base(&headers)),
+        "authorization_endpoint": format!("{}/oauth/authorize", web_base(&base)),
         "token_endpoint": format!("{base}/oauth/token"),
         "registration_endpoint": format!("{base}/oauth/register"),
         "revocation_endpoint": format!("{base}/oauth/revoke"),
@@ -155,6 +172,25 @@ fn no_store(r: impl IntoResponse) -> Response {
     res
 }
 
+/// Caller address for throttling: the socket peer, or the left-most X-Forwarded-For entry only when the
+/// operator says a trusted proxy sets it (TRUST_PROXY=1).
+fn client_ip(
+    headers: &HeaderMap,
+    peer: Option<axum::Extension<ConnectInfo<std::net::SocketAddr>>>,
+) -> String {
+    if std::env::var("TRUST_PROXY").is_ok_and(|v| v == "1" || v == "true")
+        && let Some(ip) = headers
+            .get("x-forwarded-for")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.split(',').next())
+            .map(str::trim)
+            .filter(|v| v.parse::<std::net::IpAddr>().is_ok())
+    {
+        return ip.to_string();
+    }
+    peer.map(|c| (c.0).0.ip().to_string()).unwrap_or_default()
+}
+
 fn throttle(key: &str, burst: f64, per_sec: f64) -> Result<(), OauthError> {
     ratelimit::check_with(key, burst, per_sec).map_err(|_| {
         OauthError(
@@ -165,10 +201,11 @@ fn throttle(key: &str, burst: f64, per_sec: f64) -> Result<(), OauthError> {
     })
 }
 
-/// The resource indicator must name this server's MCP endpoint (or its origin, for REST callers).
+/// The resource indicator must name this server's MCP endpoint, and nothing else is ever issued. The same
+/// token is also accepted on /api/w/{ws}/commands: that API is part of the same protected resource.
 fn canonical_resource(raw: &str, base: &str) -> Option<String> {
     let r = raw.trim_end_matches('/');
-    (r == base || r == format!("{base}/mcp")).then(|| r.to_string())
+    (r == format!("{base}/mcp")).then(|| r.to_string())
 }
 
 fn host_label(redirect_uri: &str) -> String {
@@ -369,9 +406,20 @@ fn reg_error(code: &'static str, desc: &str) -> Response {
     OauthError::new(code, desc).into_response()
 }
 
-async fn register(State(s): State<AppState>, Json(b): Json<RegisterReq>) -> Response {
-    // shortcut: one global bucket (no trustworthy client IP behind unknown proxies); revisit with per-IP keys.
-    if let Err(e) = throttle("oauth:register", 20.0, 0.2) {
+async fn register(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+    peer: Option<axum::Extension<ConnectInfo<std::net::SocketAddr>>>,
+    Json(b): Json<RegisterReq>,
+) -> Response {
+    if let Err(e) = base_of(&headers) {
+        return e.into_response();
+    }
+    if let Err(e) = throttle(
+        &format!("oauth:register:{}", client_ip(&headers, peer)),
+        10.0,
+        0.1,
+    ) {
         return e.into_response();
     }
     if b.token_endpoint_auth_method
@@ -421,6 +469,13 @@ async fn register(State(s): State<AppState>, Json(b): Json<RegisterReq>) -> Resp
     // Abandoned registrations (never approved by anyone) do not pile up.
     let _ = sqlx::query(
         "delete from core.oauth_clients c where c.kind = 'registered' and c.created_at < now() - interval '30 days'
+         and not exists (select 1 from core.oauth_grants g where g.client_id = c.client_id)",
+    )
+    .execute(&s.pool)
+    .await;
+    // Cached metadata documents nobody ever approved are re-fetchable, so they go quickly.
+    let _ = sqlx::query(
+        "delete from core.oauth_clients c where c.kind = 'metadata' and c.fetched_at < now() - interval '1 day'
          and not exists (select 1 from core.oauth_grants g where g.client_id = c.client_id)",
     )
     .execute(&s.pool)
@@ -502,11 +557,7 @@ fn is_b64url(s: &str) -> bool {
         .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 
-async fn validate_authz(
-    pool: &PgPool,
-    headers: &HeaderMap,
-    p: &AuthzParams,
-) -> Result<Validated, AuthzErr> {
+async fn validate_authz(pool: &PgPool, base: &str, p: &AuthzParams) -> Result<Validated, AuthzErr> {
     let fail = |code, desc: &str| AuthzErr {
         code,
         desc: desc.into(),
@@ -525,11 +576,10 @@ async fn validate_authz(
             "redirect_uri does not match a registered redirect URI",
         ));
     }
-    let base = cnote_mcp::public_base(headers);
     let redirectable = |code: &'static str, desc: &str| AuthzErr {
         code,
         desc: desc.into(),
-        redirect_to: error_redirect(&p.redirect_uri, p.state.as_deref(), &base, code, desc),
+        redirect_to: error_redirect(&p.redirect_uri, p.state.as_deref(), base, code, desc),
     };
     if p.response_type != "code" {
         return Err(redirectable(
@@ -555,7 +605,7 @@ async fn validate_authz(
             "resource parameter is required",
         ));
     }
-    let Some(resource) = canonical_resource(&p.resource, &base) else {
+    let Some(resource) = canonical_resource(&p.resource, base) else {
         return Err(redirectable(
             "invalid_target",
             "resource must be this server's MCP endpoint",
@@ -584,7 +634,10 @@ async fn authorize_context(
     Json(p): Json<AuthzParams>,
 ) -> Result<Response, ApiError> {
     let user = session_user(&s.pool, &headers).await?;
-    match validate_authz(&s.pool, &headers, &p).await {
+    let base = base_of(&headers).map_err(|_| CmdError::internal("OAuth is not configured"))?;
+    // Each call may trigger an outbound metadata fetch and a cache row, so it is bounded per user.
+    ratelimit::check_with(&format!("oauth:authz:{}", user.id), 20.0, 0.5)?;
+    match validate_authz(&s.pool, &base, &p).await {
         Ok(v) => {
             let workspaces = auth::user_workspaces(&s.pool, user.id).await?;
             Ok(no_store(Json(json!({
@@ -621,7 +674,9 @@ async fn authorize(
         return Err(CmdError::forbidden("cross-site request refused").into());
     }
     let user = session_user(&s.pool, &headers).await?;
-    let v = match validate_authz(&s.pool, &headers, &b.params).await {
+    let base = base_of(&headers).map_err(|_| CmdError::internal("OAuth is not configured"))?;
+    ratelimit::check_with(&format!("oauth:authz:{}", user.id), 20.0, 0.5)?;
+    let v = match validate_authz(&s.pool, &base, &b.params).await {
         Ok(v) => v,
         Err(e) => {
             return Ok(no_store(Json(json!({
@@ -629,7 +684,6 @@ async fn authorize(
             }))));
         }
     };
-    let base = cnote_mcp::public_base(&headers);
     if !b.approve {
         let to = error_redirect(
             &v.redirect_uri,
@@ -658,7 +712,10 @@ async fn authorize(
     .bind(CODE_TTL_SECS as f64)
     .execute(&s.pool)
     .await
-    .map_err(|e| CmdError::internal(e.to_string()))?;
+    .map_err(|e| {
+        tracing::error!(error = %e, "storing authorization code failed");
+        CmdError::internal("could not complete the authorization")
+    })?;
     let mut pairs = vec![("code", code.as_str()), ("iss", base.as_str())];
     if let Some(st) = v.state.as_deref() {
         pairs.push(("state", st));
@@ -680,22 +737,33 @@ struct TokenReq {
     resource: Option<String>,
 }
 
-async fn token(State(s): State<AppState>, headers: HeaderMap, Form(b): Form<TokenReq>) -> Response {
-    match token_inner(&s.pool, &headers, b).await {
+async fn token(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+    peer: Option<axum::Extension<ConnectInfo<std::net::SocketAddr>>>,
+    Form(b): Form<TokenReq>,
+) -> Response {
+    match token_inner(&s.pool, &headers, &client_ip(&headers, peer), b).await {
         Ok(v) => no_store(Json(v)),
         Err(e) => e.into_response(),
     }
 }
 
-async fn token_inner(pool: &PgPool, headers: &HeaderMap, b: TokenReq) -> Result<Value, OauthError> {
-    throttle("oauth:token", 120.0, 10.0)?;
+async fn token_inner(
+    pool: &PgPool,
+    headers: &HeaderMap,
+    ip: &str,
+    b: TokenReq,
+) -> Result<Value, OauthError> {
+    // Per caller address only: junk from one source cannot starve anyone else. The per-client bucket is charged
+    // later, once a real code or refresh token was found, so strangers cannot block a public client.
+    throttle(&format!("oauth:token:ip:{ip}"), 60.0, 2.0)?;
     let client_id = b
         .client_id
         .as_deref()
         .filter(|c| !c.is_empty())
         .ok_or_else(|| OauthError::new("invalid_request", "client_id is required"))?;
-    throttle(&format!("oauth:token:{client_id}"), 30.0, 1.0)?;
-    let base = cnote_mcp::public_base(headers);
+    let base = base_of(headers)?;
     match b.grant_type.as_deref() {
         Some("authorization_code") => exchange_code(pool, &base, client_id, &b).await,
         Some("refresh_token") => refresh(pool, &base, client_id, &b).await,
@@ -823,6 +891,7 @@ async fn exchange_code(
     else {
         return Err(invalid_grant("unknown or expired code"));
     };
+    throttle(&format!("oauth:client:{cid}"), 30.0, 1.0)?;
     if used {
         // A replayed code means it leaked: revoke what it already produced.
         if let Some(g) = grant {
@@ -892,21 +961,22 @@ async fn refresh(
         .filter(|t| t.starts_with("cnr_"))
         .ok_or_else(|| OauthError::new("invalid_request", "refresh_token is required"))?;
     let mut tx = pool.begin().await?;
-    let row: Option<(Uuid, bool, bool, String, String, bool, String)> = sqlx::query_as(
+    let row: Option<(Uuid, bool, bool, String, String, bool, String, Uuid, Uuid)> = sqlx::query_as(
         "select t.grant_id, t.used_at is not null, t.expires_at < now(), g.client_id, g.resource,
-                g.revoked_at is not null, g.scope
+                g.revoked_at is not null, g.scope, g.user_id, g.workspace_id
          from core.oauth_tokens t join core.oauth_grants g on g.id = t.grant_id
          where t.token_hash = $1 and t.kind = 'refresh' for update of t",
     )
     .bind(sha256_hex(presented))
     .fetch_optional(&mut *tx)
     .await?;
-    let Some((grant, used, expired, cid, resource, revoked, scope)) = row else {
+    let Some((grant, used, expired, cid, resource, revoked, scope, user, ws)) = row else {
         return Err(invalid_grant("unknown refresh token"));
     };
     if cid != client_id || revoked {
         return Err(invalid_grant("refresh token is not valid for this client"));
     }
+    throttle(&format!("oauth:client:{cid}"), 30.0, 1.0)?;
     if used {
         // Rotation means each refresh token works once; a second use is a stolen copy. Kill the whole family.
         revoke_grant_tx(&mut tx, grant).await?;
@@ -917,6 +987,14 @@ async fn refresh(
         return Err(invalid_grant("refresh token expired"));
     }
     check_resource(&b.resource, &resource, base)?;
+    // Whoever approved this grant must still belong to the workspace.
+    if auth::user_principal(pool, user, ws).await.is_err() {
+        revoke_grant_tx(&mut tx, grant).await?;
+        tx.commit().await?;
+        return Err(invalid_grant(
+            "the user is no longer a member of the workspace",
+        ));
+    }
     sqlx::query("update core.oauth_tokens set used_at = now() where token_hash = $1")
         .bind(sha256_hex(presented))
         .execute(&mut *tx)
@@ -941,8 +1019,17 @@ struct RevokeReq {
 
 /// Always 200 (RFC 7009), whether or not the token existed. Revoking a refresh token ends the whole grant;
 /// the caller must be the client the token was issued to.
-async fn revoke(State(s): State<AppState>, Form(b): Form<RevokeReq>) -> Response {
-    if let Err(e) = throttle("oauth:revoke", 60.0, 5.0) {
+async fn revoke(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+    peer: Option<axum::Extension<ConnectInfo<std::net::SocketAddr>>>,
+    Form(b): Form<RevokeReq>,
+) -> Response {
+    if let Err(e) = throttle(
+        &format!("oauth:revoke:{}", client_ip(&headers, peer)),
+        30.0,
+        1.0,
+    ) {
         return e.into_response();
     }
     if let (Some(token), Some(client_id)) = (b.token.as_deref(), b.client_id.as_deref()) {
@@ -1012,7 +1099,7 @@ mod tests {
             canonical_resource("https://notes.example.com/mcp/", base).as_deref(),
             Some("https://notes.example.com/mcp")
         );
-        assert!(canonical_resource("https://notes.example.com", base).is_some());
+        assert!(canonical_resource("https://notes.example.com", base).is_none());
         assert!(canonical_resource("https://evil.example.com/mcp", base).is_none());
         assert!(canonical_resource("https://notes.example.com.evil.io/mcp", base).is_none());
     }

@@ -76,7 +76,11 @@ async fn main() -> anyhow::Result<()> {
             let app = api::router(state);
             let listener = tokio::net::TcpListener::bind(("0.0.0.0", port)).await?;
             tracing::info!("listening on :{port}");
-            axum::serve(listener, app).await?;
+            axum::serve(
+                listener,
+                app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+            )
+            .await?;
         }
     }
     Ok(())

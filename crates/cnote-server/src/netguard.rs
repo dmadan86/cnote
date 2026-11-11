@@ -20,6 +20,8 @@ pub fn is_public(ip: IpAddr) -> bool {
                 || v.is_broadcast()
                 || v.is_documentation()
                 || o[0] == 0
+                || o[0] >= 224 // multicast and reserved (240/4)
+                || (o[0] == 192 && o[1] == 0 && o[2] == 0) // IETF protocol assignments
                 || (o[0] == 100 && (64..=127).contains(&o[1])) // CGNAT
                 || (o[0] == 198 && (o[1] == 18 || o[1] == 19)))
         }
@@ -30,8 +32,14 @@ pub fn is_public(ip: IpAddr) -> bool {
             let s = v.segments();
             !(v.is_loopback()
                 || v.is_unspecified()
+                || s[..6] == [0; 6] // IPv4-compatible ::a.b.c.d
+                || (s[0] == 0x64 && s[1] == 0xff9b && s[2] <= 1) // NAT64 64:ff9b::/96, 64:ff9b:1::/48
+                || s[0] == 0x2002 // 6to4
+                || (s[0] == 0x2001 && s[1] == 0) // Teredo
                 || (s[0] & 0xfe00) == 0xfc00 // unique local
-                || (s[0] & 0xffc0) == 0xfe80) // link local
+                || (s[0] & 0xffc0) == 0xfe80 // link local
+                || (s[0] & 0xffc0) == 0xfec0 // site local
+                || (s[0] & 0xff00) == 0xff00) // multicast
         }
     }
 }
@@ -56,6 +64,7 @@ pub async fn fetch_json(raw: &str, max_bytes: usize) -> Result<serde_json::Value
         return Err("host must resolve to public addresses only".into());
     }
     let client = reqwest::Client::builder()
+        .no_proxy() // HTTPS_PROXY would resolve the host itself and bypass the pinned, checked addresses
         .redirect(reqwest::redirect::Policy::none())
         .timeout(std::time::Duration::from_secs(5))
         .resolve_to_addrs(&host, &addrs)
@@ -92,6 +101,23 @@ mod tests {
         assert!(!is_public("100.64.0.1".parse().unwrap()));
         assert!(!is_public("::ffff:10.0.0.1".parse().unwrap()));
         assert!(!is_public("fd00::1".parse().unwrap()));
+        for bad in [
+            "224.0.0.1",
+            "239.255.255.250",
+            "240.0.0.1",
+            "255.255.255.255",
+            "192.0.0.8",
+            "64:ff9b::808:808",
+            "64:ff9b:1::1",
+            "2002:808:808::1",
+            "2001::1",
+            "::8.8.8.8",
+            "fec0::1",
+            "ff02::1",
+        ] {
+            assert!(!is_public(bad.parse().unwrap()), "{bad}");
+        }
+        assert!(is_public("2606:4700:4700::1111".parse().unwrap()));
     }
 
     #[tokio::test]

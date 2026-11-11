@@ -18,17 +18,27 @@ struct Srv {
 }
 
 async fn start() -> Srv {
+    start_with(true).await
+}
+
+/// `configured`: whether PUBLIC_BASE_URL is set (otherwise only loopback Hosts are served).
+async fn start_with(configured: bool) -> Srv {
     let port = std::net::TcpListener::bind("127.0.0.1:0")
         .unwrap()
         .local_addr()
         .unwrap()
         .port();
     let base = format!("http://127.0.0.1:{port}");
-    let child = Command::new(env!("CARGO_BIN_EXE_cnote"))
-        .args(["serve", "--port", &port.to_string()])
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_cnote"));
+    cmd.args(["serve", "--port", &port.to_string()])
         .current_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
-        .env("PUBLIC_BASE_URL", &base)
-        .env("OAUTH_CIMD_ALLOW_PRIVATE", "1")
+        .env("OAUTH_CIMD_ALLOW_PRIVATE", "1");
+    if configured {
+        cmd.env("PUBLIC_BASE_URL", &base);
+    } else {
+        cmd.env_remove("PUBLIC_BASE_URL");
+    }
+    let child = cmd
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .kill_on_drop(true)
@@ -195,6 +205,13 @@ impl Srv {
     }
 }
 
+async fn db() -> sqlx::PgPool {
+    let _ = dotenvy::from_path(concat!(env!("CARGO_MANIFEST_DIR"), "/../../.env"));
+    cnote_db::connect(&std::env::var("DATABASE_URL").unwrap(), 2)
+        .await
+        .unwrap()
+}
+
 fn pkce() -> (String, String) {
     let verifier = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
     let challenge = base64::engine::general_purpose::URL_SAFE_NO_PAD
@@ -345,16 +362,8 @@ async fn principal_is_an_agent_capped_below_owner() {
     let u = s.signup().await; // the signing-up user is the workspace owner
     let (_, tok) = s.connect(&u).await;
     let access = tok["access_token"].as_str().unwrap();
-    let pool = cnote_db::connect(
-        &std::env::var("DATABASE_URL").unwrap_or_else(|_| {
-            let _ = dotenvy::from_path(concat!(env!("CARGO_MANIFEST_DIR"), "/../../.env"));
-            std::env::var("DATABASE_URL").unwrap()
-        }),
-        2,
-    )
-    .await
-    .unwrap();
-    let p = cnote_core::auth::principal_from_oauth_token(&pool, access)
+    let pool = db().await;
+    let p = cnote_core::auth::principal_from_oauth_token(&pool, access, &format!("{}/mcp", s.base))
         .await
         .unwrap()
         .unwrap();
@@ -735,4 +744,169 @@ async fn registration_is_rate_limited() {
         }
     }
     assert!(limited);
+}
+
+#[tokio::test]
+async fn token_resource_is_checked_on_every_use() {
+    let s = start().await;
+    let u = s.signup().await;
+    let (_, tok) = s.connect(&u).await;
+    let access = tok["access_token"].as_str().unwrap();
+    assert_eq!(s.mcp_status(access).await, 200);
+    // The same protected resource also serves the command API.
+    assert_eq!(s.command(access, u.ws, "space.list").await.0, 200);
+    sqlx::query("update core.oauth_grants set resource = 'https://other.example/mcp' where workspace_id = $1")
+        .bind(u.ws)
+        .execute(&db().await)
+        .await
+        .unwrap();
+    assert_eq!(s.mcp_status(access).await, 401);
+    assert_eq!(s.command(access, u.ws, "space.list").await.0, 401);
+}
+
+#[tokio::test]
+async fn removed_member_grants_stay_dead_after_re_adding() {
+    let s = start().await;
+    let u = s.signup().await;
+    let (client, tok) = s.connect(&u).await;
+    let access = tok["access_token"].as_str().unwrap();
+    let refresh = tok["refresh_token"].as_str().unwrap();
+    let pool = db().await;
+    let user_id: Uuid =
+        sqlx::query_scalar("select user_id from core.oauth_grants where workspace_id = $1")
+            .bind(u.ws)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+    let mut tx = cnote_db::begin_tenant(&pool, u.ws).await.unwrap();
+    sqlx::query("delete from core.memberships where user_id = $1")
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    assert_eq!(s.mcp_status(access).await, 401);
+
+    let mut tx = cnote_db::begin_tenant(&pool, u.ws).await.unwrap();
+    sqlx::query(
+        "insert into core.memberships (workspace_id, user_id, role) values ($1,$2,'member')",
+    )
+    .bind(u.ws)
+    .bind(user_id)
+    .execute(&mut *tx)
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+    assert_eq!(
+        s.mcp_status(access).await,
+        401,
+        "re-adding must not resurrect the grant"
+    );
+    let (st, e) = s
+        .token(&[
+            ("grant_type", "refresh_token"),
+            ("refresh_token", refresh),
+            ("client_id", &client),
+        ])
+        .await;
+    assert_eq!((st, e["error"].as_str()), (400, Some("invalid_grant")));
+}
+
+#[tokio::test]
+async fn unconfigured_server_serves_oauth_only_on_loopback_hosts() {
+    let s = start_with(false).await;
+    // Loopback Host (local development): works, and the issuer follows the Host.
+    let m: Value = s
+        .http
+        .get(s.url("/.well-known/oauth-authorization-server"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(m["issuer"], s.base);
+    // Any other Host is refused rather than echoed into issuer/resource URLs.
+    for path in [
+        "/.well-known/oauth-authorization-server",
+        "/.well-known/oauth-protected-resource",
+    ] {
+        let res = s
+            .http
+            .get(s.url(path))
+            .header("host", "evil.example")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(res.status(), 503, "{path}");
+    }
+    let res = s
+        .http
+        .post(s.url("/oauth/register"))
+        .header("host", "evil.example")
+        .json(&json!({"redirect_uris": [REDIRECT]}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 503);
+    let res = s
+        .http
+        .post(s.url("/mcp"))
+        .header("host", "evil.example")
+        .json(&json!({}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 401);
+    assert!(
+        !res.headers()["www-authenticate"]
+            .to_str()
+            .unwrap()
+            .contains("evil.example")
+    );
+}
+
+#[tokio::test]
+async fn consent_context_is_throttled_per_user() {
+    let s = start().await;
+    let u = s.signup().await;
+    let (_, challenge) = pkce();
+    let body = s.authz_body("cnc_unknown", REDIRECT, &challenge);
+    let mut limited = false;
+    for _ in 0..40 {
+        let res = s
+            .http
+            .post(s.url("/api/oauth/authorize/context"))
+            .header("cookie", &u.cookie)
+            .json(&body)
+            .send()
+            .await
+            .unwrap();
+        if res.status() == 429 {
+            limited = true;
+            break;
+        }
+    }
+    assert!(limited);
+}
+
+#[tokio::test]
+async fn junk_token_requests_do_not_charge_a_clients_own_bucket() {
+    let s = start().await;
+    let u = s.signup().await;
+    let (client, _) = s.connect(&u).await;
+    // 50 junk exchanges naming the client stay under the per-address limit and must not drain the client bucket.
+    for _ in 0..50 {
+        let (st, _) = s
+            .token(&[
+                ("grant_type", "authorization_code"),
+                ("code", "cnx_junk"),
+                ("redirect_uri", REDIRECT),
+                ("client_id", &client),
+                ("code_verifier", &"a".repeat(43)),
+            ])
+            .await;
+        assert_eq!(st, 400);
+    }
 }

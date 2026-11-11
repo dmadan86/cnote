@@ -82,7 +82,7 @@ pub async fn principal_for(
     workspace_id: Uuid,
 ) -> Result<Principal, CmdError> {
     if let Some(key) = bearer(headers).filter(|k| !k.starts_with(NATIVE_SESSION_PREFIX)) {
-        let p = auth::principal_from_bearer(pool, &key)
+        let p = auth::principal_from_bearer(pool, &key, &cnote_mcp::mcp_resource(headers))
             .await?
             .ok_or_else(|| {
                 CmdError::new(

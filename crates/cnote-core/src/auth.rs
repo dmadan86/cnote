@@ -211,12 +211,13 @@ pub async fn principal_from_api_key(pool: &PgPool, key: &str) -> CmdResult<Optio
 /// Prefix of OAuth access tokens issued to MCP clients (see cnote-server oauth.rs).
 pub const OAUTH_ACCESS_PREFIX: &str = "cno_";
 
-/// Resolve an OAuth access token to an agent principal on the workspace the user approved.
+/// Resolve an OAuth access token (issued for `resource`, the MCP endpoint URL) to an agent principal on the workspace the user approved.
 /// Same cap as API keys: the user's current role, never above admin. Revoked grants, expired tokens
 /// and users who left the workspace all resolve to None.
 pub async fn principal_from_oauth_token(
     pool: &PgPool,
     token: &str,
+    resource: &str,
 ) -> CmdResult<Option<Principal>> {
     if !token.starts_with(OAUTH_ACCESS_PREFIX) {
         return Ok(None);
@@ -225,9 +226,11 @@ pub async fn principal_from_oauth_token(
         "select g.id, g.user_id, g.workspace_id,
                 (g.last_used_at is null or g.last_used_at < now() - interval '1 minute')
          from core.oauth_tokens t join core.oauth_grants g on g.id = t.grant_id
-         where t.token_hash = $1 and t.kind = 'access' and t.expires_at > now() and g.revoked_at is null",
+         where t.token_hash = $1 and t.kind = 'access' and t.expires_at > now() and g.revoked_at is null
+           and g.resource = $2",
     )
     .bind(sha256_hex(token))
+    .bind(resource)
     .fetch_optional(pool)
     .await?;
     let Some((grant, user, ws, stale)) = row else {
@@ -253,9 +256,13 @@ pub async fn principal_from_oauth_token(
 }
 
 /// Any bearer credential an agent may present: `cn_` API key or `cno_` OAuth access token.
-pub async fn principal_from_bearer(pool: &PgPool, token: &str) -> CmdResult<Option<Principal>> {
+pub async fn principal_from_bearer(
+    pool: &PgPool,
+    token: &str,
+    oauth_resource: &str,
+) -> CmdResult<Option<Principal>> {
     if token.starts_with(OAUTH_ACCESS_PREFIX) {
-        principal_from_oauth_token(pool, token).await
+        principal_from_oauth_token(pool, token, oauth_resource).await
     } else {
         principal_from_api_key(pool, token).await
     }

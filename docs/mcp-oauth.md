@@ -27,13 +27,15 @@ API keys (`cn_...`) keep working; OAuth is the path for interactive MCP clients 
 | Rule | Where |
 | --- | --- |
 | PKCE S256 only; `plain`/missing is refused at authorize, verifier length and charset checked at token | `validate_authz`, `exchange_code` |
-| `resource` required; must be this server's `/mcp` (or origin); re-checked at token and refresh (`invalid_target`) | `canonical_resource` |
+| `resource` required; only `<base>/mcp` is ever issued; re-checked at token and refresh (`invalid_target`) and on every use (the grant's stored resource must equal the endpoint's). The same token is also accepted on `/api/w/{ws}/commands` as part of the same protected resource | `canonical_resource`, `principal_from_oauth_token` |
 | `redirect_uri` exact string match; never redirected to before it is verified; http only for loopback; no fragment/credentials; `javascript:`, `data:` etc. refused | `validate_redirect_uri` |
 | Codes: 256-bit, 5 minutes, single use; replay revokes the grant the code produced | `exchange_code` |
 | Refresh tokens rotate; presenting a used one revokes the whole grant (reuse detection) | `refresh` |
 | Only SHA-256 hashes stored (codes, tokens) | migration `0600_oauth.sql` |
 | Approval needs the cookie session, JSON body, workspace membership re-checked; cross-site fetches refused; consent page sent with `frame-ancestors 'none'` | `authorize`, `next.config.ts` |
-| Rate limits: registration (global bucket), token (global + per client), revoke | `ratelimit::check_with` |
+| Rate limits keyed by client address (registration, token, revoke) and per user (consent context); the per-client token bucket is charged only after a real code/refresh token is found. Buckets are length-capped and pruned | `ratelimit::check_with` |
+| Removing a member revokes their grants (DB trigger, so re-adding cannot resurrect them); refresh also requires current membership | migration `0601` |
+| Metadata fetch refuses private, NAT64, 6to4, Teredo, multicast, reserved ranges, ignores proxy env vars, pins checked IPs | `netguard.rs` |
 | Token endpoints answer `Cache-Control: no-store` | `no_store` |
 
 ## What a token is
@@ -54,7 +56,8 @@ Settings, "Connected apps" lists the caller's grants in the workspace and offers
 
 | Env | Meaning |
 | --- | --- |
-| `PUBLIC_BASE_URL` | Public origin of the API/MCP (issuer, resource, challenge URLs). **Set it in production.** Without it the request `Host` is used, which is for local development only. |
+| `PUBLIC_BASE_URL` | Public origin of the API/MCP (issuer, resource, challenge URLs). **Required in production.** Without it, OAuth and its metadata answer 503 unless the request Host is loopback (`localhost`, `127.0.0.1`, `::1`), so a spoofed Host cannot mint URLs. |
+| `TRUST_PROXY` | `1` makes rate limits use the left-most `X-Forwarded-For` entry; otherwise the socket peer address. Set only behind a proxy that sets the header. |
 | `PUBLIC_WEB_URL` | Origin serving `/oauth/authorize` when it differs from the API origin. |
 | `OAUTH_CIMD_ALLOW_PRIVATE` | Tests/dev only: lets the metadata-document fetch use http and private addresses. |
 

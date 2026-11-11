@@ -74,29 +74,35 @@ pub fn router<S: Clone + Send + Sync + 'static>(
 }
 
 /// Public origin of this server (no trailing slash), for OAuth metadata and challenges. Production sets
-/// PUBLIC_BASE_URL; without it the request's Host is used, which is fine for local development only.
-pub fn public_base(headers: &axum::http::HeaderMap) -> String {
+/// PUBLIC_BASE_URL. Without it only loopback hosts are served (local development); any other Host gets None,
+/// so a spoofed Host header can never mint issuer/resource URLs.
+pub fn public_base(headers: &axum::http::HeaderMap) -> Option<String> {
     if let Ok(v) = std::env::var("PUBLIC_BASE_URL") {
-        return v.trim_end_matches('/').to_string();
+        return Some(v.trim_end_matches('/').to_string());
     }
-    let host = headers
-        .get(header::HOST)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("localhost");
-    let proto = headers
-        .get("x-forwarded-proto")
-        .and_then(|v| v.to_str().ok())
-        .filter(|p| *p == "https")
-        .unwrap_or("http");
-    format!("{proto}://{host}")
+    let host = headers.get(header::HOST).and_then(|v| v.to_str().ok())?;
+    let name = match host.strip_prefix('[') {
+        Some(rest) => rest.split(']').next()?,
+        None => host.split(':').next()?,
+    };
+    matches!(name, "localhost" | "127.0.0.1" | "::1").then(|| format!("http://{host}"))
+}
+
+/// The protected resource tokens are issued for and checked against.
+pub fn mcp_resource(headers: &axum::http::HeaderMap) -> String {
+    public_base(headers)
+        .map(|b| format!("{b}/mcp"))
+        .unwrap_or_default()
 }
 
 /// 401 with the RFC 9728 pointer so MCP clients can discover the authorization server.
 fn unauthorized(headers: &axum::http::HeaderMap, error: Option<&str>) -> Response {
-    let base = public_base(headers);
-    let mut challenge = format!(
-        "Bearer realm=\"cnote\", resource_metadata=\"{base}/.well-known/oauth-protected-resource/mcp\""
-    );
+    let mut challenge = "Bearer realm=\"cnote\"".to_string();
+    if let Some(base) = public_base(headers) {
+        challenge.push_str(&format!(
+            ", resource_metadata=\"{base}/.well-known/oauth-protected-resource/mcp\""
+        ));
+    }
     if let Some(e) = error {
         challenge.push_str(&format!(", error=\"{e}\""));
     }
@@ -122,7 +128,7 @@ async fn authenticate(State(pool): State<PgPool>, mut req: Request, next: Next) 
     else {
         return unauthorized(req.headers(), None);
     };
-    match auth::principal_from_bearer(&pool, &key).await {
+    match auth::principal_from_bearer(&pool, &key, &mcp_resource(req.headers())).await {
         Ok(Some(p)) => {
             req.extensions_mut().insert(p);
             next.run(req).await
