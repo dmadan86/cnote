@@ -21,3 +21,4 @@ anyhow.workspace = true
 [dev-dependencies]
 tokio.workspace = true
 dotenvy.workspace = true
+cnote-finance.workspace = true
