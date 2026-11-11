@@ -1,10 +1,13 @@
 'use client'
+import type { Editor } from '@tiptap/react'
 import { PanelRight, Plus } from 'lucide-react'
 import Link from 'next/link'
-import { use, useEffect, useState } from 'react'
+import { use, useEffect, useRef, useState } from 'react'
 import { DocActions, Proposals } from '@/components/docs/note-tools'
 import { NoteEditor } from '@/components/note-editor'
 import { useShell } from '@/components/shell'
+import { InsertField } from '@/components/templates/fields'
+import { SaveAsTemplate } from '@/components/templates/save-template'
 import { Avatar, btn, ErrorText, FreshnessPill, inputCls } from '@/components/ui'
 import { cmd, type NoteDetail } from '@/lib/api'
 import { ago, useCmd } from '@/lib/hooks'
@@ -123,6 +126,7 @@ export default function NotePage({ params }: { params: Promise<{ id: string }> }
   const [panel, setPanel] = useState(true)
   const [rev, setRev] = useState(0) // bumps when an approved proposal rewrites the content
   const [title, setTitle] = useState('')
+  const editorRef = useRef<Editor | null>(null)
 
   // Only on page change: later reloads must not clobber what the user is typing.
   // biome-ignore lint/correctness/useExhaustiveDependencies: keyed by id on purpose
@@ -156,6 +160,15 @@ export default function NotePage({ params }: { params: Promise<{ id: string }> }
                 reload()
               }}
             />
+            {note.types.length === 0 && (
+              <>
+                <InsertField
+                  ws={ws}
+                  onInsert={(t) => editorRef.current?.chain().focus().insertContent(t).run()}
+                />
+                <SaveAsTemplate ws={ws} noteId={id} title={note.title} />
+              </>
+            )}
             <button
               type="button"
               onClick={() => newPage({ spaceId: note.space_id, parentId: note.id })}
@@ -192,7 +205,14 @@ export default function NotePage({ params }: { params: Promise<{ id: string }> }
             onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
             className="mb-6 w-full bg-transparent text-3xl font-bold placeholder:text-muted"
           />
-          <NoteEditor key={`${id}-${rev}`} ws={ws} id={id} initialMd={note.content_md} onSaved={reloadNote} />
+          <NoteEditor
+            key={`${id}-${rev}`}
+            ws={ws}
+            id={id}
+            initialMd={note.content_md}
+            onSaved={reloadNote}
+            editorRef={editorRef}
+          />
         </article>
       </div>
       {panel && <Panel ws={ws} note={note} />}

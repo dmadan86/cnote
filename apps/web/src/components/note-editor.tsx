@@ -1,7 +1,7 @@
 'use client'
 import Collaboration from '@tiptap/extension-collaboration'
 import { Markdown } from '@tiptap/markdown'
-import { EditorContent, useEditor } from '@tiptap/react'
+import { type Editor, EditorContent, useEditor } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import { useEffect, useRef, useState } from 'react'
 import { WebsocketProvider } from 'y-websocket'
@@ -22,11 +22,13 @@ export function NoteEditor({
   id,
   initialMd,
   onSaved,
+  editorRef,
 }: {
   ws: string
   id: string
   initialMd: string
   onSaved: () => void
+  editorRef?: React.RefObject<Editor | null>
 }) {
   const [mode, setMode] = useState<Mode>('connecting')
   const doc = useRef<Y.Doc>(null)
@@ -60,6 +62,7 @@ export function NoteEditor({
       id={id}
       initialMd={initialMd}
       onSaved={onSaved}
+      editorRef={editorRef}
       ydoc={mode === 'collab' ? doc.current : null}
     />
   )
@@ -70,12 +73,14 @@ function Surface({
   id,
   initialMd,
   onSaved,
+  editorRef,
   ydoc,
 }: {
   ws: string
   id: string
   initialMd: string
   onSaved: () => void
+  editorRef?: React.RefObject<Editor | null>
   ydoc: Y.Doc | null
 }) {
   const [status, setStatus] = useState<'saved' | 'saving' | 'error'>('saved')
@@ -93,6 +98,7 @@ function Surface({
     ...(ydoc ? {} : { content: initialMd, contentType: 'markdown' as const }),
     editorProps: { attributes: { 'aria-label': 'Page content', role: 'textbox', 'aria-multiline': 'true' } },
     onCreate: ({ editor }) => {
+      if (editorRef) editorRef.current = editor
       // A fresh Yjs room has no content yet: seed it from the stored Markdown once.
       if (ydoc && ydoc.getXmlFragment('default').length === 0 && initialMd)
         editor.commands.setContent(initialMd, { contentType: 'markdown' })

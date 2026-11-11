@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useState } from 'react'
 import { useShell } from '@/components/shell'
+import { NewFromTemplateButton } from '@/components/templates/use-template'
 import { btn, btnPrimary, ErrorText, inputCls } from '@/components/ui'
 import { cmd, type Note } from '@/lib/api'
 import { ago, useCmd } from '@/lib/hooks'
@@ -69,6 +70,7 @@ export default function WhiteboardIndex() {
               </option>
             ))}
           </select>
+          <NewFromTemplateButton kind="board" />
           <button type="button" className={btnPrimary} onClick={() => create('whiteboard')}>
             <Presentation size={14} /> New whiteboard
           </button>

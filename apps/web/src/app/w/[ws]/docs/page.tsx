@@ -6,6 +6,7 @@ import { AskBox } from '@/components/docs/ask-box'
 import { CaptureDialog } from '@/components/docs/capture-dialog'
 import { Dashboard } from '@/components/docs/dashboard'
 import { useShell } from '@/components/shell'
+import { NewFromTemplateButton } from '@/components/templates/use-template'
 import { btn } from '@/components/ui'
 
 export default function DocsHome() {
@@ -16,6 +17,7 @@ export default function DocsHome() {
       <div className="flex flex-wrap items-center gap-2">
         <h1 className="text-xl font-semibold">Docs</h1>
         <div className="ml-auto flex gap-2">
+          <NewFromTemplateButton kind="page" />
           <button type="button" className={btn} onClick={() => setCapture(true)}>
             <FilePlus2 size={14} /> Capture
           </button>
