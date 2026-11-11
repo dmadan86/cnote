@@ -375,7 +375,8 @@ async fn template_save(ctx: &mut Ctx, i: Save) -> CmdResult<TemplateOut> {
     if name.is_empty() {
         return Err(CmdError::invalid("name is required"));
     }
-    assert_note_access(ctx, i.note_id, false).await?;
+    let space = assert_note_access(ctx, i.note_id, false).await?;
+    let readable = readable_space_ids(ctx).await?;
     let (title, types, md): (String, Vec<String>, String) = sqlx::query_as(
         "select title, types, content_md from core.notes where id = $1 and deleted_at is null",
     )
@@ -391,10 +392,12 @@ async fn template_save(ctx: &mut Ctx, i: Save) -> CmdResult<TemplateOut> {
         return Err(CmdError::invalid("only pages and boards can be templates"));
     };
     let t: TemplateOut = sqlx::query_as(
-        "insert into docs.templates (workspace_id, name, kind, source_kind, types, title, content_md, created_by)
-         values ($1,$2,$3,$4,$5,$6,$7,$8)
+        "insert into docs.templates (workspace_id, name, kind, source_kind, types, title, content_md, created_by, space_id)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9)
          on conflict (workspace_id, name) do update set kind = excluded.kind, source_kind = excluded.source_kind,
-           types = excluded.types, title = excluded.title, content_md = excluded.content_md, updated_at = now()
+           types = excluded.types, title = excluded.title, content_md = excluded.content_md,
+           space_id = excluded.space_id, updated_at = now()
+         where docs.templates.space_id is null or docs.templates.space_id = any($10)
          returning id, name, kind, source_kind, updated_at",
     )
     .bind(ctx.workspace_id())
@@ -405,8 +408,11 @@ async fn template_save(ctx: &mut Ctx, i: Save) -> CmdResult<TemplateOut> {
     .bind(&title)
     .bind(&md)
     .bind(ctx.principal.user_id)
-    .fetch_one(&mut *ctx.tx)
-    .await?;
+    .bind(space)
+    .bind(&readable)
+    .fetch_optional(&mut *ctx.tx)
+    .await?
+    .ok_or_else(|| CmdError::conflict("a template with this name already exists"))?;
     ctx.emit(
         "template.saved",
         Some(i.note_id),
@@ -429,10 +435,12 @@ pub struct List {
 async fn template_list(ctx: &mut Ctx, i: List) -> CmdResult<Vec<TemplateOut>> {
     Ok(sqlx::query_as(
         "select id, name, kind, source_kind, updated_at from docs.templates
-         where ($1::text is null or source_kind in ('none', $1)) and ($2::text is null or kind = $2) order by name",
+         where ($1::text is null or source_kind in ('none', $1)) and ($2::text is null or kind = $2)
+           and (space_id is null or space_id = any($3)) order by name",
     )
     .bind(i.source_kind)
     .bind(i.kind)
+    .bind(readable_space_ids(ctx).await?)
     .fetch_all(&mut *ctx.tx)
     .await?)
 }
@@ -443,11 +451,15 @@ pub struct Delete {
 }
 
 async fn template_delete(ctx: &mut Ctx, i: Delete) -> CmdResult<Value> {
-    let n = sqlx::query("delete from docs.templates where id = $1")
-        .bind(i.template_id)
-        .execute(&mut *ctx.tx)
-        .await?
-        .rows_affected();
+    let readable = readable_space_ids(ctx).await?;
+    let n = sqlx::query(
+        "delete from docs.templates where id = $1 and (space_id is null or space_id = any($2))",
+    )
+    .bind(i.template_id)
+    .bind(&readable)
+    .execute(&mut *ctx.tx)
+    .await?
+    .rows_affected();
     if n == 0 {
         return Err(CmdError::not_found("template"));
     }
@@ -493,9 +505,11 @@ struct Tpl {
 
 async fn load_template(ctx: &mut Ctx, id: Uuid) -> CmdResult<Tpl> {
     sqlx::query_as(
-        "select name, kind, source_kind, types, title, content_md from docs.templates where id = $1",
+        "select name, kind, source_kind, types, title, content_md from docs.templates
+         where id = $1 and (space_id is null or space_id = any($2))",
     )
     .bind(id)
+    .bind(readable_space_ids(ctx).await?)
     .fetch_optional(&mut *ctx.tx)
     .await?
     .ok_or_else(|| CmdError::not_found("template"))

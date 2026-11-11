@@ -408,3 +408,57 @@ async fn render_is_access_checked() {
         .is_err()
     );
 }
+
+#[tokio::test]
+async fn templates_from_private_spaces_stay_private() {
+    let t = T::new().await;
+    let (ws, owner) = t.tenant().await;
+    let member = t.member(ws).await;
+    let private = t.space(&owner, "HUSH", "private").await;
+    let tid = t
+        .save(
+            &owner,
+            &private,
+            "Board pack",
+            "none",
+            "salary bands",
+            json!([]),
+        )
+        .await;
+    let names = |l: Value| {
+        l.as_array()
+            .unwrap()
+            .iter()
+            .map(|x| x["name"].as_str().unwrap().to_string())
+            .collect::<Vec<_>>()
+    };
+    assert!(names(t.ok(&owner, "template.list", json!({})).await).contains(&"Board pack".into()));
+    assert!(!names(t.ok(&member, "template.list", json!({})).await).contains(&"Board pack".into()));
+    let open = t.space(&owner, "OPN", "open").await;
+    for (cmd, input) in [
+        (
+            "template.render",
+            json!({"template_id": tid, "space_id": open}),
+        ),
+        ("template.delete", json!({"template_id": tid})),
+    ] {
+        assert!(t.run(&member, cmd, input).await.is_err(), "{cmd} must fail");
+    }
+    // Same name from an open page must not overwrite the private template.
+    let n = t
+        .ok(
+            &member,
+            "note.create",
+            json!({"space_id": open, "title": "x", "content_md": "mine"}),
+        )
+        .await;
+    let e = t
+        .run(
+            &member,
+            "template.save",
+            json!({"note_id": n["id"], "name": "Board pack", "source_kind": "none"}),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(e.code, ErrorCode::Conflict);
+}

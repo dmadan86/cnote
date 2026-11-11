@@ -9,6 +9,7 @@ CREATE TABLE docs.templates (
   types text[] NOT NULL DEFAULT '{}',        -- note types of rendered notes: {} for pages, {whiteboard} or {design} for boards
   title text NOT NULL DEFAULT '',            -- title pattern, may contain placeholders
   content_md text NOT NULL DEFAULT '',
+  space_id uuid REFERENCES core.spaces(id) ON DELETE CASCADE, -- space of the page it was saved from: only readers of that space see it (NULL = workspace-wide starter)
   created_by uuid REFERENCES core.users(id),
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
