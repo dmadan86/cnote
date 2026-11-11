@@ -171,7 +171,7 @@ const SlashList = forwardRef<ListHandle, SuggestionProps<SlashItem>>(({ items, c
       ref={list}
       role="listbox"
       aria-label="Insert block"
-      className="max-h-80 w-64 overflow-y-auto rounded-lg border border-line bg-bg p-1 text-fg shadow-xl"
+      className="max-h-80 w-64 overflow-y-auto rounded-lg border border-line bg-canvas p-1 text-fg shadow-xl"
     >
       {items.length === 0 && <p className="px-2 py-1.5 text-[13px] text-muted">No results</p>}
       {items.map((it, i) => (
@@ -185,7 +185,7 @@ const SlashList = forwardRef<ListHandle, SuggestionProps<SlashItem>>(({ items, c
           onClick={() => command(it)}
           className="flex w-full items-center gap-2.5 rounded px-2 py-1.5 text-left aria-selected:bg-hover"
         >
-          <span className="grid size-8 shrink-0 place-items-center rounded border border-line bg-bg">
+          <span className="grid size-8 shrink-0 place-items-center rounded border border-line bg-canvas">
             <it.icon size={15} />
           </span>
           <span className="min-w-0">
@@ -236,8 +236,11 @@ export const SlashCommand = Extension.create({
           return {
             onStart: (p) => {
               r = new ReactRenderer(SlashList, { props: p, editor: p.editor })
-              document.body.appendChild(r.element)
-              place(p)
+              const el = r.element as HTMLElement
+              Object.assign(el.style, { position: 'fixed', left: '0px', top: '0px', zIndex: '50' })
+              document.body.appendChild(el)
+              // The "/" decoration is only laid out after this transaction paints: measure on the next frame.
+              requestAnimationFrame(() => place(p))
             },
             onUpdate: (p) => {
               r?.updateProps(p)

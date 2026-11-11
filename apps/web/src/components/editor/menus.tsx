@@ -5,7 +5,7 @@ import { Bold, Code, Italic, Link2, Strikethrough, Underline } from 'lucide-reac
 
 const btn =
   'grid h-7 min-w-7 place-items-center rounded px-1.5 text-[12px] hover:bg-hover aria-pressed:bg-hover aria-pressed:text-accent'
-const bar = 'flex items-center gap-0.5 rounded-lg border border-line bg-bg p-1 text-fg shadow-xl'
+const bar = 'flex items-center gap-0.5 rounded-lg border border-line bg-canvas p-1 text-fg shadow-xl'
 
 function Tool({
   label,
