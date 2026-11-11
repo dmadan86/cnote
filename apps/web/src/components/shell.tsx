@@ -1,5 +1,5 @@
 'use client'
-import { ChevronDown, FileText, Plus, Search, Settings } from 'lucide-react'
+import { ChevronDown, ChevronRight, FileText, Plus, Search, Settings } from 'lucide-react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
@@ -79,6 +79,57 @@ function Menu({
 
 const menuItem = 'flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[13px] hover:bg-hover'
 
+type Fold = { isOpen: (id: string, dflt: boolean) => boolean; toggle: (id: string, dflt: boolean) => void }
+const FoldCtx = createContext<Fold>({ isOpen: () => true, toggle: () => {} })
+const FOLD_KEY = 'cn.tree.fold'
+
+/** Sidebar fold state: user choices persist per browser; pages start folded except the path to the open page. */
+function useFold(notes: Note[], currentId: string | undefined): Fold {
+  const [over, setOver] = useState<Record<string, boolean>>({})
+  useEffect(() => {
+    try {
+      setOver(JSON.parse(localStorage.getItem(FOLD_KEY) ?? '{}'))
+    } catch {}
+  }, [])
+  const onPath = useMemo(() => {
+    const ids = new Set<string>()
+    for (let n = notes.find((x) => x.id === currentId); n; n = notes.find((x) => x.id === n?.parent_id))
+      ids.add(n.id)
+    return ids
+  }, [notes, currentId])
+  const isOpen = useCallback(
+    (id: string, dflt: boolean) => over[id] ?? (dflt || onPath.has(id)),
+    [over, onPath],
+  )
+  const toggle = useCallback(
+    (id: string, dflt: boolean) =>
+      setOver((o) => {
+        const next = { ...o, [id]: !(o[id] ?? (dflt || onPath.has(id))) }
+        try {
+          localStorage.setItem(FOLD_KEY, JSON.stringify(next))
+        } catch {}
+        return next
+      }),
+    [onPath],
+  )
+  return useMemo(() => ({ isOpen, toggle }), [isOpen, toggle])
+}
+
+function FoldButton({ id, label, open, dflt }: { id: string; label: string; open: boolean; dflt: boolean }) {
+  const { toggle } = useContext(FoldCtx)
+  return (
+    <button
+      type="button"
+      aria-label={`${open ? 'Collapse' : 'Expand'} ${label}`}
+      aria-expanded={open}
+      onClick={() => toggle(id, dflt)}
+      className="shrink-0 rounded p-0.5 text-muted hover:bg-line hover:text-fg"
+    >
+      <ChevronRight size={12} className={`transition-transform ${open ? 'rotate-90' : ''}`} />
+    </button>
+  )
+}
+
 function Tree({
   spaceId,
   notes,
@@ -92,23 +143,38 @@ function Tree({
 }) {
   const path = usePathname()
   const { ws } = useShell()
+  const fold = useContext(FoldCtx)
   const kids = notes.filter((n) => n.space_id === spaceId && n.parent_id === parent)
   return (
     <ul>
-      {kids.map((n) => (
-        <li key={n.id}>
-          <Link
-            href={`/w/${ws}/n/${n.id}`}
-            style={{ paddingLeft: 8 + depth * 12 }}
-            aria-current={path.endsWith(`/n/${n.id}`) ? 'page' : undefined}
-            className="flex items-center gap-1.5 truncate rounded py-1 pr-2 text-[13px] hover:bg-hover aria-[current=page]:bg-hover aria-[current=page]:font-medium"
-          >
-            <FileText size={13} className="shrink-0 text-muted" />
-            <span className="truncate">{n.title || 'Untitled'}</span>
-          </Link>
-          <Tree spaceId={spaceId} notes={notes} parent={n.id} depth={depth + 1} />
-        </li>
-      ))}
+      {kids.map((n) => {
+        const hasKids = notes.some((c) => c.parent_id === n.id)
+        const open = hasKids && fold.isOpen(n.id, false)
+        const current = path.endsWith(`/n/${n.id}`)
+        return (
+          <li key={n.id}>
+            <div
+              style={{ paddingLeft: depth * 12 - 8 }}
+              className={`flex items-center rounded hover:bg-hover ${current ? 'bg-hover font-medium' : ''}`}
+            >
+              {hasKids ? (
+                <FoldButton id={n.id} label={n.title || 'Untitled'} open={open} dflt={false} />
+              ) : (
+                <span className="w-4 shrink-0" />
+              )}
+              <Link
+                href={`/w/${ws}/n/${n.id}`}
+                aria-current={current ? 'page' : undefined}
+                className="flex min-w-0 flex-1 items-center gap-1.5 py-1 pr-2 pl-0.5 text-[13px]"
+              >
+                <FileText size={13} className="shrink-0 text-muted" />
+                <span className="truncate">{n.title || 'Untitled'}</span>
+              </Link>
+            </div>
+            {open && <Tree spaceId={spaceId} notes={notes} parent={n.id} depth={depth + 1} />}
+          </li>
+        )
+      })}
     </ul>
   )
 }
@@ -164,6 +230,7 @@ export function ShellView({ ws, children }: { ws: string; children: React.ReactN
   const [tick, setTick] = useState(0)
   const [spaceDialog, setSpaceDialog] = useState(false)
   const [palette, setPalette] = useState(false)
+  const fold = useFold(notes, path.match(/\/n\/([^/?]+)/)?.[1])
 
   useEffect(() => {
     auth.me().then(setMe, () => router.replace('/login'))
@@ -254,148 +321,164 @@ export function ShellView({ ws, children }: { ws: string; children: React.ReactN
 
   return (
     <Ctx.Provider value={shell}>
-      <div className="flex h-screen">
-        <nav
-          aria-label="Modules"
-          className="flex w-12 shrink-0 flex-col items-center gap-1 border-r border-line bg-side py-2"
-        >
-          {MODULES.map((m) => (
-            <Link
-              key={m.key}
-              href={hrefFor(m.key)}
-              aria-label={m.label}
-              title={m.label}
-              aria-current={active(m.key) ? 'page' : undefined}
-              className="rounded-md p-2 text-muted hover:bg-hover aria-[current=page]:bg-hover aria-[current=page]:text-fg"
-            >
-              <m.icon size={18} />
-            </Link>
-          ))}
-          <Link
-            href={`${base}/settings`}
-            aria-label="Settings"
-            title="Settings"
-            aria-current={active('settings') ? 'page' : undefined}
-            className="mt-auto rounded-md p-2 text-muted hover:bg-hover aria-[current=page]:bg-hover aria-[current=page]:text-fg"
+      <FoldCtx.Provider value={fold}>
+        <div className="flex h-screen">
+          <nav
+            aria-label="Modules"
+            className="flex w-12 shrink-0 flex-col items-center gap-1 border-r border-line bg-side py-2"
           >
-            <Settings size={18} />
-          </Link>
-        </nav>
-
-        <aside aria-label="Spaces" className="flex w-60 shrink-0 flex-col border-r border-line bg-side">
-          <div className="p-2">
-            <Menu
-              label="Switch workspace"
-              trigger={
-                <>
-                  <span className="flex h-5 w-5 items-center justify-center rounded bg-accent text-[11px] font-bold text-accent-fg">
-                    {current?.name[0]?.toUpperCase()}
-                  </span>
-                  <span className="max-w-32 truncate text-[13px] font-semibold">{current?.name}</span>
-                  <ChevronDown size={14} className="text-muted" />
-                </>
-              }
-            >
-              {(close) => (
-                <>
-                  {me.workspaces.map((w) => (
-                    <Link key={w.id} href={`/w/${w.id}`} onClick={close} role="menuitem" className={menuItem}>
-                      {w.name}
-                    </Link>
-                  ))}
-                  <button
-                    type="button"
-                    role="menuitem"
-                    className={menuItem}
-                    onClick={async () => {
-                      const name = window.prompt('Workspace name')
-                      close()
-                      if (name?.trim()) router.push(`/w/${(await auth.createWorkspace(name.trim())).id}`)
-                    }}
-                  >
-                    <Plus size={14} /> New workspace
-                  </button>
-                </>
-              )}
-            </Menu>
-          </div>
-          <div className="px-2 pb-2">
-            <button type="button" onClick={() => newPage()} className={`${btnPrimary} w-full`}>
-              <Plus size={14} /> New page
-            </button>
-          </div>
-          <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
-            <div className="flex items-center justify-between px-2 py-1 text-[11px] font-semibold uppercase tracking-wide text-muted">
-              Spaces
-              <button
-                type="button"
-                aria-label="New space"
-                onClick={() => setSpaceDialog(true)}
-                className="rounded p-0.5 hover:bg-hover"
+            {MODULES.map((m) => (
+              <Link
+                key={m.key}
+                href={hrefFor(m.key)}
+                aria-label={m.label}
+                title={m.label}
+                aria-current={active(m.key) ? 'page' : undefined}
+                className="rounded-md p-2 text-muted hover:bg-hover aria-[current=page]:bg-hover aria-[current=page]:text-fg"
               >
-                <Plus size={13} />
+                <m.icon size={18} />
+              </Link>
+            ))}
+            <Link
+              href={`${base}/settings`}
+              aria-label="Settings"
+              title="Settings"
+              aria-current={active('settings') ? 'page' : undefined}
+              className="mt-auto rounded-md p-2 text-muted hover:bg-hover aria-[current=page]:bg-hover aria-[current=page]:text-fg"
+            >
+              <Settings size={18} />
+            </Link>
+          </nav>
+
+          <aside aria-label="Spaces" className="flex w-60 shrink-0 flex-col border-r border-line bg-side">
+            <div className="p-2">
+              <Menu
+                label="Switch workspace"
+                trigger={
+                  <>
+                    <span className="flex h-5 w-5 items-center justify-center rounded bg-accent text-[11px] font-bold text-accent-fg">
+                      {current?.name[0]?.toUpperCase()}
+                    </span>
+                    <span className="max-w-32 truncate text-[13px] font-semibold">{current?.name}</span>
+                    <ChevronDown size={14} className="text-muted" />
+                  </>
+                }
+              >
+                {(close) => (
+                  <>
+                    {me.workspaces.map((w) => (
+                      <Link
+                        key={w.id}
+                        href={`/w/${w.id}`}
+                        onClick={close}
+                        role="menuitem"
+                        className={menuItem}
+                      >
+                        {w.name}
+                      </Link>
+                    ))}
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className={menuItem}
+                      onClick={async () => {
+                        const name = window.prompt('Workspace name')
+                        close()
+                        if (name?.trim()) router.push(`/w/${(await auth.createWorkspace(name.trim())).id}`)
+                      }}
+                    >
+                      <Plus size={14} /> New workspace
+                    </button>
+                  </>
+                )}
+              </Menu>
+            </div>
+            <div className="px-2 pb-2">
+              <button type="button" onClick={() => newPage()} className={`${btnPrimary} w-full`}>
+                <Plus size={14} /> New page
               </button>
             </div>
-            {spaces.length === 0 && <p className="px-2 text-[13px] text-muted">No spaces yet.</p>}
-            {spaces.map((s) => (
-              <div key={s.id} className="mb-1">
-                <Link
-                  href={`${base}/s/${s.id}`}
-                  className="flex items-center gap-1.5 rounded px-2 py-1 text-[13px] font-medium hover:bg-hover"
+            <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
+              <div className="flex items-center justify-between px-2 py-1 text-[11px] font-semibold uppercase tracking-wide text-muted">
+                Spaces
+                <button
+                  type="button"
+                  aria-label="New space"
+                  onClick={() => setSpaceDialog(true)}
+                  className="rounded p-0.5 hover:bg-hover"
                 >
-                  <span className="rounded bg-hover px-1 text-[10px] font-bold text-muted">{s.key}</span>
-                  <span className="truncate">{s.name}</span>
-                </Link>
-                <Tree spaceId={s.id} notes={notes} parent={null} depth={1} />
+                  <Plus size={13} />
+                </button>
               </div>
-            ))}
-          </div>
-        </aside>
-
-        <div className="flex min-w-0 flex-1 flex-col">
-          <header className="flex h-11 shrink-0 items-center gap-3 border-b border-line px-4">
-            <div className="min-w-0 flex-1">
-              <Breadcrumb s={shell} />
-            </div>
-            <button
-              type="button"
-              onClick={() => setPalette(true)}
-              className="flex w-64 items-center gap-2 rounded-md border border-line px-2.5 py-1 text-[13px] text-muted hover:bg-hover"
-            >
-              <Search size={14} /> Search or jump to...
-              <kbd className="ml-auto rounded border border-line px-1 text-[11px]">⌘K</kbd>
-            </button>
-            <Menu label="User menu" align="right" trigger={<Avatar name={me.user.name} />}>
-              {(close) => (
-                <>
-                  <div className="px-2 py-1.5 text-[12px] text-muted">
-                    {me.user.name}
-                    <br />
-                    {me.user.email}
+              {spaces.length === 0 && <p className="px-2 text-[13px] text-muted">No spaces yet.</p>}
+              {spaces.map((s) => {
+                const open = fold.isOpen(s.id, true)
+                return (
+                  <div key={s.id} className="mb-1">
+                    <div className="flex items-center rounded hover:bg-hover">
+                      <FoldButton id={s.id} label={s.name} open={open} dflt />
+                      <Link
+                        href={`${base}/s/${s.id}`}
+                        className="flex min-w-0 flex-1 items-center gap-1.5 py-1 pr-2 pl-0.5 text-[13px] font-medium"
+                      >
+                        <span className="rounded bg-hover px-1 text-[10px] font-bold text-muted">
+                          {s.key}
+                        </span>
+                        <span className="truncate">{s.name}</span>
+                      </Link>
+                    </div>
+                    {open && <Tree spaceId={s.id} notes={notes} parent={null} depth={1} />}
                   </div>
-                  <Link href={`${base}/settings`} onClick={close} role="menuitem" className={menuItem}>
-                    Settings
-                  </Link>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    className={menuItem}
-                    onClick={async () => {
-                      await auth.logout()
-                      router.push('/login')
-                    }}
-                  >
-                    Log out
-                  </button>
-                </>
-              )}
-            </Menu>
-          </header>
-          <main className="min-h-0 flex-1 overflow-y-auto">{children}</main>
+                )
+              })}
+            </div>
+          </aside>
+
+          <div className="flex min-w-0 flex-1 flex-col">
+            <header className="flex h-11 shrink-0 items-center gap-3 border-b border-line px-4">
+              <div className="min-w-0 flex-1">
+                <Breadcrumb s={shell} />
+              </div>
+              <button
+                type="button"
+                onClick={() => setPalette(true)}
+                className="flex w-64 items-center gap-2 rounded-md border border-line px-2.5 py-1 text-[13px] text-muted hover:bg-hover"
+              >
+                <Search size={14} /> Search or jump to...
+                <kbd className="ml-auto rounded border border-line px-1 text-[11px]">⌘K</kbd>
+              </button>
+              <Menu label="User menu" align="right" trigger={<Avatar name={me.user.name} />}>
+                {(close) => (
+                  <>
+                    <div className="px-2 py-1.5 text-[12px] text-muted">
+                      {me.user.name}
+                      <br />
+                      {me.user.email}
+                    </div>
+                    <Link href={`${base}/settings`} onClick={close} role="menuitem" className={menuItem}>
+                      Settings
+                    </Link>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className={menuItem}
+                      onClick={async () => {
+                        await auth.logout()
+                        router.push('/login')
+                      }}
+                    >
+                      Log out
+                    </button>
+                  </>
+                )}
+              </Menu>
+            </header>
+            <main className="min-h-0 flex-1 overflow-y-auto">{children}</main>
+          </div>
         </div>
-      </div>
-      <SpaceDialog open={spaceDialog} onClose={() => setSpaceDialog(false)} />
-      <Palette open={palette} onClose={() => setPalette(false)} />
+        <SpaceDialog open={spaceDialog} onClose={() => setSpaceDialog(false)} />
+        <Palette open={palette} onClose={() => setPalette(false)} />
+      </FoldCtx.Provider>
     </Ctx.Provider>
   )
 }
