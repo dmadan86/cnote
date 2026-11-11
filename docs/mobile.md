@@ -52,3 +52,9 @@ If `jest` hangs on a machine with a broken watchman install, run `pnpm --filter 
 
 Use EAS Build (`eas build -p ios|android`) with a production `EXPO_PUBLIC_API_URL`; signing credentials stay in
 EAS, never in the repo.
+
+## Screenshots
+
+`docs/mobile/`: phone home and projects, iPad projects and billing in the split layout (iOS 26.5 simulator, debug
+build; the bottom toast is the dev-only warnings banner). `expo run:ios` could not resolve the simulator under Xcode 27,
+so the app was built with `xcodebuild -workspace ios/CNote.xcworkspace -scheme CNote` and installed with `simctl`.
