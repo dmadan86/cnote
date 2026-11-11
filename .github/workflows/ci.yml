@@ -61,6 +61,22 @@ jobs:
       - run: pnpm --filter @cnote/web typecheck
       - run: pnpm build:web
 
+  mobile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm --filter @cnote/mobile typecheck
+      - run: pnpm --filter @cnote/mobile test
+      - name: Bundle check (no signing)
+        run: pnpm --filter @cnote/mobile exec expo export --platform ios --platform android
+
   e2e:
     runs-on: ubuntu-latest
     needs: [rust, web]

@@ -1,0 +1,5 @@
+{
+  "root": false,
+  "extends": "//",
+  "files": { "includes": ["**", "!.expo", "!ios", "!android", "!dist"] }
+}

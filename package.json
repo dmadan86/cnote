@@ -7,7 +7,9 @@
     "dev:web": "pnpm --filter @cnote/web dev",
     "build:web": "pnpm --filter @cnote/web build",
     "lint": "biome check apps e2e",
-    "e2e": "playwright test"
+    "e2e": "playwright test",
+    "dev:mobile": "pnpm --filter @cnote/mobile start",
+    "test:mobile": "pnpm --filter @cnote/mobile test"
   },
   "devDependencies": {
     "@biomejs/biome": "2.6.6",

@@ -1,0 +1,13 @@
+{
+  "expo": {
+    "name": "C Note",
+    "slug": "cnote",
+    "version": "0.1.0",
+    "scheme": "cnote",
+    "orientation": "default",
+    "userInterfaceStyle": "automatic",
+    "ios": { "bundleIdentifier": "app.cnote.mobile", "supportsTablet": true },
+    "android": { "package": "app.cnote.mobile" },
+    "plugins": ["expo-router", "expo-secure-store"]
+  }
+}
