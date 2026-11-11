@@ -102,7 +102,9 @@ export function sameOriginPath(next: string | null): string {
   if (!next) return '/'
   try {
     const u = new URL(next, window.location.origin)
-    return u.origin === window.location.origin ? u.pathname + u.search + u.hash : '/'
+    if (u.origin !== window.location.origin) return '/'
+    // Dot-segment normalisation can yield "//host" ("/.//host"), which the router would treat as another site.
+    return `/${u.pathname.replace(/^[/\\]+/, '')}${u.search}${u.hash}`
   } catch {
     return '/'
   }
