@@ -12,11 +12,14 @@ import {
   type TLShapeId,
   type TLStoreSnapshot,
   Tldraw,
+  toRichText,
 } from 'tldraw'
 import { WebsocketProvider } from 'y-websocket'
 import * as Y from 'yjs'
 import 'tldraw/tldraw.css'
 import { useShell } from '@/components/shell'
+import { InsertField } from '@/components/templates/fields'
+import { SaveAsTemplate } from '@/components/templates/save-template'
 import { btn, ErrorText, inputCls } from '@/components/ui'
 import { cmd } from '@/lib/api'
 import { useCmd } from '@/lib/hooks'
@@ -175,14 +178,13 @@ export function Board({
   const mount = useCallback(
     (e: Editor) => {
       e.user.updateUserPreferences({ colorScheme: 'system' })
-      if (mode === 'solo') {
-        const m = FENCE.exec(contentMd)
-        if (m) {
-          try {
-            loadSnapshot(e.store, { document: JSON.parse(m[1]) as TLStoreSnapshot } as never)
-          } catch {
-            setErr('Could not read the saved board snapshot.')
-          }
+      // Solo, or collab with an empty room: a board rendered from a template has its snapshot only in content_md.
+      const m = mode === 'solo' || doc.current?.getMap('tldraw').size === 0 ? FENCE.exec(contentMd) : null
+      if (m) {
+        try {
+          loadSnapshot(e.store, { document: JSON.parse(m[1]) as TLStoreSnapshot } as never)
+        } catch {
+          setErr('Could not read the saved board snapshot.')
         }
       }
       setEditor(e)
@@ -215,6 +217,16 @@ export function Board({
     img.src = url
     w.document.body.append(img)
   }
+  function insertField(text: string) {
+    if (!editor) return
+    const c = editor.getViewportPageBounds().center
+    editor.createShape({
+      type: 'text',
+      x: c.x,
+      y: c.y,
+      props: { richText: toRichText(text), autoSize: true },
+    })
+  }
   function addFrame(p: (typeof PRESETS)[number]) {
     if (!editor) return
     const c = editor.getViewportPageBounds().center
@@ -237,6 +249,8 @@ export function Board({
         </span>
         <ErrorText error={err} />
         <div className="ml-auto flex flex-wrap items-center gap-2">
+          <InsertField ws={ws} onInsert={insertField} />
+          <SaveAsTemplate ws={ws} noteId={id} title={title} />
           {design && (
             <select
               aria-label="Add frame"

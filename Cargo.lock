@@ -575,6 +575,7 @@ dependencies = [
  "chrono",
  "cnote-core",
  "cnote-db",
+ "cnote-finance",
  "dotenvy",
  "futures",
  "regex",

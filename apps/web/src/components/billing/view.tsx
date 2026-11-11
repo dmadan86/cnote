@@ -2,6 +2,7 @@
 import Link from 'next/link'
 import { useState } from 'react'
 import { useShell } from '@/components/shell'
+import { UseTemplateButton } from '@/components/templates/use-template'
 import { btn, btnPrimary, ErrorText, Field, inputCls } from '@/components/ui'
 import { useCmd } from '@/lib/hooks'
 import { Confirm, run } from './bits'
@@ -143,6 +144,7 @@ export function IssuedView({ inv, reload }: { inv: InvoiceDetail; reload: () => 
           <button type="button" className={btn} onClick={() => window.print()}>
             Print / PDF
           </button>
+          <UseTemplateButton sourceKind="invoice" sourceId={inv.id} />
           {open && (
             <>
               <button

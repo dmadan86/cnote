@@ -16,6 +16,7 @@ import { useState } from 'react'
 import { newDraft } from '@/components/billing/bits'
 import { type Contact, type Deal, money, parseMinor, toRupees } from '@/components/billing/fmt'
 import { useShell } from '@/components/shell'
+import { UseTemplateButton } from '@/components/templates/use-template'
 import { btn, btnPrimary, ErrorText, Field, inputCls, Modal } from '@/components/ui'
 import { cmd } from '@/lib/api'
 import { useCmd } from '@/lib/hooks'
@@ -239,9 +240,12 @@ export function DealDetail({ id }: { id: string }) {
     <div className="mx-auto max-w-3xl space-y-4 px-6 py-8">
       <div className="flex items-center gap-3">
         <h1 className="text-xl font-semibold">{deal.title}</h1>
+        <span className="ml-auto">
+          <UseTemplateButton sourceKind="deal" sourceId={deal.id} />
+        </span>
         <button
           type="button"
-          className={`${btnPrimary} ml-auto`}
+          className={btnPrimary}
           disabled={!contact}
           title={contact ? undefined : 'Link a contact first'}
           onClick={async () => {

@@ -6,6 +6,7 @@ import { newDraft } from '@/components/billing/bits'
 import { type Contact, type Deal, type Invoice, money, stateName } from '@/components/billing/fmt'
 import { StatusPill } from '@/components/billing/invoice-list'
 import { useShell } from '@/components/shell'
+import { UseTemplateButton } from '@/components/templates/use-template'
 import { btn, btnPrimary, ErrorText } from '@/components/ui'
 import { ago, useCmd } from '@/lib/hooks'
 import { ContactForm } from './contacts'
@@ -59,9 +60,12 @@ export function ContactDetail({ id }: { id: string }) {
           <Row k="State" v={k.state_code ? `${k.state_code} ${stateName(k.state_code)}` : null} />
           <Row k="Address" v={k.billing_address} />
         </dl>
-        <button type="button" className={`${btn} mt-3`} onClick={() => setEditing(true)}>
-          Edit contact
-        </button>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <button type="button" className={btn} onClick={() => setEditing(true)}>
+            Edit contact
+          </button>
+          <UseTemplateButton sourceKind="contact" sourceId={id} />
+        </div>
       </section>
       <div className="space-y-4">
         <ErrorText error={err} />
