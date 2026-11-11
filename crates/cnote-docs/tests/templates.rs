@@ -462,3 +462,50 @@ async fn templates_from_private_spaces_stay_private() {
         .unwrap_err();
     assert_eq!(e.code, ErrorCode::Conflict);
 }
+
+#[tokio::test]
+async fn only_author_or_admin_can_overwrite_or_delete() {
+    let t = T::new().await;
+    let (ws, owner) = t.tenant().await;
+    let a = t.member(ws).await;
+    let b = t.member(ws).await;
+    let open = t.space(&owner, "ALL", "open").await;
+    let starter = t.template_id(&a, "Proposal").await;
+    assert!(
+        t.run(&a, "template.delete", json!({"template_id": starter}))
+            .await
+            .is_err()
+    );
+    let mine = t.save(&a, &open, "A's card", "none", "v1", json!([])).await;
+    assert!(
+        t.run(&b, "template.delete", json!({"template_id": mine}))
+            .await
+            .is_err()
+    );
+    let n = t
+        .ok(
+            &b,
+            "note.create",
+            json!({"space_id": open, "title": "x", "content_md": "hijack"}),
+        )
+        .await;
+    let e = t
+        .run(
+            &b,
+            "template.save",
+            json!({"note_id": n["id"], "name": "A's card", "source_kind": "none"}),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(e.code, ErrorCode::Conflict);
+    // The author can replace it; an admin can delete anything.
+    t.save(&a, &open, "A's card", "none", "v2", json!([])).await;
+    t.ok(&owner, "template.delete", json!({"template_id": starter}))
+        .await;
+    t.ok(
+        &a,
+        "template.delete",
+        json!({"template_id": t.template_id(&a, "A's card").await}),
+    )
+    .await;
+}

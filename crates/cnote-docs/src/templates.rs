@@ -6,7 +6,7 @@ use chrono::{FixedOffset, NaiveDate, Utc};
 use cnote_core::access::{assert_note_access, readable_space_ids};
 use cnote_core::handler;
 use cnote_core::notes::{CreateNote, insert_note};
-use cnote_core::{CmdError, CmdResult, Command, Ctx, ToolGroup};
+use cnote_core::{CmdError, CmdResult, Command, Ctx, Role, ToolGroup};
 use cnote_db::Tx;
 use futures::future::BoxFuture;
 use regex::Regex;
@@ -397,7 +397,8 @@ async fn template_save(ctx: &mut Ctx, i: Save) -> CmdResult<TemplateOut> {
          on conflict (workspace_id, name) do update set kind = excluded.kind, source_kind = excluded.source_kind,
            types = excluded.types, title = excluded.title, content_md = excluded.content_md,
            space_id = excluded.space_id, updated_at = now()
-         where docs.templates.space_id is null or docs.templates.space_id = any($10)
+         where (docs.templates.space_id is null or docs.templates.space_id = any($10))
+           and (docs.templates.created_by = $8 or $11)
          returning id, name, kind, source_kind, updated_at",
     )
     .bind(ctx.workspace_id())
@@ -410,6 +411,7 @@ async fn template_save(ctx: &mut Ctx, i: Save) -> CmdResult<TemplateOut> {
     .bind(ctx.principal.user_id)
     .bind(space)
     .bind(&readable)
+    .bind(ctx.principal.role >= Role::Admin)
     .fetch_optional(&mut *ctx.tx)
     .await?
     .ok_or_else(|| CmdError::conflict("a template with this name already exists"))?;
@@ -453,10 +455,14 @@ pub struct Delete {
 async fn template_delete(ctx: &mut Ctx, i: Delete) -> CmdResult<Value> {
     let readable = readable_space_ids(ctx).await?;
     let n = sqlx::query(
-        "delete from docs.templates where id = $1 and (space_id is null or space_id = any($2))",
+        // Only the author or an admin may delete; readers of the space may not.
+        "delete from docs.templates where id = $1 and (space_id is null or space_id = any($2))
+           and (created_by = $3 or $4)",
     )
     .bind(i.template_id)
     .bind(&readable)
+    .bind(ctx.principal.user_id)
+    .bind(ctx.principal.role >= Role::Admin)
     .execute(&mut *ctx.tx)
     .await?
     .rows_affected();
