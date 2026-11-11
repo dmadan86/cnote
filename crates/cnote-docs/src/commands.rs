@@ -2,7 +2,7 @@
 
 use crate::freshness::{DEFAULT_VERIFY_DAYS, LAPSE_GRACE_DAYS, flag};
 use chrono::{DateTime, Duration, NaiveDate, Utc};
-use cnote_core::access::{assert_note_access, assert_space_access, readable_space_ids};
+use cnote_core::access::{assert_note_access, assert_space_access, readable_space_ids, viewer};
 use cnote_core::ai::{ChatMessage, CompletionRequest};
 use cnote_core::handler;
 use cnote_core::notes::{CreateNote, insert_note};
@@ -135,13 +135,17 @@ pub struct ListArchived {
 
 async fn doc_archived(ctx: &mut Ctx, i: ListArchived) -> CmdResult<Vec<ArchivedOut>> {
     let spaces = readable_space_ids(ctx).await?;
+    let (uid, admin) = viewer(ctx);
     Ok(sqlx::query_as(
         "select id, space_id, title, owner_id, archived_at from core.notes
          where freshness = 'archived' and deleted_at is null and space_id = any($1) and ($2::uuid is null or space_id = $2)
+           and core.note_access(id, $3, $4, $1) <> 'none'
          order by archived_at desc nulls last limit 200",
     )
     .bind(spaces)
     .bind(i.space_id)
+    .bind(uid)
+    .bind(admin)
     .fetch_all(&mut *ctx.tx)
     .await?)
 }
@@ -186,15 +190,18 @@ struct FlaggedPage {
 async fn doc_flags(ctx: &mut Ctx, _: Empty) -> CmdResult<Vec<FlaggedPage>> {
     let me = user(ctx)?;
     let spaces = readable_space_ids(ctx).await?;
+    let (_, admin) = viewer(ctx);
     Ok(sqlx::query_as(
         "select n.id, n.title, n.space_id, n.freshness, n.verify_by, n.lapse_count,
                 array_agg(f.reason order by f.created_at desc) as reasons
          from core.notes n join docs.freshness_flags f on f.note_id = n.id and f.resolved_at is null
          where n.owner_id = $1 and n.space_id = any($2) and n.deleted_at is null and n.freshness <> 'archived'
+           and core.note_access(n.id, $1, $3, $2) <> 'none'
          group by n.id order by min(f.created_at)",
     )
     .bind(me)
     .bind(spaces)
+    .bind(admin)
     .fetch_all(&mut *ctx.tx)
     .await?)
 }
@@ -222,18 +229,20 @@ struct ProposalOut {
 
 async fn doc_proposals(ctx: &mut Ctx, i: ListProposals) -> CmdResult<Vec<ProposalOut>> {
     let spaces = readable_space_ids(ctx).await?;
+    let (uid, admin) = viewer(ctx);
     Ok(sqlx::query_as(
         "select p.id, p.note_id, n.title, p.proposed_md, p.rationale, p.status, p.created_at
          from docs.edit_proposals p join core.notes n on n.id = p.note_id
          where n.space_id = any($1) and n.deleted_at is null and p.status = $2 and ($3::uuid is null or p.note_id = $3)
            and (n.owner_id = $4 or $5)  -- proposals may quote sources only the owner can read
+           and core.note_access(n.id, $4, $5, $1) <> 'none'
          order by p.created_at desc limit 100",
     )
     .bind(spaces)
     .bind(i.status.unwrap_or_else(|| "pending".into()))
     .bind(i.note_id)
-    .bind(ctx.principal.user_id)
-    .bind(ctx.principal.role >= Role::Admin)
+    .bind(uid)
+    .bind(admin)
     .fetch_all(&mut *ctx.tx)
     .await?)
 }
@@ -303,17 +312,21 @@ pub struct Score {
 
 async fn doc_freshness_score(ctx: &mut Ctx, i: Score) -> CmdResult<Value> {
     let spaces = readable_space_ids(ctx).await?;
+    let (uid, admin) = viewer(ctx);
     let rows: Vec<(Uuid, String, i64, i64)> = sqlx::query_as(
         "select s.id, s.key, count(*), count(*) filter (where n.freshness = 'fresh'
                  and coalesce(n.verified_at, n.created_at) >= now() - make_interval(days => $2))
          from core.notes n join core.spaces s on s.id = n.space_id
          where cardinality(n.types) = 0 and n.deleted_at is null and n.freshness <> 'archived'
            and n.space_id = any($1) and ($3::uuid is null or n.space_id = $3)
+           and core.note_access(n.id, $4, $5, $1) <> 'none'
          group by s.id, s.key order by s.key",
     )
     .bind(spaces)
     .bind(i.window_days.unwrap_or(90))
     .bind(i.space_id)
+    .bind(uid)
+    .bind(admin)
     .fetch_all(&mut *ctx.tx)
     .await?;
     let ratio = |v: i64, t: i64| if t == 0 { 1.0 } else { v as f64 / t as f64 };

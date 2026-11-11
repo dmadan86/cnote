@@ -59,3 +59,16 @@ radius (6px), pills for status/priority, one accent color for primary actions, d
   pill at right. [GitHub Issues](https://mobbin.com/screens/ac207bf0-458c-4a91-86df-6772d5f421e8)
 - Tablet (width >= 768dp): list on the left, detail on the right, no push navigation. Same components as the
   phone detail screens. Colours reuse the web tokens (light and dark follow the system).
+
+## Page sharing and restrictions
+- One dialog, three bands: add-people input with a permission select and primary button at the top, "People
+  with access" list (avatar, name and email, role select at right), "General access" row with a lock icon and a
+  plain-English select. [Luma share board](https://mobbin.com/screens/d703a534-b693-49e3-918b-3b85004019c1)
+- Access level as a sentence under the select ("Only users with direct access can view this File"), and a
+  separate "Copy share link" action. [Gumloop share file](https://mobbin.com/screens/9edc163f-8ec1-4e77-833d-eaff9207348c)
+- Footer pairing of the access select (left) and Copy link (right); a tinted notice explains side effects.
+  [Dropbox Dash share](https://mobbin.com/screens/d151525e-3dc4-44c1-afb5-32970ac22777),
+  [Recraft share](https://mobbin.com/screens/1e3771c8-4ccb-4f5e-b84d-e2bb788050d1)
+- C Note: restriction select with three plain options (anyone in the space / anyone views, listed people edit /
+  only listed people), "Inherited from <page>" notice, lock icon beside restricted pages in the sidebar tree,
+  "Shared with me" sidebar section, and a read-only editor for view-only people.

@@ -721,3 +721,100 @@ async fn pages_cannot_bind_to_notes_their_author_cannot_read() {
         "member must not bind to an item in a private space"
     );
 }
+
+#[tokio::test]
+async fn view_restricted_pages_never_leak_through_ask_score_or_templates() {
+    let (t, ws, owner) = t().await;
+    let member = add_member(&t.pool, ws).await;
+    let space = t.space(&owner, "OPN", "open").await;
+    let page = t
+        .page(
+            &owner,
+            space,
+            "Breach playbook",
+            "Rotate the vault credentials immediately",
+        )
+        .await;
+    let child = t
+        .page(
+            &owner,
+            space,
+            "Breach contacts",
+            "vault credentials escalation phone tree",
+        )
+        .await;
+    t.ok(
+        &owner,
+        "note.update",
+        json!({"id": child, "parent_id": page}),
+    )
+    .await;
+    t.ok(
+        &owner,
+        "note.restrict",
+        json!({"note_id": page, "restriction": "view"}),
+    )
+    .await;
+
+    let seen = t
+        .ok(
+            &owner,
+            "doc.ask",
+            json!({"question": "rotate vault credentials"}),
+        )
+        .await;
+    assert_eq!(seen["answered"], true);
+    let hidden = t
+        .ok(
+            &member,
+            "doc.ask",
+            json!({"question": "rotate vault credentials"}),
+        )
+        .await;
+    assert_eq!(hidden["answered"], false);
+    assert!(!hidden.to_string().contains("Breach"), "{hidden}");
+    assert_eq!(
+        t.ok(&member, "doc.freshness_score", json!({})).await["total"],
+        0
+    );
+    assert_eq!(
+        t.ok(&owner, "doc.freshness_score", json!({})).await["total"],
+        2
+    );
+
+    // A member's page cannot bind to the restricted page by [[title]] either.
+    let note = t
+        .page(&member, space, "Notes", "See [[Breach playbook]]")
+        .await;
+    t.drain(ws).await;
+    let mut tx = cnote_db::begin_tenant(&t.pool, ws).await.unwrap();
+    let bound: i64 = sqlx::query_scalar(
+        "select count(*) from core.relations where from_id = $1 and kind = 'binds'",
+    )
+    .bind(note)
+    .fetch_one(&mut *tx)
+    .await
+    .unwrap();
+    assert_eq!(bound, 0);
+    drop(tx);
+
+    // Saving a restricted page (or its child) as a template would publish it to the whole space.
+    for id in [page, child] {
+        let e = t
+            .run(
+                &owner,
+                "template.save",
+                json!({"note_id": id, "name": "leaky", "source_kind": "none"}),
+            )
+            .await;
+        assert_eq!(e.unwrap_err().code, cnote_core::ErrorCode::Forbidden);
+    }
+    let e = t
+        .run(
+            &member,
+            "template.save",
+            json!({"note_id": page, "name": "leaky", "source_kind": "none"}),
+        )
+        .await;
+    assert_eq!(e.unwrap_err().code, cnote_core::ErrorCode::NotFound);
+}

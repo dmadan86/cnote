@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { use, useEffect, useRef, useState } from 'react'
 import { DocActions, Proposals } from '@/components/docs/note-tools'
 import { NoteEditor } from '@/components/note-editor'
+import { ShareButton } from '@/components/share/share-dialog'
 import { useShell } from '@/components/shell'
 import { InsertField } from '@/components/templates/fields'
 import { SaveAsTemplate } from '@/components/templates/save-template'
@@ -138,8 +139,10 @@ export default function NotePage({ params }: { params: Promise<{ id: string }> }
     return <p className="p-6 text-muted">This page does not exist or you do not have access to it.</p>
   if (!note) return null
 
+  const canEdit = note.level === 'edit'
+
   async function saveTitle() {
-    if (!note || title.trim() === note.title) return
+    if (!note || !canEdit || title.trim() === note.title) return
     await cmd(ws, 'note.update', { id, title })
     reload()
   }
@@ -169,6 +172,16 @@ export default function NotePage({ params }: { params: Promise<{ id: string }> }
                 <SaveAsTemplate ws={ws} noteId={id} title={note.title} />
               </>
             )}
+            <ShareButton
+              ws={ws}
+              noteId={id}
+              restriction={note.restriction}
+              members={members}
+              onChange={() => {
+                reloadNote()
+                reload()
+              }}
+            />
             <button
               type="button"
               onClick={() => newPage({ spaceId: note.space_id, parentId: note.id })}
@@ -195,12 +208,18 @@ export default function NotePage({ params }: { params: Promise<{ id: string }> }
             reloadNote()
           }}
         />
+        {!canEdit && (
+          <p role="status" className="border-b border-line bg-hover px-6 py-1.5 text-[13px] text-muted">
+            You can view this page but not edit it.
+          </p>
+        )}
         <article className="mx-auto max-w-[720px] px-6 py-10">
           <input
             aria-label="Page title"
             value={title}
             placeholder="Untitled"
             onChange={(e) => setTitle(e.target.value)}
+            readOnly={!canEdit}
             onBlur={saveTitle}
             onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
             className="mb-6 w-full bg-transparent text-3xl font-bold placeholder:text-muted"
@@ -210,6 +229,7 @@ export default function NotePage({ params }: { params: Promise<{ id: string }> }
             ws={ws}
             id={id}
             initialMd={note.content_md}
+            editable={canEdit}
             onSaved={reloadNote}
             editorRef={editorRef}
           />

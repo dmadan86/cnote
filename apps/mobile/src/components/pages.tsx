@@ -120,7 +120,9 @@ export function PageEditor({ id, onSaved }: { id: string; onSaved?: () => void }
       setErr(
         e?.code === 'conflict'
           ? 'Someone else changed this page. Pull to reload it, then re-apply your edit.'
-          : errMsg(e),
+          : e?.code === 'forbidden'
+            ? 'You can view this page but not edit it. Ask its owner for edit access.'
+            : errMsg(e),
       )
     } finally {
       setSaving(false)

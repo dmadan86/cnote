@@ -12,7 +12,7 @@ pub use providers::{
 };
 pub use redact::redact;
 
-use cnote_core::access::{assert_note_access, readable_space_ids};
+use cnote_core::access::{assert_note_access, readable_space_ids, viewer};
 use cnote_core::ai::{ChatMessage, Completion, CompletionRequest, ModelProvider};
 use cnote_core::events::{self, Event, record_usage};
 use cnote_core::{CmdError, CmdResult, Command, Ctx, Module, Role, ToolGroup, handler};
@@ -494,13 +494,14 @@ pub struct HybridHit {
     pub score: f32,
 }
 
-/// Reciprocal rank fusion (k = 60) of the full-text and vector rankings. Both CTEs filter by readable spaces
-/// and exclude archived/deleted notes inside the query, so nothing unreadable can leak through the fusion.
+/// Reciprocal rank fusion (k = 60) of the full-text and vector rankings. Both CTEs filter by readable spaces and page
+/// restrictions, and exclude archived/deleted notes inside the query, so nothing unreadable can leak through the fusion.
 const HYBRID_SQL: &str = "
 with ft as (
   select n.id, row_number() over (order by ts_rank(n.search, websearch_to_tsquery('english', $1)) desc) as rnk
   from core.notes n
   where n.deleted_at is null and n.freshness <> 'archived' and n.space_id = any($2)
+    and core.note_access(n.id, $6, $7, $2) <> 'none'
     and n.search @@ websearch_to_tsquery('english', $1)
   order by ts_rank(n.search, websearch_to_tsquery('english', $1)) desc
   limit 50
@@ -508,6 +509,7 @@ with ft as (
   select c.note_id, min(c.embedding <=> $3::vector) as dist
   from ai.chunks c join core.notes n on n.id = c.note_id
   where c.model = $4 and n.deleted_at is null and n.freshness <> 'archived' and n.space_id = any($2)
+    and core.note_access(n.id, $6, $7, $2) <> 'none'
   group by c.note_id
   order by dist
   limit 50
@@ -529,6 +531,7 @@ async fn search_hybrid(ctx: &mut Ctx, i: HybridSearch) -> CmdResult<Vec<HybridHi
         return Err(CmdError::invalid("q is required"));
     }
     let spaces = readable_space_ids(ctx).await?;
+    let (uid, admin) = viewer(ctx);
     let (model, mut v) = embed(ctx, "search", vec![q.to_string()]).await?;
     let query_vec = vec_literal(&v.remove(0));
     // Let the HNSW scan keep going past ef_search when the permission filter discards candidates (pgvector 0.8+).
@@ -541,6 +544,8 @@ async fn search_hybrid(ctx: &mut Ctx, i: HybridSearch) -> CmdResult<Vec<HybridHi
         .bind(query_vec)
         .bind(model)
         .bind(i.limit.unwrap_or(10).clamp(1, 50))
+        .bind(uid)
+        .bind(admin)
         .fetch_all(&mut *ctx.tx)
         .await?)
 }

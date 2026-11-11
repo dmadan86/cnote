@@ -551,13 +551,17 @@ impl ServerHandler for McpServer {
         let rows: Vec<(Uuid, String, String)> = self
             .with_ctx(&p, async |c| {
                 let spaces = cnote_core::access::readable_space_ids(c).await?;
+                let (uid, admin) = cnote_core::access::viewer(c);
                 Ok(sqlx::query_as(
                     "select id, title, freshness from core.notes
                      where deleted_at is null and freshness <> 'archived' and space_id = any($1)
+                       and core.note_access(id, $3, $4, $1) <> 'none'
                      order by updated_at desc limit $2",
                 )
                 .bind(spaces)
                 .bind(RECENT_NOTES)
+                .bind(uid)
+                .bind(admin)
                 .fetch_all(&mut *c.tx)
                 .await?)
             })

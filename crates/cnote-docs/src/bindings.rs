@@ -145,33 +145,47 @@ pub async fn sync(ctx: &mut Ctx, page: Uuid, md: &str) -> CmdResult<()> {
     }
     // Only bind to notes the author can read; otherwise a mention could pull private content into
     // freshness proposals. No known author (system edit) means no note bindings.
-    let readable = match ctx.principal.user_id {
+    let author = ctx.principal.user_id;
+    let readable = match author {
         Some(u) => readable_space_ids_for(ctx, u).await?,
         None => vec![],
+    };
+    let admin = match author {
+        Some(u) => is_admin_user(ctx, u).await?,
+        None => false,
     };
     // target note id -> the reference text that produced it (first wins)
     let mut targets: HashMap<Uuid, String> = HashMap::new();
     let by_key: Vec<(Uuid, String)> = sqlx::query_as(
         "select i.note_id, i.key from projects.items i join core.notes n on n.id = i.note_id
-         where i.key = any($1) and n.deleted_at is null and n.space_id = any($2)",
+         where i.key = any($1) and n.deleted_at is null and n.space_id = any($2)
+           and core.note_access(n.id, $3, $4, $2) <> 'none'",
     )
     .bind(&keys)
     .bind(&readable)
+    .bind(author)
+    .bind(admin)
     .fetch_all(&mut *ctx.tx)
     .await?;
     let by_title: Vec<(Uuid, String)> = sqlx::query_as(
         "select id, '[[' || title || ']]' from core.notes
-         where lower(title) = any($1) and deleted_at is null and space_id = any($2)",
+         where lower(title) = any($1) and deleted_at is null and space_id = any($2)
+           and core.note_access(id, $3, $4, $2) <> 'none'",
     )
     .bind(&titles)
     .bind(&readable)
+    .bind(author)
+    .bind(admin)
     .fetch_all(&mut *ctx.tx)
     .await?;
     let by_id: Vec<(Uuid,)> = sqlx::query_as(
-        "select id from core.notes where id = any($1) and deleted_at is null and space_id = any($2)",
+        "select id from core.notes where id = any($1) and deleted_at is null and space_id = any($2)
+           and core.note_access(id, $3, $4, $2) <> 'none'",
     )
     .bind(&ids)
     .bind(&readable)
+    .bind(author)
+    .bind(admin)
     .fetch_all(&mut *ctx.tx)
     .await?;
     for (id, r) in by_key.into_iter().chain(by_title) {
@@ -217,6 +231,15 @@ pub async fn sync(ctx: &mut Ctx, page: Uuid, md: &str) -> CmdResult<()> {
     )
     .await?;
     Ok(())
+}
+
+pub async fn is_admin_user(ctx: &mut Ctx, user: Uuid) -> CmdResult<bool> {
+    Ok(sqlx::query_scalar(
+        "select exists(select 1 from core.memberships where user_id = $1 and role in ('owner','admin'))",
+    )
+    .bind(user)
+    .fetch_one(&mut *ctx.tx)
+    .await?)
 }
 
 /// Spaces a specific user can read (same rules as cnote_core::access::readable_space_ids, but for a user other

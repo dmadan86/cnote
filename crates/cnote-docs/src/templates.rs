@@ -188,6 +188,7 @@ fn opt_date(x: Option<NaiveDate>) -> String {
 /// contact.* values; only when the caller can read the contact's space.
 async fn contact_values(ctx: &mut Ctx, id: Uuid, v: &mut Vals) -> CmdResult<()> {
     let spaces = readable_space_ids(ctx).await?;
+    let (uid, admin) = cnote_core::access::viewer(ctx);
     type Row = (
         String,
         Option<String>,
@@ -199,10 +200,13 @@ async fn contact_values(ctx: &mut Ctx, id: Uuid, v: &mut Vals) -> CmdResult<()> 
     let row: Option<Row> = sqlx::query_as(
         "select n.title, c.email, c.phone, c.company, c.gstin, c.billing_address
          from crm.contacts c join core.notes n on n.id = c.note_id
-         where c.note_id = $1 and n.deleted_at is null and n.space_id = any($2)",
+         where c.note_id = $1 and n.deleted_at is null and n.space_id = any($2)
+           and core.note_access(n.id, $3, $4, $2) <> 'none'",
     )
     .bind(id)
     .bind(&spaces)
+    .bind(uid)
+    .bind(admin)
     .fetch_optional(&mut *ctx.tx)
     .await?;
     if let Some((name, email, phone, company, gstin, addr)) = row {
@@ -377,6 +381,12 @@ async fn template_save(ctx: &mut Ctx, i: Save) -> CmdResult<TemplateOut> {
     }
     let space = assert_note_access(ctx, i.note_id, false).await?;
     let readable = readable_space_ids(ctx).await?;
+    // A template is visible to every reader of the space, so it must not copy a page only some people may open.
+    if cnote_core::access::is_view_restricted(ctx, i.note_id).await? {
+        return Err(CmdError::forbidden(
+            "a page with view restrictions cannot be saved as a template",
+        ));
+    }
     let (title, types, md): (String, Vec<String>, String) = sqlx::query_as(
         "select title, types, content_md from core.notes where id = $1 and deleted_at is null",
     )

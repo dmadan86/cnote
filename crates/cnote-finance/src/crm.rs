@@ -2,7 +2,7 @@
 
 use crate::gst;
 use chrono::{DateTime, NaiveDate, Utc};
-use cnote_core::access::{assert_note_access, readable_space_ids};
+use cnote_core::access::{assert_note_access, readable_space_ids, viewer};
 use cnote_core::notes::{CreateNote, insert_note};
 use cnote_core::{CmdError, CmdResult, Command, Ctx, ToolGroup, handler};
 use schemars::JsonSchema;
@@ -223,8 +223,10 @@ pub struct ListContacts {
 
 async fn contact_list(ctx: &mut Ctx, i: ListContacts) -> CmdResult<Vec<ContactOut>> {
     let spaces = readable_space_ids(ctx).await?;
+    let (uid, admin) = viewer(ctx);
     Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "{CONTACT_SQL} where n.deleted_at is null and n.space_id = any($1) and ($2::uuid is null or n.space_id = $2)
+           and core.note_access(n.id, $5, $6, $1) <> 'none'
            and ($3::text is null or n.title ilike '%'||$3||'%' or c.email ilike '%'||$3||'%' or c.company ilike '%'||$3||'%')
          order by n.title limit $4"
     )))
@@ -232,6 +234,8 @@ async fn contact_list(ctx: &mut Ctx, i: ListContacts) -> CmdResult<Vec<ContactOu
     .bind(i.space_id)
     .bind(i.q.filter(|q| !q.trim().is_empty()))
     .bind(i.limit.unwrap_or(100).clamp(1, 500))
+    .bind(uid)
+    .bind(admin)
     .fetch_all(&mut *ctx.tx)
     .await?)
 }
@@ -466,8 +470,10 @@ pub struct ListDeals {
 
 async fn deal_list(ctx: &mut Ctx, i: ListDeals) -> CmdResult<Vec<DealOut>> {
     let spaces = readable_space_ids(ctx).await?;
+    let (uid, admin) = viewer(ctx);
     Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "{DEAL_SQL} where n.deleted_at is null and n.space_id = any($1) and ($2::uuid is null or n.space_id = $2)
+           and core.note_access(n.id, $6, $7, $1) <> 'none'
            and ($3::text is null or d.stage = $3) and ($4::uuid is null or d.contact_id = $4)
          order by n.updated_at desc limit $5"
     )))
@@ -476,6 +482,8 @@ async fn deal_list(ctx: &mut Ctx, i: ListDeals) -> CmdResult<Vec<DealOut>> {
     .bind(i.stage)
     .bind(i.contact_id)
     .bind(i.limit.unwrap_or(100).clamp(1, 500))
+    .bind(uid)
+    .bind(admin)
     .fetch_all(&mut *ctx.tx)
     .await?)
 }

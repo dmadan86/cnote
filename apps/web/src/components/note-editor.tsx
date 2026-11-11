@@ -28,12 +28,14 @@ export function NoteEditor({
   initialMd,
   onSaved,
   editorRef,
+  editable = true,
 }: {
   ws: string
   id: string
   initialMd: string
   onSaved: () => void
   editorRef?: React.RefObject<Editor | null>
+  editable?: boolean
 }) {
   const [mode, setMode] = useState<Mode>('connecting')
   const doc = useRef<Y.Doc>(null)
@@ -68,6 +70,7 @@ export function NoteEditor({
       initialMd={initialMd}
       onSaved={onSaved}
       editorRef={editorRef}
+      editable={editable}
       ydoc={mode === 'collab' ? doc.current : null}
     />
   )
@@ -79,6 +82,7 @@ function Surface({
   initialMd,
   onSaved,
   editorRef,
+  editable,
   ydoc,
 }: {
   ws: string
@@ -86,15 +90,17 @@ function Surface({
   initialMd: string
   onSaved: () => void
   editorRef?: React.RefObject<Editor | null>
+  editable: boolean
   ydoc: Y.Doc | null
 }) {
-  const [status, setStatus] = useState<'saved' | 'saving' | 'error'>('saved')
+  const [status, setStatus] = useState<'saved' | 'saving' | 'error' | 'denied'>('saved')
   const last = useRef(initialMd)
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined)
   const pending = useRef<(() => string) | null>(null) // set until the latest edit is saved
 
   const editor = useEditor({
     immediatelyRender: false,
+    editable,
     extensions: [
       StarterKit.configure(ydoc ? { undoRedo: false } : {}),
       Markdown,
@@ -132,8 +138,9 @@ function Surface({
           last.current = md
           setStatus('saved')
           onSaved()
-        } catch {
-          setStatus('error')
+        } catch (e) {
+          // 403: access changed while editing; stop retrying and say why.
+          setStatus((e as { status?: number }).status === 403 ? 'denied' : 'error')
         }
       }, 700)
       setStatus('saving')
@@ -178,10 +185,14 @@ function Surface({
       </div>
       <p aria-live="polite" className="mt-6 text-[12px] text-muted">
         {status === 'saved'
-          ? 'Saved'
+          ? editable
+            ? 'Saved'
+            : 'Read only'
           : status === 'saving'
             ? 'Saving...'
-            : 'Could not save, retrying on next edit'}
+            : status === 'denied'
+              ? 'You no longer have permission to edit this page; your last changes were not saved'
+              : 'Could not save, retrying on next edit'}
         {ydoc ? ' · live' : ''}
       </p>
     </div>
