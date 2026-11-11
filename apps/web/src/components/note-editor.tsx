@@ -1,5 +1,8 @@
 'use client'
 import Collaboration from '@tiptap/extension-collaboration'
+import { TaskItem, TaskList } from '@tiptap/extension-list'
+import { Table, TableCell, TableHeader, TableRow } from '@tiptap/extension-table'
+import { Placeholder } from '@tiptap/extensions'
 import { Markdown } from '@tiptap/markdown'
 import { type Editor, EditorContent, useEditor } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
@@ -7,6 +10,8 @@ import { useEffect, useRef, useState } from 'react'
 import { WebsocketProvider } from 'y-websocket'
 import * as Y from 'yjs'
 import { cmd } from '@/lib/api'
+import { EditorMenus } from './editor/menus'
+import { SlashCommand } from './editor/slash'
 
 const COLLAB_URL = process.env.NEXT_PUBLIC_COLLAB_URL ?? 'ws://localhost:4000'
 const SYNC_TIMEOUT_MS = 2000
@@ -93,6 +98,14 @@ function Surface({
     extensions: [
       StarterKit.configure(ydoc ? { undoRedo: false } : {}),
       Markdown,
+      Table.configure({ resizable: false }),
+      TableRow,
+      TableHeader,
+      TableCell,
+      TaskList,
+      TaskItem.configure({ nested: true }),
+      Placeholder.configure({ placeholder: "Type '/' for commands" }),
+      SlashCommand,
       ...(ydoc ? [Collaboration.configure({ document: ydoc })] : []),
     ],
     ...(ydoc ? {} : { content: initialMd, contentType: 'markdown' as const }),
@@ -160,6 +173,7 @@ function Surface({
   return (
     <div>
       <div className="prose-note">
+        {editor && <EditorMenus editor={editor} />}
         <EditorContent editor={editor} />
       </div>
       <p aria-live="polite" className="mt-6 text-[12px] text-muted">

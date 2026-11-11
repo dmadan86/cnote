@@ -157,7 +157,7 @@ async fn load_doc(ctx: &mut Ctx, note: Uuid) -> CmdResult<Doc> {
             .ok()
             .is_some_and(|u| doc.transact_mut().apply_update(u).is_ok());
         // Persisting writes content_md from the doc, so a mismatch means the note was edited through the API.
-        if ok && md::to_markdown(&doc).trim() == md_text.trim() {
+        if ok && md::same(&md::to_markdown(&doc), &md_text) {
             return Ok(doc);
         }
     }

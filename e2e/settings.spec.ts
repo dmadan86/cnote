@@ -26,8 +26,10 @@ test('api key shown once, agent created, tool group toggled', async ({ page }) =
   await page.getByRole('tab', { name: 'Tool groups' }).click()
   const invoices = page.getByRole('checkbox', { name: /manage_invoices/ })
   await expect(invoices).not.toBeChecked()
+  const saved = page.waitForResponse((r) => r.url().includes('workspace.update') && r.ok())
   await invoices.check()
   await expect(invoices).toBeChecked()
+  await saved // the checkbox is optimistic; reload only after the setting is stored
   await page.reload()
   await page.getByRole('tab', { name: 'Tool groups' }).click()
   await expect(page.getByRole('checkbox', { name: /manage_invoices/ })).toBeChecked()
