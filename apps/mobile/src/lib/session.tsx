@@ -1,7 +1,7 @@
 import Constants from 'expo-constants'
 import * as SecureStore from 'expo-secure-store'
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useState } from 'react'
-import { type Api, createApi, type Me, normalizeUrl } from './api'
+import { type Api, assertSecureUrl, createApi, type Me, normalizeUrl } from './api'
 
 export const DEFAULT_SERVER =
   process.env.EXPO_PUBLIC_API_URL ??
@@ -89,11 +89,13 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       api,
       signIn: async (s, email, password) => {
         const url = normalizeUrl(s)
+        assertSecureUrl(url, __DEV__)
         const r = await createApi({ baseUrl: url }).login({ email, password })
         await finish(url, r.token)
       },
       signUp: async (s, b) => {
         const url = normalizeUrl(s)
+        assertSecureUrl(url, __DEV__)
         const r = await createApi({ baseUrl: url }).signup(b)
         await finish(url, r.token)
       },

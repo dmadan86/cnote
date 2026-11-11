@@ -1,4 +1,4 @@
-import { ApiError, createApi, normalizeUrl } from '../api'
+import { ApiError, assertSecureUrl, createApi, normalizeUrl } from '../api'
 
 const reply = (status: number, body: unknown) =>
   jest.fn(async () => new Response(typeof body === 'string' ? body : JSON.stringify(body), { status }))
@@ -18,7 +18,7 @@ describe('api client', () => {
   it('omits authorization without a token and marks login as native', async () => {
     const f = reply(200, { token: 'cs_x', user_id: 'u' })
     const api = createApi({ baseUrl: 'http://h', fetchImpl: f as any })
-    await api.login({ email: 'a@b.c', password: 'pw' })
+    await api.login({ email: 'a@b.c', password: Math.random().toString(36) })
     const headers = (f.mock.calls[0] as unknown as [string, RequestInit])[1].headers as any
     expect(headers.authorization).toBeUndefined()
     expect(headers['x-cnote-client']).toBe('native')
@@ -60,5 +60,11 @@ describe('api client', () => {
 
   it('normalizes server URLs', () => {
     expect(normalizeUrl(' http://h:4000// ')).toBe('http://h:4000')
+  })
+
+  it('requires https outside development builds', () => {
+    expect(() => assertSecureUrl('http://example.com', false)).toThrow(ApiError)
+    expect(() => assertSecureUrl('https://example.com', false)).not.toThrow()
+    expect(() => assertSecureUrl('http://localhost:4000', true)).not.toThrow()
   })
 })

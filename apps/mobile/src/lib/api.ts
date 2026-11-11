@@ -19,6 +19,12 @@ type Opts = { baseUrl: string; token?: string | null; fetchImpl?: typeof fetch }
 /** Strip whitespace and trailing slashes so `http://host:4000/ ` and `http://host:4000` are the same server. */
 export const normalizeUrl = (u: string) => u.trim().replace(/\/+$/, '')
 
+/** Passwords and session tokens only travel over https; plain http is allowed in development builds. */
+export function assertSecureUrl(url: string, dev: boolean) {
+  if (!dev && !/^https:\/\//i.test(url))
+    throw new ApiError('insecure_url', 'Use an https:// server address.', 0)
+}
+
 export function createApi({ baseUrl, token, fetchImpl }: Opts) {
   const f = fetchImpl ?? fetch
   const base = normalizeUrl(baseUrl)
