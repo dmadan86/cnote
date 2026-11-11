@@ -28,7 +28,9 @@ export function AuthForm({ mode }: { mode: 'login' | 'signup' }) {
         router.push(r.workspace_id ? `/w/${r.workspace_id}` : '/')
       } else {
         await auth.login({ email: get('email'), password: get('password') })
-        router.push('/')
+        const next = new URLSearchParams(window.location.search).get('next')
+        // Same-origin absolute paths only; "//host" and "/\\host" would leave the site.
+        router.push(next && /^\/[^/\\]/.test(next) ? next : '/')
       }
     } catch (err) {
       setError((err as Error).message)

@@ -2,6 +2,8 @@
 
 mod api;
 mod modules;
+mod netguard;
+mod oauth;
 mod worker;
 
 use clap::{Parser, Subcommand};

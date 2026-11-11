@@ -21,11 +21,15 @@ fn refill() -> f64 {
 }
 
 pub fn check(key: &str) -> CmdResult<()> {
+    check_with(key, capacity(), refill())
+}
+
+/// Same bucket store with explicit burst and refill/sec (unauthenticated endpoints need tighter limits).
+pub fn check_with(key: &str, cap: f64, refill: f64) -> CmdResult<()> {
     let mut map = BUCKETS.lock().unwrap();
     let now = Instant::now();
-    let cap = capacity();
     let entry = map.entry(key.to_string()).or_insert((cap, now));
-    entry.0 = (entry.0 + now.duration_since(entry.1).as_secs_f64() * refill()).min(cap);
+    entry.0 = (entry.0 + now.duration_since(entry.1).as_secs_f64() * refill).min(cap);
     entry.1 = now;
     if entry.0 < 1.0 {
         return Err(CmdError::new(
