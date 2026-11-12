@@ -134,7 +134,8 @@ dialog::backdrop {
 .prose-note table {
   border-collapse: collapse;
   table-layout: fixed;
-  width: 100%;
+  width: calc(100% - 12px);
+  margin: 14px 0 52px 12px; /* room for the column/row grips and the table toolbar (table-controls.tsx) */
   overflow: hidden;
 }
 .prose-note th,

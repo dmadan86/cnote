@@ -2,6 +2,7 @@
 import type { Editor } from '@tiptap/react'
 import { BubbleMenu } from '@tiptap/react/menus'
 import { Bold, Code, Italic, Link2, Strikethrough, Underline } from 'lucide-react'
+import { TableControls, TablePicker } from './table-controls'
 
 const btn =
   'grid h-7 min-w-7 place-items-center rounded px-1.5 text-[12px] hover:bg-hover aria-pressed:bg-hover aria-pressed:text-accent'
@@ -33,7 +34,7 @@ function Tool({
   )
 }
 
-/** Formatting toolbar over selected text, plus row/column controls while the cursor is in a table. */
+/** Formatting toolbar over selected text, table handles/toolbar, and the table size picker. */
 export function EditorMenus({ editor }: { editor: Editor }) {
   // Buttons prevent mousedown, so the editor keeps focus; .focus() would restore the old selection a frame later.
   const c = () => editor.chain()
@@ -72,39 +73,8 @@ export function EditorMenus({ editor }: { editor: Editor }) {
           </Tool>
         </div>
       </BubbleMenu>
-      <BubbleMenu
-        editor={editor}
-        pluginKey="tableMenu"
-        shouldShow={({ editor: e, state }) => state.selection.empty && e.isActive('table')}
-        options={{ placement: 'top' }}
-      >
-        <div role="toolbar" aria-label="Table" className={bar}>
-          <Tool label="Add row above" run={() => c().addRowBefore().run()}>
-            + Row ↑
-          </Tool>
-          <Tool label="Add row below" run={() => c().addRowAfter().run()}>
-            + Row ↓
-          </Tool>
-          <Tool label="Add column left" run={() => c().addColumnBefore().run()}>
-            + Col ←
-          </Tool>
-          <Tool label="Add column right" run={() => c().addColumnAfter().run()}>
-            + Col →
-          </Tool>
-          <Tool label="Delete row" run={() => c().deleteRow().run()}>
-            − Row
-          </Tool>
-          <Tool label="Delete column" run={() => c().deleteColumn().run()}>
-            − Col
-          </Tool>
-          <Tool label="Toggle header row" run={() => c().toggleHeaderRow().run()}>
-            Header
-          </Tool>
-          <Tool label="Delete table" run={() => c().deleteTable().run()}>
-            <span className="text-red-600">Delete</span>
-          </Tool>
-        </div>
-      </BubbleMenu>
+      <TableControls editor={editor} />
+      <TablePicker editor={editor} />
     </>
   )
 }

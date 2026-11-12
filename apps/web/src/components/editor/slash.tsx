@@ -84,10 +84,10 @@ export const SLASH_ITEMS: SlashItem[] = [
   },
   {
     title: 'Table',
-    hint: '3 × 3 table with a header row',
+    hint: 'Pick a size, with a header row',
     keywords: 'grid rows columns',
     icon: Table,
-    run: (e) => c(e).insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run(),
+    run: (e) => e.view.dom.dispatchEvent(new Event('cn:table-picker')), // TablePicker in menus.tsx
   },
   {
     title: 'Quote',
