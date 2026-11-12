@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react'
 import { NoteEditor } from '@/components/note-editor'
 import { useShell } from '@/components/shell'
 import { Avatar, btn, ErrorText, inputCls } from '@/components/ui'
+import { type Activity, activity, activityText, type Evt } from '@/lib/activity'
 import { cmd, type NoteDetail } from '@/lib/api'
 import { ago, useCmd } from '@/lib/hooks'
 import {
@@ -18,13 +19,6 @@ import {
   useToast,
 } from './shared'
 
-type Evt = {
-  id: number
-  kind: string
-  actor_type: string
-  created_at: string
-  payload: Record<string, unknown>
-}
 type Comment = { id: string; author_name: string | null; body: string; created_at: string }
 
 const REL_KINDS = ['blocks', 'depends_on', 'bills']
@@ -178,18 +172,14 @@ export function ItemDetailView({ itemKey }: { itemKey: string }) {
 
   const targets = [...new Set([it.status, ...it.transitions.map((t) => t.to)])]
   const timeline = [
-    ...(history.data ?? []).map((h) => ({ at: h.created_at, h, c: undefined as Comment | undefined })),
-    ...(comments.data ?? []).map((c) => ({ at: c.created_at, c, h: undefined as Evt | undefined })),
+    // The comments themselves are listed, so their "commented" events would only repeat them.
+    ...activity((history.data ?? []).filter((h) => h.kind !== 'comment.added')).map((h) => ({
+      at: h.at,
+      h,
+      c: undefined as Comment | undefined,
+    })),
+    ...(comments.data ?? []).map((c) => ({ at: c.created_at, c, h: undefined as Activity | undefined })),
   ].sort((a, b) => b.at.localeCompare(a.at))
-  const describe = (h: Evt) => {
-    const p = h.payload
-    const what = Array.isArray(p.changed)
-      ? ` (${p.changed.join(', ')})`
-      : p.from && p.to
-        ? ` (${p.from} to ${p.to})`
-        : ''
-    return h.kind.replace('.', ' ').replace(/_/g, ' ') + what
-  }
 
   return (
     <div className="mx-auto grid max-w-6xl gap-6 px-6 py-8 lg:grid-cols-[1fr_320px]">
@@ -246,10 +236,8 @@ export function ItemDetailView({ itemKey }: { itemKey: string }) {
                 </li>
               ) : t.h ? (
                 <li key={`h${t.h.id}`} className="flex justify-between text-[12px] text-muted">
-                  <span>{describe(t.h)}</span>
-                  <span>
-                    {t.h.actor_type} · {ago(t.h.created_at)}
-                  </span>
+                  <span>{activityText(t.h)}</span>
+                  <span className="shrink-0">{ago(t.h.at)}</span>
                 </li>
               ) : null,
             )}

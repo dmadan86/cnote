@@ -10,11 +10,11 @@ import { useShell } from '@/components/shell'
 import { InsertField } from '@/components/templates/fields'
 import { SaveAsTemplate } from '@/components/templates/save-template'
 import { Avatar, btn, ErrorText, FreshnessPill, inputCls } from '@/components/ui'
+import { activity, activityText, type Evt } from '@/lib/activity'
 import { cmd, type NoteDetail } from '@/lib/api'
 import { ago, useCmd } from '@/lib/hooks'
 
 type Tab = 'relations' | 'history' | 'comments'
-type Evt = { id: number; kind: string; actor_type: string; created_at: string }
 type Comment = { id: string; author_name: string | null; body: string; created_at: string }
 
 function Panel({ ws, note }: { ws: string; note: NoteDetail }) {
@@ -76,12 +76,10 @@ function Panel({ ws, note }: { ws: string; note: NoteDetail }) {
           <>
             {history.data?.length === 0 && <p className="text-muted">No history yet.</p>}
             <ul className="space-y-1.5">
-              {history.data?.map((h) => (
-                <li key={h.id} className="flex justify-between text-[13px]">
-                  <span>{h.kind}</span>
-                  <span className="text-muted">
-                    {h.actor_type} · {ago(h.created_at)}
-                  </span>
+              {activity(history.data).map((a) => (
+                <li key={a.id} className="flex justify-between gap-3 text-[13px]">
+                  <span>{activityText(a)}</span>
+                  <span className="shrink-0 text-muted">{ago(a.at)}</span>
                 </li>
               ))}
             </ul>

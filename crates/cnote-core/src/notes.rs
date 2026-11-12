@@ -343,14 +343,35 @@ async fn note_delete(ctx: &mut Ctx, i: ById) -> CmdResult<Value> {
     Ok(json!({"deleted": true}))
 }
 
-async fn note_history(ctx: &mut Ctx, i: ById) -> CmdResult<Vec<crate::events::Event>> {
+#[derive(Serialize, sqlx::FromRow)]
+pub struct HistoryOut {
+    #[serde(flatten)]
+    #[sqlx(flatten)]
+    pub event: crate::events::Event,
+    /// Who did it: the person or agent behind the event (None for the system).
+    pub actor_name: Option<String>,
+    /// Who it was about: the person mentioned, shared with, assigned, or made owner.
+    pub subject_name: Option<String>,
+}
+
+async fn note_history(ctx: &mut Ctx, i: ById) -> CmdResult<Vec<HistoryOut>> {
     assert_note_access(ctx, i.id, false).await?;
-    Ok(
-        sqlx::query_as("select * from core.events where note_id = $1 order by id desc limit 200")
-            .bind(i.id)
-            .fetch_all(&mut *ctx.tx)
-            .await?,
+    Ok(sqlx::query_as(
+        "select e.*,
+           coalesce(u.name, a.name) as actor_name,
+           (select s.name from core.users s
+             where s.id::text = coalesce(e.payload->>'user_id', e.payload->>'assignee_id',
+                     case when e.kind = 'doc.owner_changed' then e.payload->>'to' end,
+                     (select n.user_id::text from core.notifications n where n.id::text = e.payload->>'notification_id'))
+           ) as subject_name
+         from core.events e
+         left join core.users u on e.actor_type = 'user' and u.id::text = e.actor_id
+         left join core.agents a on e.actor_type = 'agent' and a.id::text = e.actor_id
+         where e.note_id = $1 order by e.id desc limit 200",
     )
+    .bind(i.id)
+    .fetch_all(&mut *ctx.tx)
+    .await?)
 }
 
 // ---------- relations ----------
