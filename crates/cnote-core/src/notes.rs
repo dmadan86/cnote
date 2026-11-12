@@ -285,6 +285,16 @@ async fn note_update(ctx: &mut Ctx, i: UpdateNote) -> CmdResult<Note> {
         json!({"changed": changed, "version": n.version}),
     )
     .await?;
+    if n.content_md != before.content_md {
+        crate::notifications::notify_mentions(
+            ctx,
+            n.id,
+            &n.title,
+            &before.content_md,
+            &n.content_md,
+        )
+        .await?;
+    }
     Ok(n)
 }
 

@@ -5,6 +5,7 @@ import { usePathname, useRouter } from 'next/navigation'
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { auth, cmd, type Me, type Member, type Note, type SharedNote, type Space } from '@/lib/api'
 import { MODULES, moduleOn } from '@/lib/modules'
+import { NotificationBell } from './notifications'
 import { Palette } from './palette'
 import { SpaceDialog } from './space-dialog'
 import { Avatar, btnPrimary } from './ui'
@@ -506,6 +507,7 @@ export function ShellView({ ws, children }: { ws: string; children: React.ReactN
                 <Search size={14} /> Search or jump to...
                 <kbd className="ml-auto rounded border border-line px-1 text-[11px]">⌘K</kbd>
               </button>
+              <NotificationBell ws={ws} />
               <Menu label="User menu" align="right" trigger={<Avatar name={me.user.name} />}>
                 {(close) => (
                   <>

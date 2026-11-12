@@ -10,8 +10,10 @@ import { useEffect, useRef, useState } from 'react'
 import { WebsocketProvider } from 'y-websocket'
 import * as Y from 'yjs'
 import { cmd } from '@/lib/api'
+import { MentionPicker } from './editor/mention'
 import { EditorMenus } from './editor/menus'
 import { SlashCommand } from './editor/slash'
+import { FixedToolbar } from './editor/toolbar'
 
 const COLLAB_URL = process.env.NEXT_PUBLIC_COLLAB_URL ?? 'ws://localhost:4000'
 const SYNC_TIMEOUT_MS = 2000
@@ -112,6 +114,7 @@ function Surface({
       TaskItem.configure({ nested: true }),
       Placeholder.configure({ placeholder: "Type '/' for commands" }),
       SlashCommand,
+      MentionPicker.configure({ ws }),
       ...(ydoc ? [Collaboration.configure({ document: ydoc })] : []),
     ],
     ...(ydoc ? {} : { content: initialMd, contentType: 'markdown' as const }),
@@ -180,6 +183,7 @@ function Surface({
   return (
     <div>
       <div className="prose-note">
+        {editor && editable && <FixedToolbar editor={editor} />}
         {editor && editable && <EditorMenus editor={editor} />}
         <EditorContent editor={editor} />
       </div>

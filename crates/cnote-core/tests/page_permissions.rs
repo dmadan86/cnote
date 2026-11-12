@@ -532,3 +532,53 @@ async fn raw_access_function_and_saved_views() {
         .unwrap();
     assert_eq!(lvl, "edit");
 }
+
+#[tokio::test]
+async fn mentions_notify_once_and_only_people_who_can_read() {
+    let w = W::new().await;
+    let (bob, _) = w.member("member").await;
+    let (carol, _) = w.member("member").await;
+    let sp = w.space("MN", "open").await;
+    let page = w.page(sp, "Plan", None, "").await;
+    let ws = w.owner.workspace_id;
+    let link = |p: &Principal| format!("[@x](/w/{ws}/people/{})", W::uid(p));
+    let count = |p: &Principal| {
+        let p = p.clone();
+        let w = &w;
+        async move {
+            w.ok(&p, "notification.unread_count", json!({})).await["count"]
+                .as_i64()
+                .unwrap()
+        }
+    };
+    let save = |body: String| {
+        w.ok(
+            &w.owner,
+            "note.update",
+            json!({"id": page, "content_md": body}),
+        )
+    };
+
+    // Bob once (re-saving does not duplicate); the editor mentioning themself gets nothing.
+    let body = format!("hi {} and {}", link(&bob), link(&w.owner));
+    save(body.clone()).await;
+    save(format!("{body} more")).await;
+    assert_eq!(count(&bob).await, 1);
+    assert_eq!(count(&w.owner).await, 0);
+    let list = w.ok(&bob, "notification.list", json!({})).await;
+    assert_eq!(list[0]["note_title"], "Plan");
+
+    // Carol cannot read a view-restricted page: no notification.
+    w.ok(
+        &w.owner,
+        "note.restrict",
+        json!({"note_id": page, "restriction": "view"}),
+    )
+    .await;
+    save(format!("{body} {}", link(&carol))).await;
+    assert_eq!(count(&carol).await, 0);
+
+    // Marking read clears the badge.
+    w.ok(&bob, "notification.read", json!({})).await;
+    assert_eq!(count(&bob).await, 0);
+}

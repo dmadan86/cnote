@@ -5,17 +5,19 @@ import { Bold, Code, Italic, Link2, Strikethrough, Underline } from 'lucide-reac
 import { TableControls, TablePicker } from './table-controls'
 
 const btn =
-  'grid h-7 min-w-7 place-items-center rounded px-1.5 text-[12px] hover:bg-hover aria-pressed:bg-hover aria-pressed:text-accent'
+  'grid h-7 min-w-7 place-items-center rounded px-1.5 text-[12px] hover:bg-hover disabled:opacity-40 disabled:hover:bg-transparent aria-pressed:bg-hover aria-pressed:text-accent'
 const bar = 'flex items-center gap-0.5 rounded-lg border border-line bg-canvas p-1 text-fg shadow-xl'
 
-function Tool({
+export function Tool({
   label,
   on,
+  disabled,
   run,
   children,
 }: {
   label: string
   on?: boolean
+  disabled?: boolean
   run: () => void
   children: React.ReactNode
 }) {
@@ -25,6 +27,7 @@ function Tool({
       aria-label={label}
       title={label}
       aria-pressed={on}
+      disabled={disabled}
       onMouseDown={(e) => e.preventDefault()} // keep the selection
       onClick={run}
       className={btn}
@@ -34,18 +37,21 @@ function Tool({
   )
 }
 
+/** Prompts for a URL and sets/removes the link on the selection. */
+export function promptLink(editor: Editor) {
+  const prev = editor.getAttributes('link').href as string | undefined
+  const url = window.prompt('Link URL (leave empty to remove)', prev ?? 'https://')
+  if (url === null) return
+  const chain = editor.chain().focus().extendMarkRange('link')
+  // The Link extension also rejects javascript: and other unsafe schemes.
+  if (!url.trim()) chain.unsetLink().run()
+  else chain.setLink({ href: url.trim() }).run()
+}
+
 /** Formatting toolbar over selected text, table handles/toolbar, and the table size picker. */
 export function EditorMenus({ editor }: { editor: Editor }) {
   // Buttons prevent mousedown, so the editor keeps focus; .focus() would restore the old selection a frame later.
   const c = () => editor.chain()
-  const link = () => {
-    const prev = editor.getAttributes('link').href as string | undefined
-    const url = window.prompt('Link URL (leave empty to remove)', prev ?? 'https://')
-    if (url === null) return
-    if (!url.trim()) return c().focus().extendMarkRange('link').unsetLink().run()
-    // The Link extension also rejects javascript: and other unsafe schemes.
-    c().focus().extendMarkRange('link').setLink({ href: url.trim() }).run()
-  }
   return (
     <>
       <BubbleMenu
@@ -68,7 +74,7 @@ export function EditorMenus({ editor }: { editor: Editor }) {
           <Tool label="Inline code" on={editor.isActive('code')} run={() => c().toggleCode().run()}>
             <Code size={14} />
           </Tool>
-          <Tool label="Link" on={editor.isActive('link')} run={link}>
+          <Tool label="Link" on={editor.isActive('link')} run={() => promptLink(editor)}>
             <Link2 size={14} />
           </Tool>
         </div>

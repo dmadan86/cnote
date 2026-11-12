@@ -9,6 +9,7 @@ pub mod error;
 pub mod events;
 pub mod marketplace;
 pub mod notes;
+pub mod notifications;
 pub mod principal;
 pub mod ratelimit;
 pub mod sharing;
@@ -22,9 +23,13 @@ pub fn module() -> Module {
     commands.extend(admin::commands());
     commands.extend(sharing::commands());
     commands.extend(marketplace::commands());
+    commands.extend(notifications::commands());
     Module {
         commands,
         workspace_hooks: vec![default_space],
+        event_handlers: vec![("mention.created", |ctx, ev| {
+            Box::pin(notifications::email_handler(ctx, ev))
+        })],
         ..Default::default()
     }
 }
