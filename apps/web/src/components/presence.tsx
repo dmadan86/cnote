@@ -13,9 +13,9 @@ export function userColor(id: string) {
   return COLORS[h % COLORS.length]
 }
 
-type Peer = { id: string; name: string; color: string }
+type Peer = { id: string; name: string; color: string; canEdit?: boolean }
 
-/** Who else has this page open right now (from Yjs awareness; one entry per person, however many tabs). */
+/** How many people have this page open right now, and who (Yjs awareness; one per person, however many tabs). */
 export function Presence({ provider, selfId }: { provider: WebsocketProvider; selfId: string }) {
   const [peers, setPeers] = useState<Peer[]>([])
   useEffect(() => {
@@ -25,7 +25,7 @@ export function Presence({ provider, selfId }: { provider: WebsocketProvider; se
       for (const [client, st] of aw.getStates()) {
         const u = (st as { user?: Partial<Peer> }).user
         if (client === aw.clientID || !u?.id || !u.name || u.id === selfId) continue
-        seen.set(u.id, { id: u.id, name: u.name, color: u.color ?? '#6b7280' })
+        seen.set(u.id, { id: u.id, name: u.name, color: u.color ?? '#6b7280', canEdit: u.canEdit !== false })
       }
       setPeers([...seen.values()])
     }
@@ -35,12 +35,19 @@ export function Presence({ provider, selfId }: { provider: WebsocketProvider; se
   }, [provider, selfId])
   if (!peers.length) return null
   return (
-    <ul aria-label="Also editing" className="mb-3 flex items-center gap-1.5 text-[12px] text-muted">
+    <ul
+      aria-label="People on this page"
+      className="mb-3 flex flex-wrap items-center gap-1.5 text-[12px] text-muted"
+    >
+      {/* Counts you too: "3 viewing" = you and two others. */}
+      <li data-testid="viewer-count" className="font-medium text-fg">
+        {peers.length + 1} viewing
+      </li>
       {peers.map((p) => (
         <li
           key={p.id}
           {...personProps(p.id)}
-          title={`${p.name} is editing`}
+          title={p.canEdit ? `${p.name} can edit` : `${p.name} is viewing (read only)`}
           className="inline-flex items-center gap-1 rounded-full border border-line py-0.5 pr-2 pl-0.5"
         >
           <span
@@ -51,9 +58,9 @@ export function Presence({ provider, selfId }: { provider: WebsocketProvider; se
             {p.name.slice(0, 1).toUpperCase()}
           </span>
           {p.name}
+          {!p.canEdit && <span className="text-[11px]">· viewing</span>}
         </li>
       ))}
-      <li className="sr-only">{peers.length === 1 ? 'is' : 'are'} also on this page</li>
     </ul>
   )
 }

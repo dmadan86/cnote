@@ -147,7 +147,7 @@ function Surface({
         ? [
             CollaborationCaret.configure({
               provider,
-              user: { id: me.user.id, name: me.user.name, color: userColor(me.user.id) },
+              user: { id: me.user.id, name: me.user.name, color: userColor(me.user.id), canEdit: editable },
             }),
           ]
         : []),
