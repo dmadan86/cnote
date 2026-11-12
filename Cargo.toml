@@ -36,7 +36,7 @@ regex = "1"
 url = "2"
 tokio-tungstenite = "0.29"
 yrs = "0.28"
-rmcp = { version = "3.9", features = ["server", "macros", "transport-streamable-http-server", "transport-io", "elicitation"] }
+rmcp = { version = "3.9", features = ["server", "client", "transport-streamable-http-client-reqwest", "macros", "transport-streamable-http-server", "transport-io", "elicitation"] }
 dotenvy = "0.15"
 aes-gcm = "0.11"
 csv = "1"

@@ -21,8 +21,11 @@ base64.workspace = true
 rand.workspace = true
 regex.workspace = true
 tokio.workspace = true
+rmcp.workspace = true
+chrono.workspace = true
+hex.workspace = true
+cnote-db.workspace = true
 
 [dev-dependencies]
-cnote-db.workspace = true
 dotenvy.workspace = true
 axum.workspace = true

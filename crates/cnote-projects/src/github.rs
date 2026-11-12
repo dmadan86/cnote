@@ -3,31 +3,12 @@
 use cnote_core::{CmdError, CmdResult, ErrorCode, ExecOptions, Principal, Registry};
 use regex::Regex;
 use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
 use sqlx::PgPool;
 use std::collections::BTreeSet;
 use std::sync::{Arc, OnceLock};
 use uuid::Uuid;
 
-/// HMAC-SHA256 (RFC 2104) on top of sha2, to avoid another dependency for twelve lines.
-pub fn hmac_sha256(key: &[u8], msg: &[u8]) -> [u8; 32] {
-    let mut k = [0u8; 64];
-    if key.len() > 64 {
-        k[..32].copy_from_slice(&Sha256::digest(key));
-    } else {
-        k[..key.len()].copy_from_slice(key);
-    }
-    let pad = |b: u8| k.iter().map(|x| x ^ b).collect::<Vec<u8>>();
-    let inner = Sha256::new()
-        .chain_update(pad(0x36))
-        .chain_update(msg)
-        .finalize();
-    Sha256::new()
-        .chain_update(pad(0x5c))
-        .chain_update(inner)
-        .finalize()
-        .into()
-}
+pub use cnote_core::auth::hmac_sha256;
 
 fn signature_ok(secret: &str, header: &str, body: &[u8]) -> bool {
     let Some(sig) = header

@@ -1,5 +1,6 @@
 'use client'
 import { useState } from 'react'
+import { HooksTab } from '@/components/hooks-settings'
 import { Secret } from '@/components/secret'
 import { useShell } from '@/components/shell'
 import { btn, btnPrimary, ErrorText, Field, inputCls } from '@/components/ui'
@@ -15,6 +16,7 @@ const TABS = [
   'Tool groups',
   'Confirmations',
   'Connected apps',
+  'Webhooks',
   'Usage',
 ] as const
 type TabName = (typeof TABS)[number]
@@ -394,6 +396,7 @@ export default function Settings() {
         {tab === 'Tool groups' && <GroupsTab ws={ws} />}
         {tab === 'Confirmations' && <ConfirmationsTab ws={ws} />}
         {tab === 'Connected apps' && <AppsTab ws={ws} />}
+        {tab === 'Webhooks' && <HooksTab ws={ws} />}
         {tab === 'Usage' && <UsageTab ws={ws} />}
       </div>
     </div>

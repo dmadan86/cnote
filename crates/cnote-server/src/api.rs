@@ -268,7 +268,12 @@ pub fn router(state: AppState) -> Router {
         .merge(crate::oauth::router())
         .merge(crate::marketplace::router())
         // EXTRA_ROUTES: modules mount routers here (mcp, collab, webhooks)
-        .layer(tower_http::trace::TraceLayer::new_for_http())
+        // Info-level span: every error logged during a request carries its method and URI (command + workspace).
+        .layer(
+            tower_http::trace::TraceLayer::new_for_http().make_span_with(
+                tower_http::trace::DefaultMakeSpan::new().level(tracing::Level::INFO),
+            ),
+        )
         .with_state(state)
 }
 

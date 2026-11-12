@@ -3,6 +3,7 @@
 //! below so redaction, audit and metering cannot be skipped.
 
 mod crypto;
+pub mod hooks;
 mod netguard;
 mod providers;
 mod redact;
@@ -31,12 +32,17 @@ const MAX_NOTE_CHARS: usize = 24_000;
 
 pub fn module() -> Module {
     Module {
-        commands: commands(),
+        commands: commands().into_iter().chain(hooks::commands()).collect(),
         event_handlers: vec![
             ("note.created", on_note_event),
             ("note.updated", on_note_event),
+            ("", hooks::on_event), // every event: hooks filter by their own prefixes
         ],
-        job_handlers: vec![("ai.index_note", index_job)],
+        job_handlers: vec![
+            ("ai.index_note", index_job),
+            ("hook.deliver", hooks::deliver_job),
+        ],
+        sweeps: vec![("hooks.schedule", 60, hooks::sweep)],
         ..Default::default()
     }
 }
