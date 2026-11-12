@@ -1,7 +1,10 @@
 'use client'
 import Collaboration from '@tiptap/extension-collaboration'
+import CollaborationCaret from '@tiptap/extension-collaboration-caret'
 import { TaskItem, TaskList } from '@tiptap/extension-list'
-import { Table, TableCell, TableHeader, TableRow } from '@tiptap/extension-table'
+import { TableCell, TableHeader, TableRow } from '@tiptap/extension-table'
+import TextAlign from '@tiptap/extension-text-align'
+import { Color } from '@tiptap/extension-text-style'
 import { Placeholder } from '@tiptap/extensions'
 import { Markdown } from '@tiptap/markdown'
 import { type Editor, EditorContent, useEditor } from '@tiptap/react'
@@ -10,10 +13,13 @@ import { useEffect, useRef, useState } from 'react'
 import { WebsocketProvider } from 'y-websocket'
 import * as Y from 'yjs'
 import { cmd } from '@/lib/api'
+import { AlignHeading, AlignParagraph, ColorText, HtmlTable, SafeImage } from './editor/formats'
 import { MentionPicker } from './editor/mention'
 import { EditorMenus } from './editor/menus'
 import { SlashCommand } from './editor/slash'
 import { FixedToolbar } from './editor/toolbar'
+import { Presence, userColor } from './presence'
+import { useShell } from './shell'
 
 const COLLAB_URL = process.env.NEXT_PUBLIC_COLLAB_URL ?? 'ws://localhost:4000'
 const SYNC_TIMEOUT_MS = 2000
@@ -74,6 +80,7 @@ export function NoteEditor({
       editorRef={editorRef}
       editable={editable}
       ydoc={mode === 'collab' ? doc.current : null}
+      provider={mode === 'collab' ? provider.current : null}
     />
   )
 }
@@ -86,6 +93,7 @@ function Surface({
   editorRef,
   editable,
   ydoc,
+  provider,
 }: {
   ws: string
   id: string
@@ -94,7 +102,9 @@ function Surface({
   editorRef?: React.RefObject<Editor | null>
   editable: boolean
   ydoc: Y.Doc | null
+  provider: WebsocketProvider | null
 }) {
+  const { me } = useShell()
   const [status, setStatus] = useState<'saved' | 'saving' | 'error' | 'denied'>('saved')
   const last = useRef(initialMd)
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined)
@@ -104,9 +114,15 @@ function Surface({
     immediatelyRender: false,
     editable,
     extensions: [
-      StarterKit.configure(ydoc ? { undoRedo: false } : {}),
+      StarterKit.configure({ paragraph: false, heading: false, ...(ydoc ? { undoRedo: false } : {}) }),
+      AlignParagraph,
+      AlignHeading,
+      TextAlign.configure({ types: ['heading', 'paragraph'] }),
+      ColorText,
+      Color,
+      SafeImage.configure({ inline: false, allowBase64: false }),
       Markdown,
-      Table.configure({ resizable: false }),
+      HtmlTable.configure({ resizable: true }),
       TableRow,
       TableHeader,
       TableCell,
@@ -116,6 +132,14 @@ function Surface({
       SlashCommand,
       MentionPicker.configure({ ws }),
       ...(ydoc ? [Collaboration.configure({ document: ydoc })] : []),
+      ...(provider
+        ? [
+            CollaborationCaret.configure({
+              provider,
+              user: { id: me.user.id, name: me.user.name, color: userColor(me.user.id) },
+            }),
+          ]
+        : []),
     ],
     ...(ydoc ? {} : { content: initialMd, contentType: 'markdown' as const }),
     editorProps: { attributes: { 'aria-label': 'Page content', role: 'textbox', 'aria-multiline': 'true' } },
@@ -182,6 +206,7 @@ function Surface({
 
   return (
     <div>
+      {provider && <Presence provider={provider} selfId={me.user.id} />}
       <div className="prose-note">
         {editor && editable && <FixedToolbar editor={editor} />}
         {editor && editable && <EditorMenus editor={editor} />}

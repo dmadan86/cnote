@@ -1,7 +1,7 @@
 //! Collaboration gateway (ADR-005): a Yjs-compatible WebSocket server. One in-memory room per note, y-sync
 //! protocol (sync step 1/2, update, awareness relay), debounced persistence into core.notes.
-//! shortcut: awareness is relayed, not stored, so a late joiner sees other cursors on their next heartbeat
-//! (y-websocket clients re-send every ~15s). Rooms live in one process; scale out by routing a note to one node.
+//! Each connection's latest awareness (presence, cursor) is kept in memory: replayed to anyone who joins and
+//! cleared for everyone when that connection drops. Rooms live in one process; scale out by routing a note to one node.
 
 mod md;
 
@@ -22,6 +22,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use uuid::Uuid;
+use yrs::sync::awareness::AwarenessUpdate;
 use yrs::sync::{Message, SyncMessage};
 use yrs::updates::decoder::Decode;
 use yrs::updates::encoder::Encode;
@@ -50,6 +51,8 @@ struct RoomState {
     doc: Doc,
     peers: HashMap<u64, mpsc::UnboundedSender<Vec<u8>>>,
     next_peer: u64,
+    /// Latest awareness per connection, so joiners see who is here at once.
+    awareness: HashMap<u64, AwarenessUpdate>,
     dirty: bool,
     last_edit: Instant,
     editor: Option<Principal>,
@@ -221,6 +224,7 @@ async fn prepare(
             doc,
             peers: HashMap::new(),
             next_peer: 0,
+            awareness: HashMap::new(),
             dirty: false,
             last_edit: Instant::now(),
             editor: None,
@@ -286,6 +290,9 @@ async fn serve(socket: WebSocket, s: AppState, room: Arc<Room>, principal: Princ
         let step1 =
             Message::Sync(SyncMessage::SyncStep1(st.doc.transact().state_vector())).encode_v1();
         let _ = tx.send(step1);
+        for u in st.awareness.values() {
+            let _ = tx.send(Message::Awareness(u.clone()).encode_v1());
+        }
         id
     };
     let writer = tokio::spawn(async move {
@@ -313,7 +320,18 @@ async fn serve(socket: WebSocket, s: AppState, room: Arc<Room>, principal: Princ
         }
     }
 
-    room.state.lock().unwrap().peers.remove(&me);
+    {
+        let mut st = room.state.lock().unwrap();
+        st.peers.remove(&me);
+        // Tell the others this connection's people left, instead of waiting for their 30s timeout.
+        if let Some(mut gone) = st.awareness.remove(&me) {
+            for e in gone.clients.values_mut() {
+                e.clock += 1;
+                e.json = "null".into();
+            }
+            send_all(&st, me, &Message::Awareness(gone).encode_v1());
+        }
+    }
     writer.abort();
     let empty = room.state.lock().unwrap().peers.is_empty();
     if empty {
@@ -371,7 +389,16 @@ fn on_frame(
             }
             kick(s, room);
         }
-        Message::Awareness(_) => send_all(&room.state.lock().unwrap(), me, frame),
+        Message::Awareness(u) => {
+            let mut st = room.state.lock().unwrap();
+            send_all(&st, me, frame);
+            let kept = st.awareness.entry(me).or_insert_with(|| AwarenessUpdate {
+                clients: HashMap::new(),
+            });
+            for (client, e) in u.clients {
+                kept.clients.insert(client, e);
+            }
+        }
         _ => {}
     }
 }

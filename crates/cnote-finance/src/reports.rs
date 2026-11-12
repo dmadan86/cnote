@@ -192,8 +192,18 @@ fn item(num: usize, r: &RateRow, sign: i64) -> Value {
         "camt": rupees(sign * r.cgst), "samt": rupees(sign * r.sgst), "iamt": rupees(sign * r.igst)}})
 }
 
-/// GSTR-1 JSON sections: b2b (buyer has a GSTIN), b2cs (consumers, aggregated by place of supply and rate) and
-/// cdnr (credit notes to registered buyers). b2cl (inter-state consumer invoices above Rs 2.5 lakh) is not split out.
+/// GSTR-1 JSON sections: b2b (buyer has a GSTIN), b2cl (inter-state invoices to consumers above the B2CL limit, one
+/// row per invoice), b2cs (other consumer supplies, aggregated by place of supply and rate) and cdnr (credit notes to
+/// registered buyers). shortcut: consumer credit notes always net into b2cs (no cdnur), upgrade when B2CL invoices get credited.
+/// B2CL threshold on invoice value, in paise: Rs 1 lakh from 1 Aug 2024 (Notification 12/2024-CT), Rs 2.5 lakh before.
+fn b2cl_limit_minor(date: NaiveDate) -> i64 {
+    if date >= NaiveDate::from_ymd_opt(2024, 8, 1).unwrap() {
+        100_000 * 100
+    } else {
+        250_000 * 100
+    }
+}
+
 async fn gstr1(ctx: &mut Ctx, i: Period) -> CmdResult<Value> {
     let (from, to) = month_range(&i.period)?;
     let spaces = readable_space_ids(ctx).await?;
@@ -237,6 +247,7 @@ async fn gstr1(ctx: &mut Ctx, i: Period) -> CmdResult<Value> {
     let (mut b2b, mut cdnr): (BTreeMap<String, Vec<Value>>, BTreeMap<String, Vec<Value>>) =
         Default::default();
     let mut b2cs: BTreeMap<(String, i32), [i64; 4]> = BTreeMap::new();
+    let mut b2cl: BTreeMap<String, Vec<Value>> = BTreeMap::new();
     for d in &docs {
         let date = d.invoice_date.format("%d-%m-%Y").to_string();
         let rchrg = if d.reverse_charge { "Y" } else { "N" };
@@ -247,6 +258,14 @@ async fn gstr1(ctx: &mut Ctx, i: Period) -> CmdResult<Value> {
             (Some(g), _) => cdnr.entry(g.clone()).or_default().push(json!({
                 "ntty": "C", "nt_num": d.number, "nt_dt": date, "val": rupees(d.total_minor),
                 "pos": d.place_of_supply, "rchrg": rchrg, "itms": items(d.id, 1)})),
+            (None, "invoice")
+                if !supplier_state.is_empty()
+                    && d.place_of_supply != supplier_state
+                    && d.total_minor > b2cl_limit_minor(d.invoice_date) =>
+            {
+                b2cl.entry(d.place_of_supply.clone()).or_default().push(json!({
+                    "inum": d.number, "idt": date, "val": rupees(d.total_minor), "itms": items(d.id, 1)}))
+            }
             (None, kind) => {
                 let sign = if kind == "credit_note" { -1 } else { 1 };
                 for r in rates.iter().filter(|r| r.invoice_id == d.id) {
@@ -266,6 +285,7 @@ async fn gstr1(ctx: &mut Ctx, i: Period) -> CmdResult<Value> {
     Ok(json!({
         "gstin": settings["gstin"], "fp": format!("{:02}{}", from.month(), from.year()),
         "b2b": wrap(b2b, "inv"),
+        "b2cl": b2cl.into_iter().map(|(pos, inv)| json!({"pos": pos, "inv": inv})).collect::<Vec<_>>(),
         "b2cs": b2cs.into_iter().map(|((pos, rt), a)| json!({
             "sply_ty": if pos == supplier_state { "INTRA" } else { "INTER" }, "pos": pos, "typ": "OE",
             "rt": rupees(rt as i64), "txval": rupees(a[0]), "camt": rupees(a[1]), "samt": rupees(a[2]), "iamt": rupees(a[3])

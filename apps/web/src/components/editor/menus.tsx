@@ -2,6 +2,7 @@
 import type { Editor } from '@tiptap/react'
 import { BubbleMenu } from '@tiptap/react/menus'
 import { Bold, Code, Italic, Link2, Strikethrough, Underline } from 'lucide-react'
+import { EmojiPicker, ImageDialog } from './inserts'
 import { TableControls, TablePicker } from './table-controls'
 
 const btn =
@@ -11,12 +12,14 @@ const bar = 'flex items-center gap-0.5 rounded-lg border border-line bg-canvas p
 export function Tool({
   label,
   on,
+  popup,
   disabled,
   run,
   children,
 }: {
   label: string
   on?: boolean
+  popup?: boolean
   disabled?: boolean
   run: () => void
   children: React.ReactNode
@@ -26,7 +29,9 @@ export function Tool({
       type="button"
       aria-label={label}
       title={label}
-      aria-pressed={on}
+      aria-pressed={popup ? undefined : on}
+      aria-haspopup={popup ? 'dialog' : undefined}
+      aria-expanded={popup ? on : undefined}
       disabled={disabled}
       onMouseDown={(e) => e.preventDefault()} // keep the selection
       onClick={run}
@@ -81,6 +86,8 @@ export function EditorMenus({ editor }: { editor: Editor }) {
       </BubbleMenu>
       <TableControls editor={editor} />
       <TablePicker editor={editor} />
+      <EmojiPicker editor={editor} />
+      <ImageDialog editor={editor} />
     </>
   )
 }

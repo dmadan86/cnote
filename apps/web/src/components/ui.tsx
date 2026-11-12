@@ -36,17 +36,26 @@ export function Modal({
   className?: string
 }) {
   const ref = useRef<HTMLDialogElement>(null)
+  // The 'close' event of a close() we made arrives a task later; if the modal was reopened by then (e.g. the 'c'
+  // shortcut right after submitting), forwarding it would shut the new one. Only user closes reach onClose.
+  const selfClosed = useRef(false)
   useEffect(() => {
     const d = ref.current
     if (!d) return
     if (open && !d.open) d.showModal()
-    if (!open && d.open) d.close()
+    if (!open && d.open) {
+      selfClosed.current = true
+      d.close()
+    }
   }, [open])
   return (
     // biome-ignore lint/a11y/useKeyWithClickEvents: backdrop click is a mouse nicety, Esc closes natively
     <dialog
       ref={ref}
-      onClose={onClose}
+      onClose={() => {
+        if (selfClosed.current) selfClosed.current = false
+        else onClose()
+      }}
       onClick={(e) => e.target === ref.current && onClose()}
       aria-label={title}
       className={`m-auto w-full ${className} rounded-lg border border-line p-0 shadow-xl`}

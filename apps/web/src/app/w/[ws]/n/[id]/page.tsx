@@ -150,10 +150,11 @@ export default function NotePage({ params }: { params: Promise<{ id: string }> }
   return (
     <div className="flex min-h-full">
       <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2 border-b border-line px-6 py-2">
+        <div className="flex flex-wrap items-center gap-2 border-b border-line px-6 py-2">
           <FreshnessPill freshness={note.freshness} verifyBy={note.verify_by} />
           <span className="text-[12px] text-muted">Updated {ago(note.updated_at)}</span>
-          <div className="ml-auto flex items-center gap-2">
+          {/* Wraps instead of clipping on narrow screens. */}
+          <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
             <DocActions
               ws={ws}
               note={note}

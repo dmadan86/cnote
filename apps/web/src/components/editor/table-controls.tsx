@@ -17,6 +17,8 @@ import {
   GripHorizontal,
   GripVertical,
   Heading,
+  TableCellsMerge,
+  TableCellsSplit,
   Trash2,
   X,
 } from 'lucide-react'
@@ -25,13 +27,19 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 const pop = 'rounded-lg border border-line bg-canvas p-1 text-fg shadow-xl'
 const item = 'flex w-full items-center gap-2.5 rounded px-2 py-1.5 text-left text-[13px] hover:bg-hover'
 
-/** Table + cursor cell position, or null outside a table. Our tables never merge cells (Markdown can't hold them). */
+/** Table + cursor cell position, or null outside a table. With merged cells row/col are child indexes, not grid columns. */
 function locate(editor: Editor) {
   const { $from } = editor.state.selection
   for (let d = $from.depth; d > 0; d--) {
     const node = $from.node(d)
     if (node.type.name === 'table')
-      return { table: node, pos: $from.before(d), row: $from.index(d), col: $from.index(d + 1) }
+      return {
+        table: node,
+        pos: $from.before(d),
+        row: $from.index(d),
+        col: $from.index(d + 1),
+        cellPos: $from.depth > d + 1 ? $from.before(d + 2) : -1,
+      }
   }
   return null
 }
@@ -50,11 +58,14 @@ function rebuild(editor: Editor, rows: PMNode[], row: number, col: number) {
 
 const rowsOf = (t: PMNode) => Array.from({ length: t.childCount }, (_, i) => t.child(i))
 const cellsOf = (r: PMNode) => Array.from({ length: r.childCount }, (_, i) => r.child(i))
+/** Sort/move/clear index cells by child position, which is wrong once a cell spans rows or columns. */
+const hasMerge = (t: PMNode) =>
+  rowsOf(t).some((r) => cellsOf(r).some((c) => c.attrs.colspan > 1 || c.attrs.rowspan > 1))
 const isHeader = (r: PMNode) => r.firstChild?.type.name === 'tableHeader'
 
 export function sortRows(editor: Editor, dir: 1 | -1) {
   const at = locate(editor)
-  if (!at) return
+  if (!at || hasMerge(at.table)) return
   const rows = rowsOf(at.table)
   const head = rows.filter(isHeader)
   const body = rows.filter((r) => !isHeader(r))
@@ -69,7 +80,7 @@ export function sortRows(editor: Editor, dir: 1 | -1) {
 
 export function moveRow(editor: Editor, by: 1 | -1) {
   const at = locate(editor)
-  if (!at) return
+  if (!at || hasMerge(at.table)) return
   const rows = rowsOf(at.table)
   const to = at.row + by
   if (to < 0 || to >= rows.length || isHeader(rows[at.row]) !== isHeader(rows[to])) return
@@ -79,7 +90,7 @@ export function moveRow(editor: Editor, by: 1 | -1) {
 
 export function moveColumn(editor: Editor, by: 1 | -1) {
   const at = locate(editor)
-  if (!at) return
+  if (!at || hasMerge(at.table)) return
   const to = at.col + by
   if (to < 0 || to >= at.table.child(0).childCount) return
   const rows = rowsOf(at.table).map((r) => {
@@ -92,7 +103,7 @@ export function moveColumn(editor: Editor, by: 1 | -1) {
 
 function clearCells(editor: Editor, what: 'row' | 'col') {
   const at = locate(editor)
-  if (!at) return
+  if (!at || hasMerge(at.table)) return
   const empty = (c: PMNode) => c.type.createAndFill(c.attrs) ?? c
   const rows = rowsOf(at.table).map((r, i) =>
     r.type.create(
@@ -112,7 +123,7 @@ function useTableRects(editor: Editor, keep: React.RefObject<boolean>) {
     if (!at || !(editor.isFocused || keep.current)) return setR(null)
     const dom = editor.view.nodeDOM(at.pos) as HTMLElement | null
     const table = dom?.querySelector('table') ?? dom
-    const cell = table?.querySelectorAll('tr')[at.row]?.children[at.col] as HTMLElement | undefined
+    const cell = editor.view.nodeDOM(at.cellPos) as HTMLElement | null
     if (!table || !cell) return setR(null)
     setR({
       table: table.getBoundingClientRect(),
@@ -135,7 +146,7 @@ function useTableRects(editor: Editor, keep: React.RefObject<boolean>) {
   return [r, update] as const
 }
 
-type Item = { label: string; icon: React.ElementType; run: () => void; danger?: boolean }
+type Item = { label: string; icon: React.ElementType; run: () => void; danger?: boolean; disabled?: boolean }
 
 function Menu({
   label,
@@ -180,12 +191,13 @@ function Menu({
             key={it.label}
             type="button"
             role="menuitem"
+            disabled={it.disabled}
             onMouseDown={(e) => e.preventDefault()}
             onClick={() => {
               onClose()
               it.run()
             }}
-            className={`${item} ${it.danger ? 'text-red-600' : ''}`}
+            className={`${item} disabled:opacity-40 disabled:hover:bg-transparent ${it.danger ? 'text-red-600' : ''}`}
           >
             <it.icon size={15} /> {it.label}
           </button>
@@ -215,25 +227,32 @@ export function TableControls({ editor }: { editor: Editor }) {
   }, [])
   if (!r) return null
   const c = () => editor.chain().focus()
+  const at = locate(editor)
+  const merged = !!at && hasMerge(at.table)
   const colItems: (Item | '-')[] = [
-    { label: 'Sort increasing', icon: ArrowUpNarrowWide, run: () => sortRows(editor, 1) },
-    { label: 'Sort decreasing', icon: ArrowDownWideNarrow, run: () => sortRows(editor, -1) },
+    { disabled: merged, label: 'Sort increasing', icon: ArrowUpNarrowWide, run: () => sortRows(editor, 1) },
+    {
+      disabled: merged,
+      label: 'Sort decreasing',
+      icon: ArrowDownWideNarrow,
+      run: () => sortRows(editor, -1),
+    },
     '-',
     { label: 'Add column left', icon: BetweenVerticalStart, run: () => c().addColumnBefore().run() },
     { label: 'Add column right', icon: BetweenVerticalEnd, run: () => c().addColumnAfter().run() },
-    { label: 'Move column left', icon: ChevronLeft, run: () => moveColumn(editor, -1) },
-    { label: 'Move column right', icon: ChevronRight, run: () => moveColumn(editor, 1) },
+    { disabled: merged, label: 'Move column left', icon: ChevronLeft, run: () => moveColumn(editor, -1) },
+    { disabled: merged, label: 'Move column right', icon: ChevronRight, run: () => moveColumn(editor, 1) },
     '-',
-    { label: 'Clear cells', icon: X, run: () => clearCells(editor, 'col') },
+    { disabled: merged, label: 'Clear cells', icon: X, run: () => clearCells(editor, 'col') },
     { label: 'Delete column', icon: Trash2, run: () => c().deleteColumn().run(), danger: true },
   ]
   const rowItems: (Item | '-')[] = [
     { label: 'Add row above', icon: BetweenHorizontalStart, run: () => c().addRowBefore().run() },
     { label: 'Add row below', icon: BetweenHorizontalEnd, run: () => c().addRowAfter().run() },
-    { label: 'Move row up', icon: ChevronUp, run: () => moveRow(editor, -1) },
-    { label: 'Move row down', icon: ChevronDown, run: () => moveRow(editor, 1) },
+    { disabled: merged, label: 'Move row up', icon: ChevronUp, run: () => moveRow(editor, -1) },
+    { disabled: merged, label: 'Move row down', icon: ChevronDown, run: () => moveRow(editor, 1) },
     '-',
-    { label: 'Clear cells', icon: X, run: () => clearCells(editor, 'row') },
+    { disabled: merged, label: 'Clear cells', icon: X, run: () => clearCells(editor, 'row') },
     { label: 'Delete row', icon: Trash2, run: () => c().deleteRow().run(), danger: true },
   ]
   const keep = (e: React.MouseEvent) => e.preventDefault() // keep the cursor in the cell
@@ -293,6 +312,25 @@ export function TableControls({ editor }: { editor: Editor }) {
           className={`${item} w-auto aria-pressed:text-accent`}
         >
           <Heading size={15} /> Header row
+        </button>
+        <span className="mx-0.5 h-5 w-px bg-line" />
+        <button
+          type="button"
+          disabled={!editor.can().mergeCells()}
+          onMouseDown={keep}
+          onClick={() => c().mergeCells().run()}
+          className={`${item} w-auto disabled:opacity-40 disabled:hover:bg-transparent`}
+        >
+          <TableCellsMerge size={15} /> Merge cells
+        </button>
+        <button
+          type="button"
+          disabled={!editor.can().splitCell()}
+          onMouseDown={keep}
+          onClick={() => c().splitCell().run()}
+          className={`${item} w-auto disabled:opacity-40 disabled:hover:bg-transparent`}
+        >
+          <TableCellsSplit size={15} /> Split cell
         </button>
         <span className="mx-0.5 h-5 w-px bg-line" />
         <button

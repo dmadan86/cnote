@@ -557,6 +557,44 @@ async fn gstr1_splits_b2b_and_b2c() {
         b2cs.iter()
             .all(|x| x["sply_ty"] == "INTRA" && x["iamt"].as_f64() == Some(0.0))
     );
+    // Inter-state consumer: above Rs 1 lakh is its own b2cl row; a small one stays in b2cs as INTER.
+    let far = env
+        .ok(
+            &t.user,
+            "contact.create",
+            json!({"space_id": t.space, "name": "Mumbai buyer", "state_code": "27"}),
+        )
+        .await["id"]
+        .clone();
+    for price in [100_000 * 100, 1_000 * 100] {
+        let d = env
+            .ok(&t.user, "invoice.create_draft", json!({"space_id": t.space, "contact_id": far, "invoice_date": today_ist(),
+                "lines": [{"description": "Laptop", "hsn_sac": "847130", "unit_price_minor": price}]}))
+            .await;
+        env.issue(&t, d["id"].as_str().unwrap().parse().unwrap())
+            .await;
+    }
+    let r = env
+        .ok(
+            &t.user,
+            "report.gstr1",
+            json!({"period": today_ist().format("%Y-%m").to_string()}),
+        )
+        .await;
+    assert_eq!(r["b2cl"].as_array().unwrap().len(), 1, "{}", r["b2cl"]);
+    assert_eq!(r["b2cl"][0]["pos"], "27");
+    let inv = &r["b2cl"][0]["inv"][0];
+    assert!(inv["val"].as_f64().unwrap() > 100_000.0);
+    assert!(inv["itms"][0]["itm_det"]["iamt"].as_f64().unwrap() > 0.0);
+    let inter: Vec<_> = r["b2cs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|x| x["sply_ty"] == "INTER")
+        .collect();
+    assert_eq!(inter.len(), 1);
+    assert_eq!(inter[0]["pos"], "27");
+
     let s = env
         .ok(
             &t.user,

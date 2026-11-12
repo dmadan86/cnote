@@ -8,6 +8,7 @@ import {
   Heading1,
   Heading2,
   Heading3,
+  ImageIcon,
   Italic,
   List,
   ListChecks,
@@ -16,6 +17,7 @@ import {
   Minus,
   Pilcrow,
   Quote,
+  Smile,
   SquareCode,
   Strikethrough,
   Table,
@@ -88,6 +90,20 @@ export const SLASH_ITEMS: SlashItem[] = [
     keywords: 'grid rows columns',
     icon: Table,
     run: (e) => e.view.dom.dispatchEvent(new Event('cn:table-picker')), // TablePicker in menus.tsx
+  },
+  {
+    title: 'Image',
+    hint: 'Insert from a URL',
+    keywords: 'picture photo img',
+    icon: ImageIcon,
+    run: (e) => e.view.dom.dispatchEvent(new Event('cn:image-dialog')), // ImageDialog in inserts.tsx
+  },
+  {
+    title: 'Emoji',
+    hint: 'Pick an emoji',
+    keywords: 'smile face',
+    icon: Smile,
+    run: (e) => e.view.dom.dispatchEvent(new Event('cn:emoji-picker')),
   },
   {
     title: 'Quote',

@@ -1,10 +1,16 @@
 'use client'
 import { type Editor, useEditorState } from '@tiptap/react'
 import {
+  AlignCenter,
+  AlignJustify,
+  AlignLeft,
+  AlignRight,
   AtSign,
+  Baseline,
   Bold,
   ChevronDown,
   Code,
+  ImageIcon,
   Italic,
   Link2,
   List,
@@ -12,6 +18,7 @@ import {
   ListOrdered,
   Minus,
   Redo2,
+  Smile,
   Strikethrough,
   Table,
   Underline,
@@ -152,6 +159,76 @@ function StyleMenu({ editor, active }: { editor: Editor; active: string }) {
   )
 }
 
+const COLORS: [string, string][] = [
+  ['Red', '#dc2626'],
+  ['Orange', '#ea580c'],
+  ['Yellow', '#ca8a04'],
+  ['Green', '#16a34a'],
+  ['Blue', '#2563eb'],
+  ['Purple', '#9333ea'],
+  ['Pink', '#db2777'],
+  ['Gray', '#6b7280'],
+]
+const ALIGNS = [
+  ['left', 'Align left', AlignLeft],
+  ['center', 'Align center', AlignCenter],
+  ['right', 'Align right', AlignRight],
+  ['justify', 'Align justify', AlignJustify],
+] as const
+
+/** Toolbar button that opens a small panel; Escape or an outside click closes it, Tab walks the options. */
+function Pop({
+  editor,
+  label,
+  trigger,
+  children,
+}: {
+  editor: Editor
+  label: string
+  trigger: React.ReactNode
+  children: (close: () => void) => React.ReactNode
+}) {
+  const [open, setOpen] = useState(false)
+  const root = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!open) return
+    root.current?.querySelector<HTMLElement>('[role=dialog] button')?.focus()
+    const away = (ev: MouseEvent) => !root.current?.contains(ev.target as Node) && setOpen(false)
+    document.addEventListener('mousedown', away)
+    return () => document.removeEventListener('mousedown', away)
+  }, [open])
+  const close = () => {
+    setOpen(false)
+    editor.commands.focus()
+  }
+  return (
+    // biome-ignore lint/a11y/noStaticElementInteractions: Escape from any focused option
+    <div
+      ref={root}
+      className="relative"
+      onKeyDown={(e) => {
+        if (e.key === 'Escape' && open) close()
+      }}
+    >
+      <Tool label={label} on={open} run={() => setOpen((o) => !o)} popup>
+        {trigger}
+      </Tool>
+      {open && (
+        <div
+          role="dialog"
+          aria-label={label}
+          className="absolute left-0 top-full z-30 mt-1 flex gap-0.5 rounded-lg border border-line bg-canvas p-1 shadow-xl"
+        >
+          {children(close)}
+        </div>
+      )}
+    </div>
+  )
+}
+
+const opt =
+  'grid size-7 shrink-0 place-items-center rounded hover:bg-hover focus:bg-hover focus:outline-none aria-pressed:text-accent'
+
 const Sep = () => <span aria-hidden className="mx-1 h-4 w-px bg-line" />
 
 /** Confluence-style fixed formatting toolbar; the bubble menu in menus.tsx stays for selections. */
@@ -169,12 +246,18 @@ export function FixedToolbar({ editor }: { editor: Editor }) {
       ordered: e.isActive('orderedList'),
       task: e.isActive('taskList'),
       link: e.isActive('link'),
+      color: (e.getAttributes('textStyle').color as string | undefined) ?? '',
+      align: ALIGNS.find(([a]) => e.isActive({ textAlign: a }))?.[0] ?? 'left',
       undo: e.can().undo(),
       redo: e.can().redo(),
     }),
   })
   const c = () => editor.chain().focus()
   const sz = 15
+  const emit = (ev: string) => {
+    editor.commands.focus()
+    editor.view.dom.dispatchEvent(new Event(ev))
+  }
   return (
     <div
       role="toolbar"
@@ -198,6 +281,79 @@ export function FixedToolbar({ editor }: { editor: Editor }) {
       <Tool label="Inline code" on={s.code} run={() => c().toggleCode().run()}>
         <Code size={sz} />
       </Tool>
+      <Pop
+        editor={editor}
+        label="Text colour"
+        trigger={
+          <span className="grid place-items-center">
+            <Baseline size={sz} />
+            <span
+              className="-mt-0.5 h-0.5 w-3.5 rounded bg-current"
+              style={s.color ? { color: s.color } : undefined}
+            />
+          </span>
+        }
+      >
+        {(close) => (
+          <>
+            {COLORS.map(([name, hex]) => (
+              <button
+                key={name}
+                type="button"
+                aria-label={name}
+                title={name}
+                aria-pressed={s.color === hex}
+                onClick={() => {
+                  close()
+                  c().setColor(hex).run()
+                }}
+                className={opt}
+              >
+                <span className="size-4 rounded-full border border-line" style={{ background: hex }} />
+              </button>
+            ))}
+            <button
+              type="button"
+              aria-label="Default colour"
+              title="Default colour"
+              onClick={() => {
+                close()
+                c().unsetColor().run()
+              }}
+              className={`${opt} text-[11px]`}
+            >
+              Aa
+            </button>
+          </>
+        )}
+      </Pop>
+      <Pop
+        editor={editor}
+        label="Alignment"
+        trigger={(() => {
+          const I = ALIGNS.find(([a]) => a === s.align)?.[2] ?? AlignLeft
+          return <I size={sz} />
+        })()}
+      >
+        {(close) =>
+          ALIGNS.map(([a, name, I]) => (
+            <button
+              key={a}
+              type="button"
+              aria-label={name}
+              title={name}
+              aria-pressed={s.align === a}
+              onClick={() => {
+                close()
+                c().setTextAlign(a).run()
+              }}
+              className={opt}
+            >
+              <I size={sz} />
+            </button>
+          ))
+        }
+      </Pop>
       <Sep />
       <Tool label="Bulleted list" on={s.bullet} run={() => c().toggleBulletList().run()}>
         <List size={sz} />
@@ -220,6 +376,12 @@ export function FixedToolbar({ editor }: { editor: Editor }) {
         }}
       >
         <Table size={sz} />
+      </Tool>
+      <Tool label="Image" run={() => emit('cn:image-dialog')}>
+        <ImageIcon size={sz} />
+      </Tool>
+      <Tool label="Emoji" run={() => emit('cn:emoji-picker')}>
+        <Smile size={sz} />
       </Tool>
       <Tool label="Mention" run={() => c().insertContent('@').run()}>
         <AtSign size={sz} />

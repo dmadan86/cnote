@@ -16,10 +16,8 @@ test('projects: space -> items -> CNQL -> board drag -> detail -> sprint', async
   await expect(page.getByRole('tab', { name: 'List' })).toBeVisible()
   const titles = ['Alpha task', 'Beta task', 'Gamma task']
   for (const [i, t] of titles.entries()) {
-    // shortcut: a `c` pressed right after the previous create is sometimes lost (zero-delay automation only);
-    // the shortcut is covered by the first item, the rest use the header button. Investigate the re-render.
-    if (i === 0) await page.keyboard.press('c')
-    else await page.getByRole('button', { name: /^New item c$/ }).click()
+    // `c` right after the previous create used to be swallowed by the old dialog's late close event.
+    await page.keyboard.press('c')
     const d = page.getByRole('dialog', { name: 'New item' })
     await d.getByLabel('Title').fill(t)
     await d.getByLabel('Priority').selectOption(i === 0 ? 'urgent' : 'low')
