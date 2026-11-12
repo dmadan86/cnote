@@ -1,7 +1,8 @@
 'use client'
 import type { Editor } from '@tiptap/react'
 import { BubbleMenu } from '@tiptap/react/menus'
-import { Bold, Code, Italic, Link2, Strikethrough, Underline } from 'lucide-react'
+import { Bold, Code, Italic, Link2, MessageSquarePlus, Strikethrough, Underline } from 'lucide-react'
+import { selectionAnchor } from './inline-comments'
 import { EmojiPicker, ImageDialog } from './inserts'
 import { TableControls, TablePicker } from './table-controls'
 
@@ -54,13 +55,46 @@ export function promptLink(editor: Editor) {
 }
 
 /** Formatting toolbar over selected text, table handles/toolbar, and the table size picker. */
-export function EditorMenus({ editor }: { editor: Editor }) {
+type OnComment = (anchor: { anchor_text: string; anchor_prefix: string }) => void
+
+/** "Comment" on the selected text: only for a selection inside one paragraph (that is what an anchor can quote). */
+function CommentTool({ editor, onComment }: { editor: Editor; onComment: OnComment }) {
+  // Read the selection at click time: the bubble does not re-render on every selection change.
+  return (
+    <Tool
+      label="Comment"
+      on={false}
+      run={() => {
+        const anchor = selectionAnchor(editor)
+        if (anchor) onComment(anchor)
+        else window.alert('Select text within one paragraph to comment on it.')
+      }}
+    >
+      <MessageSquarePlus size={15} />
+    </Tool>
+  )
+}
+
+/** Read-only pages: selecting text offers only "Comment". */
+export function CommentBubble({ editor, onComment }: { editor: Editor; onComment: OnComment }) {
+  return (
+    <BubbleMenu editor={editor} className="z-40" shouldShow={({ state }) => !state.selection.empty}>
+      <div role="toolbar" aria-label="Text actions" className={bar}>
+        <CommentTool editor={editor} onComment={onComment} />
+      </div>
+    </BubbleMenu>
+  )
+}
+
+export function EditorMenus({ editor, onComment }: { editor: Editor; onComment?: OnComment }) {
   // Buttons prevent mousedown, so the editor keeps focus; .focus() would restore the old selection a frame later.
   const c = () => editor.chain()
   return (
     <>
+      {/* z-40: above the sticky Editor toolbar (z-20) when the selection is on the first line. */}
       <BubbleMenu
         editor={editor}
+        className="z-40"
         shouldShow={({ editor: e, state }) => !state.selection.empty && !e.isActive('codeBlock')}
       >
         <div role="toolbar" aria-label="Text formatting" className={bar}>
@@ -82,6 +116,7 @@ export function EditorMenus({ editor }: { editor: Editor }) {
           <Tool label="Link" on={editor.isActive('link')} run={() => promptLink(editor)}>
             <Link2 size={14} />
           </Tool>
+          {onComment && <CommentTool editor={editor} onComment={onComment} />}
         </div>
       </BubbleMenu>
       <TableControls editor={editor} />

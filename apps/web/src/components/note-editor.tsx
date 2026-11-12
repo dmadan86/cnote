@@ -14,8 +14,9 @@ import { WebsocketProvider } from 'y-websocket'
 import * as Y from 'yjs'
 import { cmd } from '@/lib/api'
 import { AlignHeading, AlignParagraph, ColorText, HtmlTable, SafeImage } from './editor/formats'
+import { InlineComments, setThreads, type Thread } from './editor/inline-comments'
 import { MentionPicker } from './editor/mention'
-import { EditorMenus } from './editor/menus'
+import { CommentBubble, EditorMenus } from './editor/menus'
 import { SlashCommand } from './editor/slash'
 import { FixedToolbar } from './editor/toolbar'
 import { Presence, userColor } from './presence'
@@ -37,6 +38,7 @@ export function NoteEditor({
   onSaved,
   editorRef,
   editable = true,
+  comments,
 }: {
   ws: string
   id: string
@@ -44,6 +46,8 @@ export function NoteEditor({
   onSaved: () => void
   editorRef?: React.RefObject<Editor | null>
   editable?: boolean
+  /** Inline comments: open threads to highlight, and what to do on click / on a new selection comment. */
+  comments?: InlineCommentProps
 }) {
   const [mode, setMode] = useState<Mode>('connecting')
   const doc = useRef<Y.Doc>(null)
@@ -79,6 +83,7 @@ export function NoteEditor({
       onSaved={onSaved}
       editorRef={editorRef}
       editable={editable}
+      comments={comments}
       ydoc={mode === 'collab' ? doc.current : null}
       provider={mode === 'collab' ? provider.current : null}
     />
@@ -94,6 +99,7 @@ function Surface({
   editable,
   ydoc,
   provider,
+  comments,
 }: {
   ws: string
   id: string
@@ -101,10 +107,14 @@ function Surface({
   onSaved: () => void
   editorRef?: React.RefObject<Editor | null>
   editable: boolean
+  comments?: InlineCommentProps
   ydoc: Y.Doc | null
   provider: WebsocketProvider | null
 }) {
   const { me } = useShell()
+  // Extensions are created once; read the latest callbacks through a ref.
+  const commentsRef = useRef(comments)
+  commentsRef.current = comments
   const [status, setStatus] = useState<'saved' | 'saving' | 'error' | 'denied'>('saved')
   const last = useRef(initialMd)
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined)
@@ -131,6 +141,7 @@ function Surface({
       Placeholder.configure({ placeholder: "Type '/' for commands" }),
       SlashCommand,
       MentionPicker.configure({ ws }),
+      ...(comments ? [InlineComments.configure({ onOpen: (cid) => commentsRef.current?.onOpen(cid) })] : []),
       ...(ydoc ? [Collaboration.configure({ document: ydoc })] : []),
       ...(provider
         ? [
@@ -204,12 +215,18 @@ function Surface({
     }
   }, [ws, id])
 
+  const threads = comments?.threads
+  useEffect(() => {
+    if (editor && threads) setThreads(editor, threads)
+  }, [editor, threads])
+
   return (
     <div>
       {provider && <Presence provider={provider} selfId={me.user.id} />}
       <div className="prose-note">
         {editor && editable && <FixedToolbar editor={editor} />}
-        {editor && editable && <EditorMenus editor={editor} />}
+        {editor && editable && <EditorMenus editor={editor} onComment={comments?.onNew} />}
+        {editor && !editable && comments && <CommentBubble editor={editor} onComment={comments.onNew} />}
         <EditorContent editor={editor} />
       </div>
       <p aria-live="polite" className="mt-6 text-[12px] text-muted">
@@ -226,4 +243,10 @@ function Surface({
       </p>
     </div>
   )
+}
+
+type InlineCommentProps = {
+  threads: Thread[]
+  onOpen: (threadId: string) => void
+  onNew: (anchor: { anchor_text: string; anchor_prefix: string }) => void
 }

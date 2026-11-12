@@ -2,40 +2,36 @@
 import type { Editor } from '@tiptap/react'
 import { PanelRight, Plus } from 'lucide-react'
 import Link from 'next/link'
-import { use, useEffect, useRef, useState } from 'react'
+import { use, useEffect, useMemo, useRef, useState } from 'react'
+import { type Anchor, type Comment, CommentsTab, openThreads } from '@/components/comments-panel'
 import { DocActions, Proposals } from '@/components/docs/note-tools'
+import { locate } from '@/components/editor/inline-comments'
 import { NoteEditor } from '@/components/note-editor'
 import { ShareButton } from '@/components/share/share-dialog'
 import { useShell } from '@/components/shell'
 import { InsertField } from '@/components/templates/fields'
 import { SaveAsTemplate } from '@/components/templates/save-template'
-import { Avatar, btn, ErrorText, FreshnessPill, inputCls } from '@/components/ui'
+import { btn, FreshnessPill } from '@/components/ui'
 import { activity, activityText, type Evt } from '@/lib/activity'
 import { cmd, type NoteDetail } from '@/lib/api'
 import { ago, useCmd } from '@/lib/hooks'
 
 type Tab = 'relations' | 'history' | 'comments'
-type Comment = { id: string; author_name: string | null; body: string; created_at: string }
 
-function Panel({ ws, note }: { ws: string; note: NoteDetail }) {
-  const [tab, setTab] = useState<Tab>('comments')
+function Panel({
+  ws,
+  note,
+  tab,
+  setTab,
+  comments,
+}: {
+  ws: string
+  note: NoteDetail
+  tab: Tab
+  setTab: (t: Tab) => void
+  comments: Omit<React.ComponentProps<typeof CommentsTab>, 'ws' | 'noteId'>
+}) {
   const history = useCmd<Evt[]>(ws, 'note.history', { id: note.id }, tab === 'history')
-  const comments = useCmd<Comment[]>(ws, 'comment.list', { note_id: note.id }, tab === 'comments')
-  const [err, setErr] = useState<string>()
-
-  async function add(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault()
-    const form = e.currentTarget
-    const body = String(new FormData(form).get('body') ?? '')
-    try {
-      await cmd(ws, 'comment.add', { note_id: note.id, body })
-      form.reset()
-      setErr(undefined)
-      comments.reload()
-    } catch (x) {
-      setErr((x as Error).message)
-    }
-  }
 
   return (
     <aside aria-label="Page details" className="w-80 shrink-0 border-l border-line bg-side">
@@ -85,34 +81,7 @@ function Panel({ ws, note }: { ws: string; note: NoteDetail }) {
             </ul>
           </>
         )}
-        {tab === 'comments' && (
-          <>
-            <ul className="space-y-3">
-              {comments.data?.map((c) => (
-                <li key={c.id}>
-                  <div className="flex items-center gap-2 text-[12px] text-muted">
-                    <Avatar name={c.author_name} size={18} /> {c.author_name ?? 'Agent'} · {ago(c.created_at)}
-                  </div>
-                  <p className="mt-1 whitespace-pre-wrap">{c.body}</p>
-                </li>
-              ))}
-            </ul>
-            <form onSubmit={add} className="space-y-2 pt-2">
-              <textarea
-                name="body"
-                required
-                rows={3}
-                aria-label="Add a comment"
-                placeholder="Add a comment..."
-                className={inputCls}
-              />
-              <ErrorText error={err} />
-              <button type="submit" className={btn}>
-                Comment
-              </button>
-            </form>
-          </>
-        )}
+        {tab === 'comments' && <CommentsTab ws={ws} noteId={note.id} {...comments} />}
       </div>
     </aside>
   )
@@ -123,6 +92,15 @@ export default function NotePage({ params }: { params: Promise<{ id: string }> }
   const { ws, members, reload, newPage } = useShell()
   const { data: note, error, reload: reloadNote } = useCmd<NoteDetail>(ws, 'note.get', { id })
   const [panel, setPanel] = useState(true)
+  const [tab, setTab] = useState<Tab>('comments')
+  const comments = useCmd<Comment[]>(ws, 'comment.list', { note_id: id })
+  const [focus, setFocus] = useState<string>()
+  const [draft, setDraft] = useState<Anchor>()
+  const threads = useMemo(() => openThreads(comments.data), [comments.data])
+  const showComments = () => {
+    setPanel(true)
+    setTab('comments')
+  }
   const [rev, setRev] = useState(0) // bumps when an approved proposal rewrites the content
   const [title, setTitle] = useState('')
   const editorRef = useRef<Editor | null>(null)
@@ -231,10 +209,44 @@ export default function NotePage({ params }: { params: Promise<{ id: string }> }
             editable={canEdit}
             onSaved={reloadNote}
             editorRef={editorRef}
+            comments={{
+              threads,
+              onOpen: (cid) => {
+                showComments()
+                setFocus(cid)
+              },
+              onNew: (a) => {
+                showComments()
+                setDraft(a)
+              },
+            }}
           />
         </article>
       </div>
-      {panel && <Panel ws={ws} note={note} />}
+      {panel && (
+        <Panel
+          ws={ws}
+          note={note}
+          tab={tab}
+          setTab={setTab}
+          comments={{
+            comments: comments.data ?? [],
+            reload: comments.reload,
+            draft,
+            clearDraft: () => setDraft(undefined),
+            focus,
+            setFocus,
+            onPage: (c) => {
+              const doc = editorRef.current?.state.doc
+              return (
+                !doc ||
+                !c.anchor_text ||
+                !!locate(doc, { id: c.id, anchor_text: c.anchor_text, anchor_prefix: c.anchor_prefix })
+              )
+            },
+          }}
+        />
+      )}
     </div>
   )
 }

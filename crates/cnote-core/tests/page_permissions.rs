@@ -582,3 +582,85 @@ async fn mentions_notify_once_and_only_people_who_can_read() {
     w.ok(&bob, "notification.read", json!({})).await;
     assert_eq!(count(&bob).await, 0);
 }
+
+#[tokio::test]
+async fn inline_comments_reply_resolve_and_respect_access() {
+    let w = W::new().await;
+    let (bob, _) = w.member("member").await;
+    let sp = w.space("IC", "open").await;
+    let page = w.page(sp, "Plan", None, "We ship on Friday.").await;
+
+    let c = w
+        .ok(&bob, "comment.add", json!({"note_id": page, "body": "Which Friday?", "anchor_text": "Friday", "anchor_prefix": "We ship on "}))
+        .await;
+    assert_eq!(c["anchor_text"], "Friday");
+    let reply = w
+        .ok(
+            &w.owner,
+            "comment.add",
+            json!({"note_id": page, "body": "The 20th", "parent_id": c["id"]}),
+        )
+        .await;
+    assert_eq!(reply["parent_id"], c["id"]);
+    // Replies are one level deep and never anchored.
+    assert_eq!(
+        w.err(
+            &bob,
+            "comment.add",
+            json!({"note_id": page, "body": "x", "parent_id": reply["id"]})
+        )
+        .await,
+        ErrorCode::Invalid
+    );
+    assert_eq!(
+        w.err(
+            &bob,
+            "comment.add",
+            json!({"note_id": page, "body": "x", "parent_id": c["id"], "anchor_text": "ship"})
+        )
+        .await,
+        ErrorCode::Invalid
+    );
+    assert_eq!(
+        w.err(
+            &bob,
+            "comment.add",
+            json!({"note_id": page, "body": "x", "anchor_text": "y".repeat(501)})
+        )
+        .await,
+        ErrorCode::Invalid
+    );
+
+    let r = w.ok(&bob, "comment.resolve", json!({"id": c["id"]})).await;
+    assert!(r["resolved_at"].is_string());
+    assert!(r["resolved_by_name"].is_string());
+    let r = w
+        .ok(
+            &w.owner,
+            "comment.resolve",
+            json!({"id": c["id"], "resolved": false}),
+        )
+        .await;
+    assert!(r["resolved_at"].is_null());
+    assert_eq!(
+        w.err(&bob, "comment.resolve", json!({"id": reply["id"]}))
+            .await,
+        ErrorCode::NotFound
+    );
+
+    // Once the page is restricted, Bob can no longer resolve its threads.
+    w.ok(
+        &w.owner,
+        "note.restrict",
+        json!({"note_id": page, "restriction": "view"}),
+    )
+    .await;
+    assert_eq!(
+        w.err(&bob, "comment.resolve", json!({"id": c["id"]})).await,
+        ErrorCode::NotFound
+    );
+    let all = w
+        .ok(&w.owner, "comment.list", json!({"note_id": page}))
+        .await;
+    assert_eq!(all.as_array().unwrap().len(), 2);
+}

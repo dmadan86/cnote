@@ -222,3 +222,10 @@ dialog::backdrop {
   white-space: nowrap;
   user-select: none;
 }
+
+/* Inline comments: highlighted text with an open thread (decoration, not stored in the page). */
+.cn-comment {
+  background: color-mix(in srgb, #facc15 35%, transparent);
+  border-bottom: 2px solid #eab308;
+  cursor: pointer;
+}

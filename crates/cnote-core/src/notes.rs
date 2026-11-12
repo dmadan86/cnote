@@ -474,7 +474,19 @@ async fn relation_remove(ctx: &mut Ctx, i: AddRelation) -> CmdResult<Value> {
 pub struct AddComment {
     pub note_id: Uuid,
     pub body: String,
+    /// Inline comment: the exact page text it is about (1-500 chars).
+    #[serde(default)]
+    pub anchor_text: Option<String>,
+    /// Up to 64 characters just before `anchor_text`, to pick the right occurrence.
+    #[serde(default)]
+    pub anchor_prefix: Option<String>,
+    /// Reply to this top-level comment.
+    #[serde(default)]
+    pub parent_id: Option<Uuid>,
 }
+
+const COMMENT_COLS: &str = "c.id, c.note_id, c.author_id, c.author_name, c.body, c.created_at, c.anchor_text,
+    c.anchor_prefix, c.parent_id, c.resolved_at, (select name from core.users where id = c.resolved_by) as resolved_by_name";
 
 #[derive(Serialize, JsonSchema, sqlx::FromRow)]
 pub struct CommentOut {
@@ -484,6 +496,11 @@ pub struct CommentOut {
     pub author_name: Option<String>,
     pub body: String,
     pub created_at: DateTime<Utc>,
+    pub anchor_text: Option<String>,
+    pub anchor_prefix: Option<String>,
+    pub parent_id: Option<Uuid>,
+    pub resolved_at: Option<DateTime<Utc>>,
+    pub resolved_by_name: Option<String>,
 }
 
 async fn comment_add(ctx: &mut Ctx, i: AddComment) -> CmdResult<CommentOut> {
@@ -491,24 +508,105 @@ async fn comment_add(ctx: &mut Ctx, i: AddComment) -> CmdResult<CommentOut> {
     if i.body.trim().is_empty() {
         return Err(CmdError::invalid("comment body is empty"));
     }
-    let c: CommentOut = sqlx::query_as(
-        "insert into core.comments (workspace_id, note_id, author_id, author_name, body)
-         values ($1,$2,$3,(select name from core.users where id = $3),$4)
-         returning id, note_id, author_id, author_name, body, created_at",
+    let anchor = i.anchor_text.filter(|a| !a.trim().is_empty());
+    if anchor.as_ref().is_some_and(|a| a.chars().count() > 500)
+        || i.anchor_prefix
+            .as_ref()
+            .is_some_and(|p| p.chars().count() > 64)
+    {
+        return Err(CmdError::invalid(
+            "anchor_text is at most 500 and anchor_prefix at most 64 characters",
+        ));
+    }
+    if let Some(parent) = i.parent_id {
+        if anchor.is_some() {
+            return Err(CmdError::invalid("a reply cannot have its own anchor"));
+        }
+        let top: Option<bool> = sqlx::query_scalar(
+            "select parent_id is null from core.comments where id = $1 and note_id = $2",
+        )
+        .bind(parent)
+        .bind(i.note_id)
+        .fetch_optional(&mut *ctx.tx)
+        .await?;
+        if top != Some(true) {
+            return Err(CmdError::invalid(
+                "parent_id must be a top-level comment on this note",
+            ));
+        }
+    }
+    let id: Uuid = sqlx::query_scalar(
+        "insert into core.comments (workspace_id, note_id, author_id, author_name, body, anchor_text, anchor_prefix, parent_id)
+         values ($1,$2,$3,(select name from core.users where id = $3),$4,$5,$6,$7) returning id",
     )
     .bind(ctx.workspace_id())
     .bind(i.note_id)
     .bind(ctx.principal.user_id)
     .bind(i.body.trim())
+    .bind(&anchor)
+    .bind(anchor.as_ref().and(i.anchor_prefix.as_ref()))
+    .bind(i.parent_id)
     .fetch_one(&mut *ctx.tx)
     .await?;
     ctx.emit(
         "comment.added",
         Some(i.note_id),
-        json!({"comment_id": c.id}),
+        json!({"comment_id": id, "inline": anchor.is_some(), "reply": i.parent_id.is_some()}),
     )
     .await?;
-    Ok(c)
+    comment_by_id(ctx, id).await
+}
+
+async fn comment_by_id(ctx: &mut Ctx, id: Uuid) -> CmdResult<CommentOut> {
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "select {COMMENT_COLS} from core.comments c where c.id = $1"
+    )))
+    .bind(id)
+    .fetch_one(&mut *ctx.tx)
+    .await?)
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct ResolveComment {
+    pub id: Uuid,
+    /// false reopens it.
+    #[serde(default = "yes")]
+    pub resolved: bool,
+}
+
+fn yes() -> bool {
+    true
+}
+
+/// Anyone who can read the page can comment, so anyone who can read it can resolve or reopen a thread.
+async fn comment_resolve(ctx: &mut Ctx, i: ResolveComment) -> CmdResult<CommentOut> {
+    let note: Option<Uuid> =
+        sqlx::query_scalar("select note_id from core.comments where id = $1 and parent_id is null")
+            .bind(i.id)
+            .fetch_optional(&mut *ctx.tx)
+            .await?;
+    let note = note.ok_or_else(|| CmdError::not_found("comment"))?;
+    assert_note_access(ctx, note, false).await?;
+    sqlx::query(
+        "update core.comments set resolved_at = case when $2 then now() end,
+                resolved_by = case when $2 then $3::uuid end where id = $1",
+    )
+    .bind(i.id)
+    .bind(i.resolved)
+    .bind(ctx.principal.user_id)
+    .execute(&mut *ctx.tx)
+    .await?;
+    ctx.emit(
+        if i.resolved {
+            "comment.resolved"
+        } else {
+            "comment.reopened"
+        },
+        Some(note),
+        json!({"comment_id": i.id}),
+    )
+    .await?;
+    comment_by_id(ctx, i.id).await
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -518,9 +616,9 @@ pub struct ByNote {
 
 async fn comment_list(ctx: &mut Ctx, i: ByNote) -> CmdResult<Vec<CommentOut>> {
     assert_note_access(ctx, i.note_id, false).await?;
-    Ok(sqlx::query_as(
-        "select id, note_id, author_id, author_name, body, created_at from core.comments where note_id = $1 order by created_at",
-    )
+    Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "select {COMMENT_COLS} from core.comments c where c.note_id = $1 order by c.created_at"
+    )))
     .bind(i.note_id)
     .fetch_all(&mut *ctx.tx)
     .await?)
@@ -645,8 +743,9 @@ pub fn commands() -> Vec<Command> {
         Command::new("note.history", "Event history of a note (append-only audit trail).", ToolGroup::Read, handler!(note_history)),
         Command::new("relation.add", "Link two notes with a typed relation (blocks, depends_on, bills, designed_for, relates...).", ToolGroup::WriteNotes, handler!(relation_add)).core(),
         Command::new("relation.remove", "Remove a typed relation between two notes.", ToolGroup::WriteNotes, handler!(relation_remove)),
-        Command::new("comment.add", "Comment on a note.", ToolGroup::WriteNotes, handler!(comment_add)).core(),
+        Command::new("comment.add", "Comment on a note. Optional anchor_text (+ anchor_prefix) makes it an inline comment on that page text; parent_id makes it a reply.", ToolGroup::WriteNotes, handler!(comment_add)).core(),
         Command::new("comment.list", "List comments on a note.", ToolGroup::Read, handler!(comment_list)),
+        Command::new("comment.resolve", "Resolve (or reopen with resolved=false) a top-level comment thread.", ToolGroup::WriteNotes, handler!(comment_resolve)),
         Command::new("search.notes", "Full-text search across notes you can read; archived pages excluded by default.", ToolGroup::Read, handler!(search_notes)).core(),
         Command::new("view.create", "Save a view (a CNQL query with a layout).", ToolGroup::WriteNotes, handler!(view_create)),
         Command::new("view.list", "List saved views.", ToolGroup::Read, handler!(view_list)),
