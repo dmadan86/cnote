@@ -7,12 +7,13 @@ import { type Anchor, type Comment, CommentsTab, openThreads } from '@/component
 import { DocActions, Proposals } from '@/components/docs/note-tools'
 import { locate } from '@/components/editor/inline-comments'
 import { NoteEditor } from '@/components/note-editor'
+import { personProps } from '@/components/person'
 import { ShareButton } from '@/components/share/share-dialog'
 import { useShell } from '@/components/shell'
 import { InsertField } from '@/components/templates/fields'
 import { SaveAsTemplate } from '@/components/templates/save-template'
 import { btn, FreshnessPill } from '@/components/ui'
-import { activity, activityText, type Evt } from '@/lib/activity'
+import { activity, activityRest, type Evt } from '@/lib/activity'
 import { cmd, type NoteDetail } from '@/lib/api'
 import { ago, useCmd } from '@/lib/hooks'
 
@@ -74,7 +75,9 @@ function Panel({
             <ul className="space-y-1.5">
               {activity(history.data).map((a) => (
                 <li key={a.id} className="flex justify-between gap-3 text-[13px]">
-                  <span>{activityText(a)}</span>
+                  <span>
+                    <span {...personProps(a.userId)}>{a.who}</span> {activityRest(a)}
+                  </span>
                   <span className="shrink-0 text-muted">{ago(a.at)}</span>
                 </li>
               ))}

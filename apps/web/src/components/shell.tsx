@@ -7,6 +7,7 @@ import { auth, cmd, type Me, type Member, type Note, type SharedNote, type Space
 import { MODULES, moduleOn } from '@/lib/modules'
 import { NotificationBell } from './notifications'
 import { Palette } from './palette'
+import { PersonHoverLayer } from './person'
 import { SpaceDialog } from './space-dialog'
 import { Avatar, btnPrimary } from './ui'
 
@@ -539,6 +540,7 @@ export function ShellView({ ws, children }: { ws: string; children: React.ReactN
         </div>
         <SpaceDialog open={spaceDialog} onClose={() => setSpaceDialog(false)} />
         <Palette open={palette} onClose={() => setPalette(false)} />
+        <PersonHoverLayer />
       </FoldCtx.Provider>
     </Ctx.Provider>
   )

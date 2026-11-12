@@ -5,6 +5,7 @@ import { useState } from 'react'
 import { Avatar, btn, btnPrimary, ErrorText, inputCls, Modal } from '@/components/ui'
 import { cmd, type Member, type Note } from '@/lib/api'
 import { useCmd } from '@/lib/hooks'
+import { personProps } from '../person'
 
 type Person = { user_id: string; name: string; email: string; level: 'view' | 'edit' }
 type Perms = {
@@ -153,7 +154,9 @@ function ShareDialog({
             <ul className="space-y-1">
               {data.people.map((p) => (
                 <li key={p.user_id} className="flex items-center gap-2 text-[13px]">
-                  <Avatar name={p.name} size={24} />
+                  <span {...personProps(p.user_id)}>
+                    <Avatar name={p.name} size={24} />
+                  </span>
                   <span className="min-w-0 flex-1 truncate">
                     {p.name} <span className="text-muted">{p.email}</span>
                   </span>

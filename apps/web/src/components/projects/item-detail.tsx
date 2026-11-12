@@ -2,10 +2,12 @@
 import { X } from 'lucide-react'
 import Link from 'next/link'
 import { useEffect, useState } from 'react'
+import { CommentBody, MentionField } from '@/components/mention-field'
 import { NoteEditor } from '@/components/note-editor'
+import { personProps } from '@/components/person'
 import { useShell } from '@/components/shell'
 import { Avatar, btn, ErrorText, inputCls } from '@/components/ui'
-import { type Activity, activity, activityText, type Evt } from '@/lib/activity'
+import { type Activity, activity, activityRest, type Evt } from '@/lib/activity'
 import { cmd, type NoteDetail } from '@/lib/api'
 import { ago, useCmd } from '@/lib/hooks'
 import {
@@ -19,7 +21,13 @@ import {
   useToast,
 } from './shared'
 
-type Comment = { id: string; author_name: string | null; body: string; created_at: string }
+type Comment = {
+  id: string
+  author_id: string | null
+  author_name: string | null
+  body: string
+  created_at: string
+}
 
 const REL_KINDS = ['blocks', 'depends_on', 'bills']
 const sel = 'w-full rounded-md border border-line bg-canvas px-2 py-1 text-[13px]'
@@ -211,12 +219,13 @@ export function ItemDetailView({ itemKey }: { itemKey: string }) {
         <section aria-label="Timeline" className="space-y-3">
           <h2 className="text-[13px] font-semibold">Timeline</h2>
           <form onSubmit={addComment} className="space-y-2">
-            <textarea
+            <MentionField
               name="body"
+              multiline
               required
               rows={3}
               aria-label="Add a comment"
-              placeholder="Add a comment..."
+              placeholder="Add a comment... (@ to mention)"
               className={inputCls}
             />
             <ErrorText error={cErr} />
@@ -229,14 +238,20 @@ export function ItemDetailView({ itemKey }: { itemKey: string }) {
               t.c ? (
                 <li key={`c${t.c.id}`} className="rounded-md border border-line p-3">
                   <div className="flex items-center gap-2 text-[12px] text-muted">
-                    <Avatar name={t.c.author_name} size={18} /> {t.c.author_name ?? 'Agent'} ·{' '}
-                    {ago(t.c.created_at)}
+                    <span {...personProps(t.c.author_id)} className="inline-flex items-center gap-2">
+                      <Avatar name={t.c.author_name} size={18} /> {t.c.author_name ?? 'Agent'}
+                    </span>{' '}
+                    · {ago(t.c.created_at)}
                   </div>
-                  <p className="mt-1 whitespace-pre-wrap">{t.c.body}</p>
+                  <p className="mt-1 whitespace-pre-wrap">
+                    <CommentBody body={t.c.body} />
+                  </p>
                 </li>
               ) : t.h ? (
                 <li key={`h${t.h.id}`} className="flex justify-between text-[12px] text-muted">
-                  <span>{activityText(t.h)}</span>
+                  <span>
+                    <span {...personProps(t.h.userId)}>{t.h.who}</span> {activityRest(t.h)}
+                  </span>
                   <span className="shrink-0">{ago(t.h.at)}</span>
                 </li>
               ) : null,

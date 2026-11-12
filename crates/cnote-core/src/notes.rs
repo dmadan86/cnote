@@ -554,6 +554,12 @@ async fn comment_add(ctx: &mut Ctx, i: AddComment) -> CmdResult<CommentOut> {
         json!({"comment_id": id, "inline": anchor.is_some(), "reply": i.parent_id.is_some()}),
     )
     .await?;
+    // @mentions in a comment use the page format ([@Name](/w/<ws>/people/<id>)) and notify the same way.
+    let title: String = sqlx::query_scalar("select title from core.notes where id = $1")
+        .bind(i.note_id)
+        .fetch_one(&mut *ctx.tx)
+        .await?;
+    crate::notifications::notify_mentions(ctx, i.note_id, &title, "", i.body.trim()).await?;
     comment_by_id(ctx, id).await
 }
 

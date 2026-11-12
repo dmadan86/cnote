@@ -1,6 +1,7 @@
 'use client'
 import { useEffect, useState } from 'react'
 import type { WebsocketProvider } from 'y-websocket'
+import { personProps } from './person'
 
 // Readable on light and dark backgrounds; also used for each person's caret and selection.
 const COLORS = ['#dc2626', '#ea580c', '#ca8a04', '#16a34a', '#0891b2', '#2563eb', '#9333ea', '#db2777']
@@ -38,6 +39,7 @@ export function Presence({ provider, selfId }: { provider: WebsocketProvider; se
       {peers.map((p) => (
         <li
           key={p.id}
+          {...personProps(p.id)}
           title={`${p.name} is editing`}
           className="inline-flex items-center gap-1 rounded-full border border-line py-0.5 pr-2 pl-0.5"
         >

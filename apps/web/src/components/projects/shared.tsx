@@ -1,6 +1,7 @@
 'use client'
 import { Bot } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
+import { personProps } from '@/components/person'
 import { useShell } from '@/components/shell'
 import { Avatar, Pill } from '@/components/ui'
 import { useCmd } from '@/lib/hooks'
@@ -66,7 +67,11 @@ export function Assignee({ item, agents }: { item: Item; agents: Agent[] }) {
       </span>
     )
   }
-  return <Avatar name={members.find((m) => m.user_id === item.assignee_id)?.name} size={22} />
+  return (
+    <span {...personProps(item.assignee_id)}>
+      <Avatar name={members.find((m) => m.user_id === item.assignee_id)?.name} size={22} />
+    </span>
+  )
 }
 
 /** Value is 'u:<id>', 'a:<id>' or '' (unassigned). */

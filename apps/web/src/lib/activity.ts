@@ -4,6 +4,7 @@ export type Evt = {
   id: number
   kind: string
   actor_type: string
+  actor_id?: string | null
   actor_name?: string | null
   subject_name?: string | null
   created_at: string
@@ -11,7 +12,16 @@ export type Evt = {
 }
 
 /** `at` is the newest event of a merged run, `since` the oldest. */
-export type Activity = { id: number; who: string; text: string; at: string; since: string; count: number }
+export type Activity = {
+  id: number
+  who: string
+  /** The person behind it, for their profile card. */
+  userId?: string
+  text: string
+  at: string
+  since: string
+  count: number
+}
 
 // Bookkeeping that follows other events; it says nothing a person did.
 const HIDDEN = new Set(['doc.bindings_synced', 'item.ranked', 'mention.created'])
@@ -129,6 +139,7 @@ export function activity(events: Evt[] = []): Activity[] {
     const a: Activity = {
       id: e.id,
       who: who(e),
+      userId: e.actor_type === 'user' ? (e.actor_id ?? undefined) : undefined,
       text: sentence(e),
       at: e.created_at,
       since: e.created_at,
@@ -150,4 +161,5 @@ export function activity(events: Evt[] = []): Activity[] {
   return out
 }
 
-export const activityText = (a: Activity) => `${a.who} ${a.text}${a.count > 1 ? ` (${a.count} times)` : ''}`
+export const activityRest = (a: Activity) => `${a.text}${a.count > 1 ? ` (${a.count} times)` : ''}`
+export const activityText = (a: Activity) => `${a.who} ${activityRest(a)}`

@@ -1,11 +1,14 @@
 'use client'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Avatar, btn, btnPrimary, ErrorText, inputCls } from '@/components/ui'
 import { cmd } from '@/lib/api'
 import { ago } from '@/lib/hooks'
+import { CommentBody, MentionField } from './mention-field'
+import { personProps } from './person'
 
 export type Comment = {
   id: string
+  author_id: string | null
   author_name: string | null
   body: string
   created_at: string
@@ -53,9 +56,8 @@ export function CommentsTab({
   const resolved = top.filter((c) => c.resolved_at)
 
   // Focus the box when someone starts a comment from a selection.
-  const draftBox = useRef<HTMLTextAreaElement>(null)
   useEffect(() => {
-    if (draft) draftBox.current?.focus()
+    if (draft) document.querySelector<HTMLElement>('[aria-label="Comment on selected text"]')?.focus()
   }, [draft])
 
   useEffect(() => {
@@ -92,9 +94,14 @@ export function CommentsTab({
       {[c, ...replies(c.id)].map((m) => (
         <div key={m.id} className={m === c ? '' : 'mt-2 border-t border-line pt-2'}>
           <div className="flex items-center gap-2 text-[12px] text-muted">
-            <Avatar name={m.author_name} size={18} /> {m.author_name ?? 'Agent'} · {ago(m.created_at)}
+            <span {...personProps(m.author_id)} className="inline-flex items-center gap-2">
+              <Avatar name={m.author_name} size={18} /> {m.author_name ?? 'Agent'}
+            </span>{' '}
+            · {ago(m.created_at)}
           </div>
-          <p className="mt-1 whitespace-pre-wrap text-[13px]">{m.body}</p>
+          <p className="mt-1 whitespace-pre-wrap text-[13px]">
+            <CommentBody body={m.body} />
+          </p>
         </div>
       ))}
       {c.resolved_at ? (
@@ -121,7 +128,14 @@ export function CommentsTab({
             if (body && (await add(body, { parent_id: c.id }))) form.reset()
           }}
         >
-          <input name="body" aria-label="Reply" placeholder="Reply..." className={`${inputCls} flex-1`} />
+          <div className="flex-1">
+            <MentionField
+              name="body"
+              aria-label="Reply"
+              placeholder="Reply... (@ to mention)"
+              className={inputCls}
+            />
+          </div>
           <button
             type="button"
             className={btn}
@@ -156,11 +170,11 @@ export function CommentsTab({
           <blockquote className="border-l-2 border-warn pl-2 text-[12px] text-muted">
             <span className="line-clamp-3">{draft.anchor_text}</span>
           </blockquote>
-          <textarea
+          <MentionField
             name="body"
+            multiline
             required
             rows={3}
-            ref={draftBox}
             aria-label="Comment on selected text"
             className={inputCls}
           />
@@ -197,12 +211,13 @@ export function CommentsTab({
         }}
         className="space-y-2 pt-2"
       >
-        <textarea
+        <MentionField
           name="body"
+          multiline
           required
           rows={3}
           aria-label="Add a comment"
-          placeholder="Comment on the whole page..."
+          placeholder="Comment on the whole page... (@ to mention)"
           className={inputCls}
         />
         <ErrorText error={err} />

@@ -594,14 +594,24 @@ async fn inline_comments_reply_resolve_and_respect_access() {
         .ok(&bob, "comment.add", json!({"note_id": page, "body": "Which Friday?", "anchor_text": "Friday", "anchor_prefix": "We ship on "}))
         .await;
     assert_eq!(c["anchor_text"], "Friday");
+    let mention = format!(
+        "The 20th, [@Bob](/w/{}/people/{})",
+        w.owner.workspace_id,
+        W::uid(&bob)
+    );
     let reply = w
         .ok(
             &w.owner,
             "comment.add",
-            json!({"note_id": page, "body": "The 20th", "parent_id": c["id"]}),
+            json!({"note_id": page, "body": mention, "parent_id": c["id"]}),
         )
         .await;
     assert_eq!(reply["parent_id"], c["id"]);
+    let n = w.ok(&bob, "notification.unread_count", json!({})).await;
+    assert_eq!(
+        n["count"], 1,
+        "a mention in a comment notifies like one in the page"
+    );
     // Replies are one level deep and never anchored.
     assert_eq!(
         w.err(
