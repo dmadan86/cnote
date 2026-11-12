@@ -114,14 +114,18 @@ test('colour, alignment, image, emoji, merged + resized table: stored contract s
   expect(local).toContain('<h2 style="text-align: center">Head</h2>')
   expect(local).toContain('**<span style="color: #dc2626">hot</span>**')
   expect(local).toContain('![cat](https://example.com/cat.png)')
-  expect(local).toMatch(/<table><tr><th colspan="2"><p>a<\/p><p>b<\/p><\/th><th colwidth="\d+"><p>c<\/p><\/th>/)
+  expect(local).toMatch(
+    /<table><tr><th colspan="2"><p>a<\/p><p>b<\/p><\/th><th colwidth="\d+"><p>c<\/p><\/th>/,
+  )
   // What the server stored (needs the collab server to run the new md.rs).
   const stored = await md()
   expect(stored).toContain('<h2 style="text-align: center">Head</h2>')
   expect(stored).toContain('**<span style="color: #dc2626">hot</span>**')
   expect(stored).toContain('🚀')
   expect(stored).toContain('![cat](https://example.com/cat.png)')
-  expect(stored).toMatch(/<table><tr><th colspan="2"><p>a<\/p><p>b<\/p><\/th><th colwidth="\d+"><p>c<\/p><\/th>/)
+  expect(stored).toMatch(
+    /<table><tr><th colspan="2"><p>a<\/p><p>b<\/p><\/th><th colwidth="\d+"><p>c<\/p><\/th>/,
+  )
   expect(stored).toMatch(/<th colspan="2">.*<th colwidth="\d+"><p>c<\/p><\/th><\/tr><tr>/)
 
   await page.reload()

@@ -56,7 +56,9 @@ test('publish, review, install, call with the app token, uninstall', async ({ pa
   await page.getByLabel('Search apps').fill(name)
   await page.getByRole('button', { name, exact: true }).click()
   await page.getByRole('dialog', { name }).getByRole('button', { name: 'Uninstall' }).click()
-  await expect(page.getByRole('dialog', { name }).getByRole('button', { name: 'Install', exact: true })).toBeVisible()
+  await expect(
+    page.getByRole('dialog', { name }).getByRole('button', { name: 'Install', exact: true }),
+  ).toBeVisible()
   expect((await call('space.list')).status()).toBe(401)
 })
 
