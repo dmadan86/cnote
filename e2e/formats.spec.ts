@@ -1,9 +1,5 @@
-import { writeFileSync } from 'node:fs'
 import { expect, test } from '@playwright/test'
 import { createSpace, signup } from './helpers'
-
-const FIXTURES =
-  '/private/tmp/claude-502/-Users-in45889244-madan-cnote/40c21fff-b1e2-4bc8-80e3-17a69aefd484/scratchpad/fixtures-from-editor.md'
 
 test('colour, alignment, image, emoji, merged + resized table: stored contract strings and reload', async ({
   page,
@@ -110,7 +106,6 @@ test('colour, alignment, image, emoji, merged + resized table: stored contract s
   const local = await page.evaluate(
     () => (document.querySelector('.ProseMirror') as any).editor.getMarkdown() as string,
   )
-  writeFileSync(FIXTURES, `${local}\n`)
   expect(local).toContain('<h2 style="text-align: center">Head</h2>')
   expect(local).toContain('**<span style="color: #dc2626">hot</span>**')
   expect(local).toContain('![cat](https://example.com/cat.png)')
