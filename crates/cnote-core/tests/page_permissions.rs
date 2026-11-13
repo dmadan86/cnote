@@ -674,3 +674,53 @@ async fn inline_comments_reply_resolve_and_respect_access() {
         .await;
     assert_eq!(all.as_array().unwrap().len(), 2);
 }
+
+#[tokio::test]
+async fn guest_shared_as_editor_can_save_the_page() {
+    let w = W::new().await;
+    let (guest, guest_email) = w.member("guest").await;
+    for vis in ["open", "private"] {
+        let sp = w.space(if vis == "open" { "GO" } else { "GP" }, vis).await;
+        let page = w.page(sp, "Brief", None, "draft").await;
+        w.ok(
+            &w.owner,
+            "note.share",
+            json!({"note_id": page, "email": guest_email, "level": "edit"}),
+        )
+        .await;
+        let got = w.ok(&guest, "note.get", json!({"id": page})).await;
+        assert_eq!(got["level"], json!("edit"), "{vis}");
+        w.ok(
+            &guest,
+            "note.update",
+            json!({"id": page, "title": "Brief v2", "content_md": "guest wrote this"}),
+        )
+        .await;
+        w.ok(
+            &guest,
+            "comment.add",
+            json!({"note_id": page, "body": "looks good"}),
+        )
+        .await;
+        // Not shared, or shared view-only: still no write.
+        let other = w.page(sp, "Other", None, "x").await;
+        assert_eq!(
+            w.err(&guest, "note.update", json!({"id": other, "title": "x"}))
+                .await,
+            ErrorCode::NotFound,
+            "{vis}"
+        );
+        w.ok(
+            &w.owner,
+            "note.share",
+            json!({"note_id": other, "email": guest_email, "level": "view"}),
+        )
+        .await;
+        assert_eq!(
+            w.err(&guest, "note.update", json!({"id": other, "title": "x"}))
+                .await,
+            ErrorCode::Forbidden,
+            "{vis}"
+        );
+    }
+}

@@ -4,6 +4,7 @@ use crate::access::{assert_note_access, assert_space_access, readable_space_ids,
 use crate::command::{Command, Ctx, ToolGroup};
 use crate::error::{CmdError, CmdResult};
 use crate::handler;
+use crate::principal::Role;
 use chrono::{DateTime, NaiveDate, Utc};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -743,15 +744,15 @@ pub fn commands() -> Vec<Command> {
         Command::new("space.list", "List the Spaces you can read.", ToolGroup::Read, handler!(space_list)).core(),
         Command::new("note.create", "Create a note (page). Pages get an owner and a verify-by date (90 days) by default.", ToolGroup::WriteNotes, handler!(note_create)).core(),
         Command::new("note.get", "Read a note with its relations.", ToolGroup::Read, handler!(note_get)).core(),
-        Command::new("note.update", "Update a note's title, Markdown content, owner, verify-by date or parent.", ToolGroup::WriteNotes, handler!(note_update)).core(),
+        Command::new("note.update", "Update a note's title, Markdown content, owner, verify-by date or parent.", ToolGroup::WriteNotes, handler!(note_update)).min_role(Role::Guest).core(), // page access (shares) is checked per note
         Command::new("note.list", "List notes in a space or under a parent, optionally by type.", ToolGroup::Read, handler!(note_list)).core(),
         Command::new("note.delete", "Delete a note (soft delete, restorable by an admin).", ToolGroup::Destructive, handler!(note_delete)),
         Command::new("note.history", "Event history of a note (append-only audit trail).", ToolGroup::Read, handler!(note_history)),
         Command::new("relation.add", "Link two notes with a typed relation (blocks, depends_on, bills, designed_for, relates...).", ToolGroup::WriteNotes, handler!(relation_add)).core(),
         Command::new("relation.remove", "Remove a typed relation between two notes.", ToolGroup::WriteNotes, handler!(relation_remove)),
-        Command::new("comment.add", "Comment on a note. Optional anchor_text (+ anchor_prefix) makes it an inline comment on that page text; parent_id makes it a reply.", ToolGroup::WriteNotes, handler!(comment_add)).core(),
+        Command::new("comment.add", "Comment on a note. Optional anchor_text (+ anchor_prefix) makes it an inline comment on that page text; parent_id makes it a reply.", ToolGroup::WriteNotes, handler!(comment_add)).min_role(Role::Guest).core(),
         Command::new("comment.list", "List comments on a note.", ToolGroup::Read, handler!(comment_list)),
-        Command::new("comment.resolve", "Resolve (or reopen with resolved=false) a top-level comment thread.", ToolGroup::WriteNotes, handler!(comment_resolve)),
+        Command::new("comment.resolve", "Resolve (or reopen with resolved=false) a top-level comment thread.", ToolGroup::WriteNotes, handler!(comment_resolve)).min_role(Role::Guest),
         Command::new("search.notes", "Full-text search across notes you can read; archived pages excluded by default.", ToolGroup::Read, handler!(search_notes)).core(),
         Command::new("view.create", "Save a view (a CNQL query with a layout).", ToolGroup::WriteNotes, handler!(view_create)),
         Command::new("view.list", "List saved views.", ToolGroup::Read, handler!(view_list)),
