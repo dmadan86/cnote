@@ -326,3 +326,37 @@ and automations (`planning.rs`, `automation.rs`) are a separate port and stay pr
   `item.list`), and `item.get` with an `id` and a `key` of two different items returns an arbitrary one. Tests avoid both.
 - Tests: `projects_test.go` (port of the Rust item/workflow/evidence tests), `projects_diff_test.go` (twin fixtures,
   ~1500 compared steps and rows, then raw reads), `cnql_diff_test.go` (corpus).
+
+## Module notes: finance CRM (port/finance-crm)
+
+`contact.create`, `contact.get`, `contact.list`, `contact.update`, `deal.create`, `deal.list`,
+`deal.update`, and `deal.move_stage` are registered by `internal/modules/crm`.
+`notes.InsertTypedNote` is a small exported wrapper around the existing insertion helper; typed notes
+retain its access checks, ownership, trimming, and `note.created` event plus dispatch job.
+CRM validation, coalesce/null update semantics, list filtering, stage probabilities and closed timestamps
+match `cnote-finance/src/crm.rs`. A repeated stage move emits nothing; stage moves do not bump the
+note version. Creating a won deal emits only `deal.created` after `note.created`; moving to won emits
+`deal.stage_changed` and `deal.won`, each with its own `event.dispatch` job and original actor.
+No worker handlers, sweeps, or provider calls were moved. Other finance commands remain in Rust.
+
+Tests port `crm.rs` stage/tax assertions and `finance.rs` CRM pipeline and tenant assertions.
+`TestDifferentialCRMWrites` compares twin-fixture normalized responses and full CRM/note rows,
+command events and worker-visible dispatch jobs, then compares read responses as raw bytes.
+Generated UUIDs and timestamps are normalized only across independent twin writes. Coverage includes
+owner/member/guest, foreign workspace, API/agent keys, no authentication, malformed inputs, Unicode,
+large strings and integers, empty values, invalid tax IDs and every pipeline stage. Additional integration
+checks cover viewer/private/restricted access, scope and workspace tool-group gates, and idempotent
+replay with exact event/job counts. Decoder failures and non-ASCII GSTIN uppercase cases delegate to
+Rust to preserve serde errors and full Unicode uppercase behavior; no entire CRM command is deferred.
+
+Validation uses the worktree `.env`, real Postgres, the shared Rust reference on :4000, and in-process
+Go HTTP servers. No shared server is restarted. Browser e2e is not run because this brief prohibits
+starting/restarting the ports required by the documented browser workflow.
+
+Final checks (with `.env` loaded): `cd apps/api && go vet ./...`,
+`test -z "$(gofmt -l .)"`, and `go test -race -count=1 ./...` all passed.
+The final suite contains 57 tests across five tested packages (zero failures), including five CRM tests.
+Focused differential validation compared 443 twin responses/database rows and 90 raw read pairs
+with zero differences. Earlier exploratory runs without `.env` failed on the required database check;
+an added gate test initially assumed default agents could not manage CRM, and was corrected to
+explicitly disable that workspace tool group, matching both reference and Go behavior.

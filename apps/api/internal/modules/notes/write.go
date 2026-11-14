@@ -142,6 +142,15 @@ func noteCreate(c *command.Ctx, input json.RawMessage) (any, error) {
 	return insertNote(c, i)
 }
 
+// InsertTypedNote reuses the note creation access checks, ownership and outbox behavior.
+func InsertTypedNote(c *command.Ctx, spaceID, title, typ string, owner *string) (Note, error) {
+	v, err := insertNote(c, createNote{spaceID: spaceID, title: title, types: []string{typ}, owner: owner})
+	if err != nil {
+		return Note{}, err
+	}
+	return v.(Note), nil
+}
+
 func parentSpace(c *command.Ctx, parent string) (string, error) {
 	var s string
 	err := c.Tx.QueryRow(c.Context, "select space_id::text from core.notes where id = $1::uuid and deleted_at is null", parent).Scan(&s)
