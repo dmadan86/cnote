@@ -33,6 +33,13 @@ export function connect(url: string, max = 10) {
 /** One transaction bound to a workspace (same GUC as the Go db.BeginTenant); RLS does the rest. */
 export async function tenant<T>(pool: pg.Pool, workspaceId: string, fn: (tx: Tx) => Promise<T>): Promise<T> {
   const tx = await pool.connect()
+  // A connection that dies between two queries emits 'error' on the checked-out client; unhandled, that kills the process.
+  // The next query fails with the same error and the transaction is rolled back, so ignoring it here loses nothing.
+  let broken = false
+  const ignore = () => {
+    broken = true
+  }
+  tx.on('error', ignore)
   try {
     await tx.query('begin')
     await tx.query("select set_config('app.workspace_id', $1, true)", [workspaceId])
@@ -43,6 +50,7 @@ export async function tenant<T>(pool: pg.Pool, workspaceId: string, fn: (tx: Tx)
     await tx.query('rollback').catch(() => {})
     throw e
   } finally {
-    tx.release()
+    tx.off('error', ignore)
+    tx.release(broken) // a dead connection is discarded, not pooled
   }
 }
