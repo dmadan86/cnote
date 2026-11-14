@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"math/rand/v2"
 	"sort"
 	"strings"
 	"testing"
@@ -32,7 +33,8 @@ func sec(t *testing.T) *env {
 }
 
 func fakeIP() string {
-	return fmt.Sprintf("10.%d.%d.%d", time.Now().UnixNano()%250+1, time.Now().UnixNano()/7%250+1, time.Now().UnixNano()/13%250+1)
+	// random, not clock-based: throttle rows outlive a run, and a reused address starts out locked
+	return fmt.Sprintf("10.%d.%d.%d", rand.IntN(250)+1, rand.IntN(250)+1, rand.IntN(250)+1)
 }
 
 func (e *env) post(path, ip string, body any, hdr map[string]string, cookie string) hres {
