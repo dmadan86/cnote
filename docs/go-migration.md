@@ -742,7 +742,7 @@ collab service, `POST {COLLAB_URL}/internal/render` (`apps/collab/src/server.ts`
 same `buildDoc` the websocket path uses and answers `{"markdown": ...}`. The endpoint is stateless (no database), is not
 under `/collab/` (the Go front never forwards it) and requires the shared secret `COLLAB_INTERNAL_SECRET` in
 `x-collab-secret` (constant-time compare; without a configured secret it answers 404). If `COLLAB_URL` or the secret is
-unset Go hands `note.restore` to Rust. Tests: `TestDifferentialRestoreLiveDocument` (types into the note through the
+unset `note.restore` answers an internal error naming both variables (it is never proxied). Tests: `TestDifferentialRestoreLiveDocument` (types into the note through the
 real collab service, then restores on Rust and on Go and compares responses, versions, notes and events; checks that
 Go never proxied it), `apps/collab/test/render.test.ts` (secret, 404, malformed bodies).
 

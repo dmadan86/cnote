@@ -23,7 +23,7 @@ import (
 // note.restore renders the live Yjs document through the collab service: POST {COLLAB_URL}/internal/render with
 // the rows read in this transaction (snapshot, log) and the shared secret COLLAB_INTERNAL_SECRET. The endpoint is
 // stateless and never reached through the public front (only /collab/ is forwarded). Without both variables the
-// command answers ErrFallback so Rust (which has yrs) still serves it.
+// command answers an internal error naming them.
 func restoreCommand() command.Command {
 	c := command.NewCommand("note.restore", command.GroupWriteNotes, restore)
 	c.MinRole = command.Guest // edit access to the page is checked per note
@@ -53,7 +53,7 @@ func renderURL() (string, string, bool) {
 func renderLive(c *command.Ctx, note, mdText string, ydoc []byte, updates [][]byte) (string, error) {
 	endpoint, secret, ok := renderURL()
 	if !ok {
-		return "", command.ErrFallback
+		return "", command.NewError(command.Internal, "note.restore needs the collab service: set COLLAB_URL and COLLAB_INTERNAL_SECRET")
 	}
 	req := struct {
 		NoteID  string   `json:"note_id"`

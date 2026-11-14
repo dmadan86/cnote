@@ -51,7 +51,7 @@ func TestCollabPathRoutesToCollabURL(t *testing.T) {
 	if got := get(on, "/healthz"); got != "ok" {
 		t.Errorf("healthz: %q", got)
 	}
-	if got := get(on, "/api/notes/ping"); !strings.HasPrefix(got, "rust /api/notes/ping") {
-		t.Errorf("other paths stay on Rust: %q", got)
+	if got := get(on, "/api/notes/ping"); got != "" {
+		t.Errorf("other paths are the router's empty 404, not Rust's: %q", got)
 	}
 }

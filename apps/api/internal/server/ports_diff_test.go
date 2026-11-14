@@ -97,8 +97,9 @@ func TestDifferentialRevisions(t *testing.T) {
 	_ = gov
 }
 
-// Without COLLAB_URL/COLLAB_INTERNAL_SECRET Go cannot render the live document and hands note.restore to Rust.
-func TestRestoreFallsBackToRustWithoutCollab(t *testing.T) {
+// Without COLLAB_URL/COLLAB_INTERNAL_SECRET Go cannot render the live document: note.restore says what is missing
+// (and is never handed to Rust).
+func TestRestoreNeedsTheCollabService(t *testing.T) {
 	t.Setenv("COLLAB_URL", "")
 	t.Setenv("COLLAB_INTERNAL_SECRET", "")
 	e := newEnv(t)
@@ -106,9 +107,9 @@ func TestRestoreFallsBackToRustWithoutCollab(t *testing.T) {
 	r.id("n", "owner", "note.create", map[string]any{"space_id": r.f.space, "title": "T", "content_md": "a"})
 	r.call("owner", "note.update", map[string]any{"id": r.v("n"), "content_md": "b"})
 	revs := r.list("owner", "note.revisions", map[string]any{"note_id": r.v("n")})
-	got := r.call("owner", "note.restore", map[string]any{"note_id": r.v("n"), "revision_id": revs[len(revs)-1]["id"]})
-	if got["version"] == nil || !e.proxied.has("note.restore") {
-		t.Fatalf("expected the proxied Rust answer: %v", got)
+	res := e.cmd(e.gosv.URL, r.f.owner, r.f.owner.ws, "note.restore", map[string]any{"note_id": r.v("n"), "revision_id": revs[len(revs)-1]["id"]}, nil)
+	if res.status != 500 || !strings.Contains(string(res.body), "COLLAB_INTERNAL_SECRET") || e.proxied.has("note.restore") {
+		t.Fatalf("%d %s", res.status, res.body)
 	}
 }
 

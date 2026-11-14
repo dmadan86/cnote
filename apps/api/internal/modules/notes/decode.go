@@ -146,8 +146,8 @@ func (o obj) types(k string) ([]string, error) {
 	return out, nil
 }
 
-// optValue is Option<serde_json::Value>. Rust re-serializes floats and big integers (1e2 -> 100.0), which
-// jsonb would not reproduce from the raw text, so anything but plain integers falls back.
+// optValue is Option<serde_json::Value>. Rust re-serializes floats and big integers (1e2 -> 100.0, -0 -> -0.0), which
+// jsonb would not reproduce from the raw text, so every such number is rewritten the way serde_json prints an f64.
 func (o obj) optValue(k string) (json.RawMessage, error) {
 	v, ok := o.get(k)
 	if !ok {
@@ -156,10 +156,38 @@ func (o obj) optValue(k string) (json.RawMessage, error) {
 	dec := json.NewDecoder(bytes.NewReader(v))
 	dec.UseNumber()
 	var any any
-	if dec.Decode(&any) != nil || !plainNumbers(any) {
+	if dec.Decode(&any) != nil || !plainStrings(any) {
 		return nil, command.ErrFallback
 	}
-	return v, nil
+	if plainNumbers(any) {
+		return v, nil
+	}
+	out, err := normValue(v)
+	if err != nil || bytes.Contains(out, []byte("Inf")) { // not a finite f64: serde refuses it
+		return nil, command.ErrFallback
+	}
+	return out, nil
+}
+
+// plainStrings: no U+FFFD anywhere (invalid UTF-8 never reaches a Rust String).
+func plainStrings(v any) bool {
+	switch x := v.(type) {
+	case string:
+		return !strings.ContainsRune(x, '\uFFFD')
+	case []any:
+		for _, e := range x {
+			if !plainStrings(e) {
+				return false
+			}
+		}
+	case map[string]any:
+		for k, e := range x {
+			if strings.ContainsRune(k, '\uFFFD') || !plainStrings(e) {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func plainNumbers(v any) bool {

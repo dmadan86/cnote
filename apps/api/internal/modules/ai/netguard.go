@@ -38,8 +38,22 @@ func CheckEndpoint(ctx context.Context, raw string) error {
 	switch {
 	case err == nil && u.Scheme == "" && !strings.Contains(raw, ":"):
 		return errors.New("invalid base_url: relative URL without a base")
-	case err != nil || u.Scheme == "" || u.Opaque != "":
-		return errUnparsable
+	case err != nil:
+		msg := err.Error()
+		switch { // the url crate's wording for the failures a person can cause
+		case strings.Contains(msg, "invalid port"):
+			return errors.New("invalid base_url: invalid port number")
+		case strings.Contains(msg, "invalid character") || strings.Contains(msg, "invalid userinfo") || strings.Contains(msg, "host"):
+			return errors.New("invalid base_url: invalid domain character")
+		}
+		return errors.New("invalid base_url: relative URL without a base")
+	case u.Scheme == "":
+		return errors.New("invalid base_url: relative URL without a base")
+	case u.Opaque != "": // "mailto:x", "data:...": a URL without host; only the scheme is judged
+		if privateAllowed() {
+			return errors.New("base_url must be http(s)")
+		}
+		return errors.New("base_url must use https")
 	case (u.Scheme == "http" || u.Scheme == "https") && u.Host == "":
 		return errors.New("invalid base_url: empty host")
 	}

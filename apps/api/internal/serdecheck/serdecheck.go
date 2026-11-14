@@ -28,15 +28,24 @@ var structsJSON []byte
 
 var (
 	once    sync.Once
-	structs map[string][2]any // command -> [struct name, field count|nil]
+	structs map[string][]any // command -> [struct name, field count|nil, accepts `[]`]
 )
 
-func table() map[string][2]any {
+func table() map[string][]any {
 	once.Do(func() {
-		structs = map[string][2]any{}
+		structs = map[string][]any{}
 		_ = json.Unmarshal(structsJSON, &structs)
 	})
 	return structs
+}
+
+// EmptySequence: serde reads `[]` as the positional form of a struct. For the structs whose fields all have
+// defaults (the probe in structs.json found Rust accepting it) the command runs as if the input were `{}`.
+func EmptySequence(name string, input json.RawMessage) json.RawMessage {
+	if e, ok := table()[name]; ok && len(e) > 2 && e[2] == true && strings.TrimSpace(string(input)) == "[]" {
+		return json.RawMessage(`{}`)
+	}
+	return input
 }
 
 // Generic is what Describe returns when it cannot tell.
@@ -73,8 +82,8 @@ func Describe(name string, schema json.RawMessage, input json.RawMessage) string
 	}
 	obj, ok := v.(map[string]any)
 	if !ok {
-		if arr, isArr := v.([]any); isArr && nfields >= 0 && structName != "" {
-			return fmt.Sprintf("invalid length %d, expected struct %s with %d element%s", len(arr), structName, nfields, plural(nfields))
+		if arr, isArr := v.([]any); isArr {
+			return w.sequence(sc, structName, nfields, arr)
 		}
 		if structName == "" {
 			return Generic
@@ -83,6 +92,47 @@ func Describe(name string, schema json.RawMessage, input json.RawMessage) string
 	}
 	if msg := w.object(sc, obj); msg != "" {
 		return msg
+	}
+	return Generic
+}
+
+// sequence is serde's positional form of a struct: element i is field i in declaration order. The required fields
+// are known in that order (the schema's `required`); optional ones follow alphabetically, which is a guess.
+func (w *walker) sequence(sc map[string]any, structName string, nfields int, arr []any) string {
+	props, _ := sc["properties"].(map[string]any)
+	var order []string
+	seen := map[string]bool{}
+	req, _ := sc["required"].([]any)
+	for _, r := range req {
+		if n, _ := r.(string); n != "" {
+			order = append(order, n)
+			seen[n] = true
+		}
+	}
+	var rest []string
+	for k := range props {
+		if !seen[k] {
+			rest = append(rest, k)
+		}
+	}
+	sort.Strings(rest)
+	required := len(order)
+	order = append(order, rest...)
+	if nfields < 0 {
+		nfields = len(order)
+	}
+	for i, e := range arr {
+		if i < len(order) {
+			if msg := w.value(props[order[i]], e); msg != "" {
+				return msg
+			}
+		}
+	}
+	switch {
+	case len(arr) > nfields:
+		return fmt.Sprintf("invalid length %d, expected fewer elements in array", len(arr))
+	case len(arr) < required && structName != "":
+		return fmt.Sprintf("invalid length %d, expected struct %s with %d element%s", len(arr), structName, nfields, plural(nfields))
 	}
 	return Generic
 }

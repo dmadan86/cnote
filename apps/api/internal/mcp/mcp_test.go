@@ -138,7 +138,7 @@ func TestParseMessageAcceptsOnlyTheLegacyLifecycle(t *testing.T) {
 		}
 	}
 	for _, b := range []string{`[]`, `{}`, `not json`, `{"jsonrpc":"2.0","id":1.5,"method":"ping"}`, `{"jsonrpc":"2.0","id":null,"method":"ping"}`, `{"jsonrpc":"2.0","id":1,"method":"ping","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28"}}}`,
-		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"arguments":{}}}`, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"x","requestState":"s"}}`,
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"arguments":{}}}`,
 		`{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"cursor":5}}`, `{"jsonrpc":"2.0","id":1,"id":2,"method":"ping"}`, `{"jsonrpc":"2.0","id":1,"method":"server/discover"}`,
 		`{"jsonrpc":"2.0","id":1,"result":{}}`, `{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":1}}`, `{"jsonrpc":"2.0","id":1,"method":"initialize"}`,
 		`{"jsonrpc":"1.0","id":1,"method":"ping"}`, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":null}}`, `{"jsonrpc":"2.0","id":1,"method":"resources/read","params":{"uri":null}}`,

@@ -97,6 +97,9 @@ var routeMethods = map[string]string{
 	"/api/oauth/authorize": "POST", "/api/oauth/authorize/context": "POST",
 }
 
+var corsPaths = map[string]bool{"/.well-known/oauth-protected-resource": true, "/.well-known/oauth-protected-resource/mcp": true,
+	"/.well-known/oauth-authorization-server": true, "/oauth/register": true, "/oauth/token": true, "/oauth/revoke": true}
+
 func (s *Server) unmatched(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.EscapedPath()
 	if allow, ok := routeMethods[path]; ok {
@@ -105,6 +108,16 @@ func (s *Server) unmatched(w http.ResponseWriter, r *http.Request) {
 			r2.Method = http.MethodGet
 			s.ServeHTTP(w, r2)
 			return
+		}
+		if corsPaths[path] { // tower-http's CorsLayer in front of the machine endpoints: any origin
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			if r.Method == http.MethodOptions {
+				w.Header().Set("Access-Control-Allow-Methods", "GET,POST")
+				w.Header().Set("Access-Control-Allow-Headers", "content-type,authorization")
+				w.Header().Set("Allow", allow)
+				w.WriteHeader(http.StatusOK)
+				return
+			}
 		}
 		methodNotAllowed(w, allow)
 		return
@@ -223,7 +236,7 @@ func (s *Server) runCommand(w http.ResponseWriter, r *http.Request) {
 		if !s.Registry.Has(name) {
 			err = command.ErrNotFound("command " + name)
 		} else {
-			input = serdecheck.NormalizeUUIDs(s.schemaOf(name), input)
+			input = serdecheck.NormalizeUUIDs(s.schemaOf(name), serdecheck.EmptySequence(name, input))
 			out, err = s.Registry.Execute(r.Context(), s.Pool, name, input, p, opts)
 		}
 	}

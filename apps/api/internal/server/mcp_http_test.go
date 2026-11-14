@@ -214,22 +214,17 @@ func TestMCPOutboundCommandsNeedHumanApprovalInCNote(t *testing.T) {
 	eq(t, again["isError"], true) // approval is single use
 }
 
-// Elicitation (2026-07-28 request metadata) is Rust's protocol corner: Go hands it over, the answer must be Rust's.
-func TestMCPElicitationRequestsAreServedByRust(t *testing.T) {
+// The 2026-07-28 request-metadata lifecycle (elicitation round trips) is not served by Go: the answer says so instead
+// of pretending, and the legacy confirmation flow (human approves in the app) is what clients get.
+func TestMCPRequestMetadataLifecycleIsRefusedClearly(t *testing.T) {
 	m := newMCPEnv(t)
-	m.must(m.owner, "workspace.update", map[string]any{"settings": map[string]any{"agent_tool_groups": []string{"read", "manage_invoices"}}})
 	key := m.agent("mailer", "read", "manage_invoices")
-	meta := map[string]any{"io.modelcontextprotocol/protocolVersion": "2026-07-28", "io.modelcontextprotocol/clientInfo": map[string]any{"name": "t", "version": "1"},
-		"io.modelcontextprotocol/clientCapabilities": map[string]any{"elicitation": map[string]any{}}}
+	meta := map[string]any{"io.modelcontextprotocol/protocolVersion": "2026-07-28"}
 	st, _, b := m.send(m.gosv.URL, mcpReq{key: key, body: rpc(1, "tools/call", map[string]any{"name": "invoke", "_meta": meta,
-		"arguments": map[string]any{"command": "invoice.issue", "arguments": map[string]any{"id": m.owner.ws}}}),
+		"arguments": map[string]any{"command": "space.list"}}),
 		headers: map[string]string{"MCP-Protocol-Version": "2026-07-28", "Mcp-Method": "tools/call", "Mcp-Name": "invoke"}})
-	var out map[string]any
-	_ = json.Unmarshal(b, &out)
-	res, _ := out["result"].(map[string]any)
-	eq(t, st, 200)
-	eq(t, res["resultType"], "input_required")
-	if s, _ := res["requestState"].(string); !strings.HasPrefix(s, "confirmation:") {
+	eq(t, st, 400)
+	if !strings.Contains(string(b), "2026-07-28 request-metadata lifecycle is not supported") {
 		t.Fatalf("%s", b)
 	}
 }

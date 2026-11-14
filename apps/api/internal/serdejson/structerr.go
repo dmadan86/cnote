@@ -66,23 +66,34 @@ func StructError(data []byte, spec Spec) (int, string) {
 			return syntax(e)
 		}
 		if c == '[' {
-			// the elements of a sequence form are not type checked here: only a short sequence is reported
-			n := 0
-			q := &parser{b: data[start:], remaining: 128}
-			q.i = 1
-			for {
-				if d, ok := q.ws(); !ok || d == ']' {
-					break
-				}
-				_ = q.value()
-				n++
-				if d, _ := q.ws(); d == ',' {
-					q.i++
-				}
-			}
 			if spec.Flatten {
 				p.i = start
 				return 422, at(fmt.Sprintf("invalid type: sequence, expected struct %s", name))
+			}
+			// positional form: element i is field i
+			q := &parser{b: data, i: start + 1, remaining: 128}
+			n := 0
+			for {
+				d, ok := q.ws()
+				if !ok || d == ']' {
+					break
+				}
+				if d == ',' {
+					q.i++
+					q.ws()
+				}
+				es := q.i
+				_ = q.value()
+				if n < len(fields) {
+					if msg := checkKind(data, es, q, fields[n], fmt.Sprintf("[%d]", n)); msg != "" {
+						p.i = q.i
+						return 422, at(msg)
+					}
+				}
+				n++
+			}
+			if n > len(fields) {
+				return 422, at(fmt.Sprintf("invalid length %d, expected fewer elements in array", n))
 			}
 			for _, f := range fields[min(n, len(fields)):] {
 				if !f.Default { // a missing positional element of a field without #[serde(default)]

@@ -329,10 +329,14 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if vs := r.Header.Values("MCP-Protocol-Version"); len(vs) > 1 || (len(vs) == 1 && !slices.Contains(legacyVersions, vs[0])) {
-		unsupportedVersion(w)
+		versionHeader(w, r, m.id, vs)
 		return
 	} else if len(vs) == 1 && m.method == "initialize" && vs[0] != m.initVersion {
-		unsupportedVersion(w)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		b, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": json.RawMessage(m.id), "error": map[string]any{"code": -32600,
+			"message": "Invalid Request: MCP-Protocol-Version header (" + vs[0] + ") does not match initialize params.protocolVersion (" + m.initVersion + ")"}})
+		_, _ = w.Write(b)
 		return
 	}
 	if m.notification {
@@ -397,6 +401,9 @@ func parseMessage(b []byte) (m message, ok bool) {
 	case "tools/list", "resources/list", "resources/templates/list", "prompts/list":
 		for k, v := range m.params {
 			var c string
+			if k == "_meta" {
+				continue
+			}
 			if k != "cursor" || !isString(v) || json.Unmarshal(v, &c) != nil {
 				return m, false
 			}
@@ -418,6 +425,11 @@ func parseMessage(b []byte) (m message, ok bool) {
 					return m, false
 				}
 			case "_meta":
+			case "requestState":
+				var rs string
+				if !isString(v) || json.Unmarshal(v, &rs) != nil {
+					return m, false
+				}
 			default:
 				return m, false
 			}
@@ -537,6 +549,15 @@ func (s *Server) dispatch(w http.ResponseWriter, r *http.Request, p command.Prin
 func (s *Server) callTool(w http.ResponseWriter, r *http.Request, p command.Principal, m message) {
 	var name string
 	_ = json.Unmarshal(m.params["name"], &name)
+	// the retry of an elicitation round trip: the command already ran once and created the confirmation
+	var state string
+	if json.Unmarshal(m.params["requestState"], &state) == nil {
+		if id := parseUUID(strings.TrimPrefix(state, "confirmation:")); id != nil && strings.HasPrefix(state, "confirmation:") {
+			out, _ := command.Marshal(map[string]any{"confirmation_required": true, "confirmation_id": *id})
+			respond(w, m.id, shape(out))
+			return
+		}
+	}
 	args := map[string]json.RawMessage{}
 	if raw, has := m.params["arguments"]; has {
 		var a map[string]json.RawMessage
@@ -633,7 +654,7 @@ func (s *Server) exec(w http.ResponseWriter, r *http.Request, p command.Principa
 		}
 		args, _ = command.Marshal(obj)
 	}
-	args = serdecheck.NormalizeUUIDs(InputSchema(s.Registry, name), args)
+	args = serdecheck.NormalizeUUIDs(InputSchema(s.Registry, name), serdecheck.EmptySequence(name, args))
 	out, err := s.Registry.Execute(r.Context(), s.Pool, name, args, p, command.ExecOptions{IdempotencyKey: idem, ConfirmationID: confirm})
 	var ce *command.Error
 	switch {
@@ -728,6 +749,24 @@ func isObjectRaw(b json.RawMessage) bool { return len(b) > 0 && b[0] == '{' }
 func unsupportedVersion(w http.ResponseWriter) {
 	w.Header().Set("Connection", "close")
 	w.WriteHeader(http.StatusBadRequest)
+}
+
+// versionHeader answers a request whose MCP-Protocol-Version is not one of the legacy lifecycles: an unknown value
+// is refused like rmcp does; 2026-07-28 (request-metadata lifecycle, elicitation round trips) is not served here.
+func versionHeader(w http.ResponseWriter, r *http.Request, id json.RawMessage, vs []string) {
+	v := strings.Join(vs, ", ")
+	if len(vs) == 1 && vs[0] == "2026-07-28" {
+		code, msg := -32020, "missing required Mcp-Method header"
+		if r.Header.Get("Mcp-Method") != "" {
+			code, msg = -32600, "the 2026-07-28 request-metadata lifecycle is not supported; use MCP-Protocol-Version 2025-11-25"
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		b, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": json.RawMessage(id), "error": map[string]any{"code": code, "message": msg}})
+		_, _ = w.Write(b)
+		return
+	}
+	text(w, http.StatusBadRequest, "Bad Request: Unsupported MCP-Protocol-Version: "+v)
 }
 
 // decline answers what the fast path does not recognize, the way rmcp's streamable-HTTP server (stateless mode)
