@@ -396,3 +396,12 @@ brief forbids restarting the shared ports; HTTP tests run Go in-process with `ht
 Final race-suite result: 55 top-level tests / 357 including subtests passed, zero failures;
 4 packages passed and 9 had no tests. Marketplace's differential caller/input matrix compared
 240 response pairs, in addition to positive lifecycle reads and twin-fixture mutations.
+
+## Go-only commands: quotations
+
+`quote.create_draft`, `quote.update_draft`, `quote.get`, `quote.list`, `quote.send`, `quote.accept`,
+`quote.reject`, `quote.convert_to_invoice` and `quote.convert_to_project` (`internal/modules/quotes`, migration
+`0950_quotations.sql`) exist only in Go. Rust has no handler for them, so there is nothing to fall back to: bad
+input returns an `invalid` error from Go rather than `ErrFallback`. The Rust MCP endpoint (`/mcp`) does not list
+them yet, so MCP clients cannot call them until the tool list is generated from the Go registry. Quotations never
+post to the ledger; their numbers (`QT/<FY>/<n>`) come from their own `quote:<FY>` series in `billing.sequences`.
