@@ -176,7 +176,28 @@ var mcpMeta = map[string]meta{
 	"data.export_subject":    {"Export one data subject's own records (a contact, or a workspace member) as JSON. Needs human confirmation for agents.", schema(nil, props{"contact_id": id, "user_id": id})},
 	"data.request_list":      {"List data export and erase requests with their outcome.", schema(nil, props{})},
 	"data.erase_subject":     {"Anonymise a contact (DPDP erasure) while keeping statutory finance records. People only; refused while unpaid documents exist unless confirm_unpaid is set.", schema([]string{"contact_id", "reason"}, props{"contact_id": id, "reason": str, "confirm_unpaid": flag})},
-	"contact.lifecycle":      {"Everything about one contact in one read: deals, quotes, invoices and more.", idOnly},
+	"attendance.check_in":    {"Mark yourself present for today (IST) and record the check-in time. People only: an agent or API key cannot mark presence. Repeating it keeps the first time.", schema(nil, props{})},
+	"attendance.check_out":   {"Record your check-out time for today. People only.", schema(nil, props{})},
+	"attendance.mark": {"Admin: mark someone's attendance for a day in this or the previous month (present, half_day, absent, week_off, holiday). Approved leave days cannot be overwritten.", schema([]string{"employee_id", "day", "status"}, props{
+		"employee_id": id, "day": date, "status": props{"type": "string", "enum": []string{"present", "half_day", "absent", "week_off", "holiday"}}, "note": str})},
+	"attendance.today":    {"Today's board (IST): present, on leave, absent, not marked and expected counts, with people. Admins see everyone; others see themselves and their direct reports.", schema(nil, props{})},
+	"attendance.register": {"Admin: the monthly attendance register as a grid and a CSV for payroll or the CA. Personal data: needs human confirmation for agents.", schema([]string{"month"}, props{"month": props{"type": "string", "description": "YYYY-MM"}})},
+	"leave.request": {"Request leave. Working days exclude the employee's weekly offs and holidays; the balance of the leave type must cover it and dates cannot overlap another pending or approved request. Admins may pass employee_id for someone else.", schema([]string{"leave_type_id", "from_day"}, props{
+		"leave_type_id": id, "from_day": date, "to_day": date, "half_day": flag, "reason": str, "employee_id": id})},
+	"leave.decide": {"Approve or reject a pending leave request as the employee's manager or an admin (not your own unless owner). Approval writes leave days into attendance. Rejecting needs a reason. People only.", schema([]string{"id", "decision"}, props{
+		"id": id, "decision": props{"type": "string", "enum": []string{"approve", "reject"}}, "reason": str})},
+	"leave.cancel":      {"Cancel a pending or approved leave request (yours, or any as admin); approved leave days leave the attendance sheet.", idOnly},
+	"leave.balance":     {"Leave balance per type for a year: quota, approved, pending, remaining (null remaining = no limit). Yourself by default; a manager or admin can pass employee_id.", schema(nil, props{"employee_id": id, "year": num})},
+	"leave.list":        {"List leave requests you may see (yours, your reports', everyone's for admins), newest first, with can_decide and can_cancel.", schema(nil, props{"status": props{"type": "string", "enum": []string{"pending", "approved", "rejected", "cancelled"}}, "employee_id": id})},
+	"leave_type.list":   {"List leave types with yearly quota (null = no limit). Defaults are seeded once and are not legal advice: check the state's Shops and Establishments rules.", schema(nil, props{})},
+	"leave_type.set":    {"Admin: create (no id) or update a leave type: name, yearly_quota (null = no limit), paid, active.", schema(nil, props{"id": id, "name": str, "yearly_quota": props{"type": []string{"number", "null"}}, "paid": flag, "active": flag})},
+	"holiday.list":      {"Holidays of a year. The three national holidays (26 Jan, 15 Aug, 2 Oct) are seeded; the owner adds the rest.", schema(nil, props{"year": num})},
+	"holiday.set":       {"Admin: add a holiday or rename the one on that day (kind festival or company).", schema([]string{"day", "name"}, props{"day": date, "name": str, "kind": props{"type": "string", "enum": []string{"festival", "company"}}})},
+	"holiday.delete":    {"Admin: remove a holiday.", idOnly},
+	"employee.list":     {"Admin: employees (members get one automatically; offline employees have no login) with code, weekly off days and active flag.", schema(nil, props{})},
+	"employee.create":   {"Admin: add an offline employee without a login so their attendance and leave can be tracked.", schema([]string{"name"}, props{"name": str, "code": str, "weekly_off": props{"type": "array", "items": num, "description": "0 = Sunday .. 6 = Saturday; default [0]"}})},
+	"employee.update":   {"Admin: change an employee's code, weekly off days or active flag (name only for offline employees).", schema([]string{"id"}, props{"id": id, "name": str, "code": str, "weekly_off": props{"type": "array", "items": num}, "active": flag})},
+	"contact.lifecycle": {"Everything about one contact in one read: deals, quotes, invoices and more.", idOnly},
 }
 
 // withMeta attaches MCP metadata; a command Rust also has keeps none.

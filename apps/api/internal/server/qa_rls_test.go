@@ -130,7 +130,7 @@ func TestQARLSSweep(t *testing.T) {
 		}
 		var owned int
 		if err := e.pool.QueryRow(ctx, `select count(*) from pg_class c join pg_namespace n on n.oid=c.relnamespace
-			where c.relowner = (select oid from pg_roles where rolname = current_user) and n.nspname in ('core','crm','billing','docs','projects','ai','importers')`).Scan(&owned); err != nil {
+			where c.relowner = (select oid from pg_roles where rolname = current_user) and n.nspname in ('core','crm','billing','docs','projects','ai','importers','hr')`).Scan(&owned); err != nil {
 			t.Fatal(err)
 		}
 		if owned != 0 {

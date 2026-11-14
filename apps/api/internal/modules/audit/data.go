@@ -142,6 +142,11 @@ func exportSubject(c *command.Ctx, raw json.RawMessage) (any, error) {
 		put("comments", `select id, note_id, body, created_at from core.comments where author_id = $1::uuid order by created_at`, user)
 		put("activities", `select id, note_id, kind, summary, happened_at from crm.activities where created_by = $1::uuid order by happened_at`, user)
 		put("events", `select id, kind, note_id, created_at from core.events where actor_type = 'user' and actor_id = $1 order by id`, user)
+		// attendance and leave (WP10): the member's own employee record, daily attendance and leave requests
+		put("employee", `select e.id, e.name, e.code, e.weekly_off, e.active, e.created_at from hr.employees e where e.user_id = $1::uuid`, user)
+		put("attendance", `select a.day, a.status, a.in_at, a.out_at, a.note, a.marked_by from hr.attendance a join hr.employees e on e.id = a.employee_id where e.user_id = $1::uuid order by a.day`, user)
+		put("leave_requests", `select r.id, t.name as leave_type, r.from_day, r.to_day, r.days, r.half_day, r.status, r.reason, r.decided_by, r.decided_at, r.decision_note, r.created_at
+			from hr.leave_requests r join hr.employees e on e.id = r.employee_id join hr.leave_types t on t.id = r.leave_type_id where e.user_id = $1::uuid order by r.from_day`, user)
 	}
 	if err != nil {
 		return nil, err
