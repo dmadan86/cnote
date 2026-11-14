@@ -211,6 +211,10 @@ var mcpMeta = map[string]meta{
 	"employee.list":     {"Admin: employees (members get one automatically; offline employees have no login) with code, weekly off days and active flag.", schema(nil, props{})},
 	"employee.create":   {"Admin: add an offline employee without a login so their attendance and leave can be tracked.", schema([]string{"name"}, props{"name": str, "code": str, "weekly_off": props{"type": "array", "items": num, "description": "0 = Sunday .. 6 = Saturday; default [0]"}})},
 	"employee.update":   {"Admin: change an employee's code, weekly off days or active flag (name only for offline employees).", schema([]string{"id"}, props{"id": id, "name": str, "code": str, "weekly_off": props{"type": "array", "items": num}, "active": flag})},
+	"file.upload":       {"Attach a file (image or PDF, at most 10 MB, judged from its bytes) to a page, e.g. a receipt photo on an expense claim. A claim takes files only while draft or rejected; finance pages need finance access.", schema([]string{"note_id", "filename", "data_base64"}, props{"note_id": id, "filename": str, "data_base64": props{"type": "string", "description": "File bytes, base64"}})},
+	"file.list":         {"List the files attached to a page.", schema([]string{"note_id"}, props{"note_id": id})},
+	"file.download":     {"Read one attached file as base64.", idOnly},
+	"file.delete":       {"Remove an attached file (same rules as uploading).", idOnly},
 	"contact.lifecycle": {"Everything about one contact in one read: deals, quotes, invoices and more.", idOnly},
 }
 

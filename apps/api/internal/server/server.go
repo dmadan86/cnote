@@ -55,6 +55,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.inquiry(w, r)
 	case strings.HasPrefix(r.URL.Path, "/api/public/"):
 		s.Public.ServeHTTP(w, r)
+	case strings.HasPrefix(r.URL.EscapedPath(), "/api/w/") && isFileRoute(r):
+		ws, id, _ := fileRoute(r)
+		s.files(w, r, ws, id)
 	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.EscapedPath(), "/api/w/"):
 		s.runCommand(w, r)
 	case r.Method == http.MethodPost && r.URL.Path == "/mcp":

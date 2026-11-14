@@ -282,12 +282,20 @@ func (h *Handler) decide(w http.ResponseWriter, r *http.Request, token string) p
 		slog.Warn("public decision refused", "command", cmd, "error", err)
 		return errNotFound // e.g. the creator lost access to the page
 	}
+	mails, err := notifyDecision(ctx, tx, l, want, in.Name)
+	if err != nil {
+		slog.Error("quote decision notify", "error", err)
+		return perr{500, "internal", "internal error"}
+	}
 	d, err := loadPublic(ctx, tx, l)
 	if err != nil {
 		return perr{500, "internal", "internal error"}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return perr{500, "internal", "internal error"}
+	}
+	for _, m := range mails { // after commit: a mail failure never undoes the customer's decision
+		sendDecisionMail(m, l.ws)
 	}
 	write(w, 200, d)
 	return perr{}
