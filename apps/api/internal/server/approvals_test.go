@@ -123,6 +123,7 @@ func TestApprovalNamedApproverAndEditedDraftExpires(t *testing.T) {
 	asha := b.addMember(b.owner, b.signup("Asha", false), "member")
 	mia := b.addMember(b.owner, b.signup("Mia", false), "member")
 	otto := b.addMember(b.owner, b.signup("Otto", false), "member")
+	ada := b.addMember(b.owner, b.signup("Ada", false), "admin")
 	b.rule(map[string]any{"min_amount_minor": 1, "approver_user_id": asha.userID})
 
 	q := b.quote(b.contact, "")
@@ -130,6 +131,9 @@ func TestApprovalNamedApproverAndEditedDraftExpires(t *testing.T) {
 	eq(t, b.notifs(asha)[0][:18], "approval_requested")
 	eq(t, len(b.notifs(otto)), 0)
 	b.errAs(otto, "approval.decide", map[string]any{"id": id, "decision": "approve"}, 403, "forbidden")
+	b.errAs(ada, "approval.decide", map[string]any{"id": id, "decision": "approve"}, 403, "forbidden") // admins wait for escalation
+	b.errIs("approval.decide", map[string]any{"id": id, "decision": "approve"}, 403, "forbidden")
+	eq(t, b.approvals(ada, map[string]any{"mine": false})[0]["can_decide"], false)
 	eq(t, b.approvals(asha, map[string]any{"mine": false})[0]["can_decide"], true)
 	eq(t, b.okAs(asha, "approval.decide", map[string]any{"id": id, "decision": "approve"})["status"], "approved") // approver needs no page access
 

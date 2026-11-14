@@ -2,13 +2,16 @@
 // an expense, a scan on a bill). Go-only. Uploads and downloads travel as base64 in the command envelope so every gate
 // (role, scopes, agent groups, rate limit) applies; the HTTP endpoints in the server wrap them for raw bytes.
 //
-// shortcut: bytes live in Postgres (bytea, 10 MB cap, whole file in memory); move to object storage when hosting is decided.
+// Bytes live in Postgres (bytea) by default, or in an S3-compatible bucket when FILES_S3_* is set (storage_key 's3',
+// object key <workspace>/<id>). shortcut: 10 MB cap, whole file in memory, and an object deleted inside a command that
+// later rolls back is lost; move to streaming and a post-commit delete queue if that matters.
 package files
 
 import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"path"
 	"regexp"
@@ -169,7 +172,7 @@ func upload(c *command.Ctx, input json.RawMessage) (any, error) {
 		return nil, err
 	}
 	var n int
-	if err := c.Tx.QueryRow(c.Context, "select count(*) from core.attachments where note_id = $1::uuid and data is not null", v.NoteID).Scan(&n); err != nil {
+	if err := c.Tx.QueryRow(c.Context, "select count(*) from core.attachments where note_id = $1::uuid and (data is not null or storage_key = 's3')", v.NoteID).Scan(&n); err != nil {
 		return nil, command.DB(err)
 	}
 	if n >= maxPerNote {
@@ -177,16 +180,25 @@ func upload(c *command.Ctx, input json.RawMessage) (any, error) {
 	}
 	var m meta
 	var created time.Time
+	key, stored := "pg", data
+	if store != nil {
+		key, stored = "s3", nil
+	}
 	err = c.Tx.QueryRow(c.Context,
 		`insert into core.attachments (workspace_id, note_id, filename, content_type, size_bytes, storage_key, data, created_by)
-		 values ($1::uuid,$2::uuid,$3,$4,$5,'pg',$6,$7::uuid)
+		 values ($1::uuid,$2::uuid,$3,$4,$5,$8,$6,$7::uuid)
 		 returning id::text, note_id::text, filename, content_type, size_bytes, created_at`,
-		c.WorkspaceID(), v.NoteID, cleanName(v.Filename), ct, len(data), data, c.Principal.UserID).
+		c.WorkspaceID(), v.NoteID, cleanName(v.Filename), ct, len(data), stored, c.Principal.UserID, key).
 		Scan(&m.ID, &m.NoteID, &m.Filename, &m.ContentType, &m.SizeBytes, &created)
 	if err != nil {
 		return nil, command.DB(err)
 	}
 	m.CreatedAt = command.Ts(created)
+	if store != nil {
+		if err := store.Put(c.Context, c.WorkspaceID()+"/"+m.ID, data); err != nil {
+			return nil, fmt.Errorf("file storage: %w", err)
+		}
+	}
 	if _, err := c.Emit("file.uploaded", &v.NoteID, map[string]any{"file_id": m.ID, "size_bytes": m.SizeBytes, "content_type": ct}); err != nil {
 		return nil, err
 	}
@@ -203,7 +215,7 @@ func list(c *command.Ctx, input json.RawMessage) (any, error) {
 	}
 	rows, err := c.Tx.Query(c.Context,
 		`select id::text, note_id::text, filename, content_type, size_bytes, created_at from core.attachments
-		 where note_id = $1::uuid and data is not null order by created_at, id`, v.NoteID)
+		 where note_id = $1::uuid and (data is not null or storage_key = 's3') order by created_at, id`, v.NoteID)
 	if err != nil {
 		return nil, command.DB(err)
 	}
@@ -223,7 +235,7 @@ func list(c *command.Ctx, input json.RawMessage) (any, error) {
 
 func noteOf(c *command.Ctx, id string) (string, error) {
 	var note string
-	err := c.Tx.QueryRow(c.Context, "select note_id::text from core.attachments where id = $1::uuid and data is not null", id).Scan(&note)
+	err := c.Tx.QueryRow(c.Context, "select note_id::text from core.attachments where id = $1::uuid and (data is not null or storage_key = 's3')", id).Scan(&note)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", command.ErrNotFound("file")
 	}
@@ -245,10 +257,18 @@ func download(c *command.Ctx, input json.RawMessage) (any, error) {
 		}
 		return nil, err
 	}
-	var name, ct string
+	var name, ct, key string
 	var data []byte
-	if err := c.Tx.QueryRow(c.Context, "select filename, content_type, data from core.attachments where id = $1::uuid", v.ID).Scan(&name, &ct, &data); err != nil {
+	if err := c.Tx.QueryRow(c.Context, "select filename, content_type, storage_key, data from core.attachments where id = $1::uuid", v.ID).Scan(&name, &ct, &key, &data); err != nil {
 		return nil, command.DB(err)
+	}
+	if key == "s3" {
+		if store == nil {
+			return nil, fmt.Errorf("file is in object storage but FILES_S3_* is not configured")
+		}
+		if data, err = store.Get(c.Context, c.WorkspaceID()+"/"+v.ID); err != nil {
+			return nil, fmt.Errorf("file storage: %w", err)
+		}
 	}
 	return map[string]any{"id": v.ID, "filename": name, "content_type": ct, "data_base64": base64.StdEncoding.EncodeToString(data)}, nil
 }
@@ -265,8 +285,17 @@ func remove(c *command.Ctx, input json.RawMessage) (any, error) {
 	if err := guard(c, note, true); err != nil {
 		return nil, err
 	}
-	if _, err := c.Tx.Exec(c.Context, "delete from core.attachments where id = $1::uuid", v.ID); err != nil {
+	var key string
+	if err := c.Tx.QueryRow(c.Context, "delete from core.attachments where id = $1::uuid returning storage_key", v.ID).Scan(&key); err != nil {
 		return nil, command.DB(err)
+	}
+	if key == "s3" {
+		if store == nil {
+			return nil, fmt.Errorf("file is in object storage but FILES_S3_* is not configured")
+		}
+		if err := store.Delete(c.Context, c.WorkspaceID()+"/"+v.ID); err != nil {
+			return nil, fmt.Errorf("file storage: %w", err)
+		}
 	}
 	if _, err := c.Emit("file.deleted", &note, map[string]any{"file_id": v.ID}); err != nil {
 		return nil, err
