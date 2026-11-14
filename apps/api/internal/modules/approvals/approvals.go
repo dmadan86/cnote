@@ -36,9 +36,9 @@ func amountFor(name string, check bool) command.AmountFunc {
 	case "bill.record":
 		return totalOf("billing.purchase_bills", check)
 	case "bill.pay":
-		return paymentOf("billing.purchase_bills", "total_minor - paid_minor", check)
+		return paymentOf("billing.purchase_bills", check)
 	case "invoice.write_off":
-		return paymentOf("billing.invoices", "total_minor - paid_minor - credited_minor - written_off_minor", check)
+		return paymentOf("billing.invoices", check)
 	}
 	return nil
 }
@@ -83,8 +83,9 @@ func totalOf(table string, check bool) command.AmountFunc {
 	}
 }
 
-// paymentOf: the amount_minor in the input, or the outstanding expression when the input has none.
-func paymentOf(table, outstanding string, check bool) command.AmountFunc {
+// paymentOf gates a payment or write-off on the document's total, not on the part asked for in this call:
+// otherwise splitting a large bill into small payments would slip under the rule's threshold.
+func paymentOf(table string, check bool) command.AmountFunc {
 	return func(c *command.Ctx, input json.RawMessage) (string, int64, error) {
 		id, m, err := idOf(input, "id")
 		if err != nil {
@@ -95,17 +96,17 @@ func paymentOf(table, outstanding string, check bool) command.AmountFunc {
 				return "", 0, err
 			}
 		}
-		var amount int64
 		if raw, ok := m["amount_minor"]; ok && string(raw) != "null" {
+			var amount int64
 			if json.Unmarshal(raw, &amount) != nil || amount < 0 {
 				return "", 0, command.ErrInvalid("amount_minor must be a positive integer")
 			}
-			return id, amount, nil
 		}
-		if err := c.Tx.QueryRow(c.Context, "select "+outstanding+" from "+table+" where note_id = $1::uuid", id).Scan(&amount); err != nil {
+		var total int64
+		if err := c.Tx.QueryRow(c.Context, "select total_minor from "+table+" where note_id = $1::uuid", id).Scan(&total); err != nil {
 			return "", 0, command.DB(err)
 		}
-		return id, amount, nil
+		return id, total, nil
 	}
 }
 

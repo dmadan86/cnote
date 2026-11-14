@@ -165,11 +165,18 @@ func TestApprovalRuleValidationAndOtherCommands(t *testing.T) {
 	q := b.quote(b.contact, "")
 	eq(t, b.okAs(member, "quote.send", map[string]any{"id": q})["status"], "sent") // disabled rule holds nothing
 
-	// bill.pay: the amount in the request decides, and the replay pays exactly that
+	// bill.pay: the rule looks at the bill's total, so paying a large bill in small parts can't slip under it;
+	// the replay pays exactly the amount asked for
 	b.rule(map[string]any{"command": "bill.pay", "min_amount_minor": 20_000})
 	bill := b.bill(b.vendor("29", "Vendor"), "V-1")
 	b.okAs(member, "bill.record", map[string]any{"id": bill})
-	eq(t, b.okAs(member, "bill.pay", map[string]any{"id": bill, "amount_minor": 19_999})["status"], "partly_paid")
+	if total := n(b.bq("bill.get", bill)["total_minor"]); total < 40_000 {
+		t.Fatalf("fixture bill total %d too small for this test", total)
+	}
+	small := b.okAs(member, "bill.pay", map[string]any{"id": bill, "amount_minor": 19_999})
+	eq(t, small["approval_required"], true)
+	b.ok("approval.decide", map[string]any{"id": small["confirmation_id"], "decision": "approve"})
+	eq(t, n(b.bq("bill.get", bill)["paid_minor"]), int64(19_999))
 	// bill.pay is also a Confirm command: a human member is held by the rule, not by the agent gate
 	h := b.okAs(member, "bill.pay", map[string]any{"id": bill, "amount_minor": 20_000})
 	eq(t, h["approval_required"], true)
