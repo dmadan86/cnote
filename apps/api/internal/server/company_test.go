@@ -239,6 +239,14 @@ func TestFinanceAccessFlag(t *testing.T) {
 	noTile(t, b.home(m), "payments_pending", "bills_due")
 	tile(t, b.home(b.owner), "payments_pending")
 	tile(t, b.home(a), "payments_pending")
+	// nor can they publish an invoice through a public link
+	b.issue(inv)
+	if r := b.call(m, "share.create", map[string]any{"note_id": inv}); r.status != 403 || !strings.Contains(string(r.body), "finance access") {
+		t.Errorf("share.create of an invoice without finance access: %d %s", r.status, r.body)
+	}
+	if r := b.call(mk, "share.create", map[string]any{"note_id": inv}); r.status != 403 {
+		t.Errorf("share.create of an invoice by their key: %d %s", r.status, r.body)
+	}
 	// switching it back restores access
 	b.ok("member.update", map[string]any{"user_id": m.userID, "finance_access": true})
 	eq(t, b.okAs(m, "invoice.get", map[string]any{"id": inv})["id"], inv)

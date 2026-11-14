@@ -45,13 +45,17 @@ func (c *Ctx) WorkspaceID() string { return c.Principal.WorkspaceID }
 // FinanceAllowed is false for a non-admin person (or their keys and agents) whose finance_access flag is off.
 func (c *Ctx) FinanceAllowed() (bool, error) {
 	p := c.Principal
-	if p.Role >= Admin || p.UserID == nil {
+	if p.Kind == KindSystem || p.Role >= Admin {
 		return true, nil
 	}
-	ok := true
-	err := c.Tx.QueryRow(c.Context, "select finance_access from core.memberships where user_id = $1::uuid", *p.UserID).Scan(&ok)
+	if p.UserID == nil { // a key or agent with no person behind it never sees money
+		return false, nil
+	}
+	var ok bool
+	err := c.Tx.QueryRow(c.Context, "select finance_access from core.memberships where workspace_id = $1::uuid and user_id = $2::uuid",
+		p.WorkspaceID, *p.UserID).Scan(&ok)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return true, nil
+		return false, nil
 	}
 	return ok, DB(err)
 }

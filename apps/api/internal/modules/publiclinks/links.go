@@ -122,6 +122,13 @@ func loadDoc(c *command.Ctx, noteID string) (doc, error) {
 	if d.status == "draft" || d.status == "cancelled" {
 		return d, command.ErrConflict(fmt.Sprintf("a %s %s cannot be shared", d.status, d.kind))
 	}
+	if d.kind != "quotation" { // invoices and receipts are finance data: no public link around finance_access
+		if ok, err := c.FinanceAllowed(); err != nil {
+			return d, err
+		} else if !ok {
+			return d, command.ErrForbidden("finance access is off for you in this workspace")
+		}
+	}
 	d.purpose = "view"
 	if d.kind == "quotation" {
 		d.purpose = "quote_accept"
