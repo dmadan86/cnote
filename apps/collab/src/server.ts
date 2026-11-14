@@ -7,7 +7,7 @@ import { EventEmitter } from 'node:events'
 import http from 'node:http'
 import * as decoding from 'lib0/decoding'
 import * as encoding from 'lib0/encoding'
-import type pg from 'pg'
+import pg from 'pg'
 import { WebSocket, WebSocketServer } from 'ws'
 import * as Y from 'yjs'
 import { mayWrite } from './access.ts'
@@ -48,6 +48,8 @@ interface Room {
   /** Fires 'stale' when the room is fenced out (restored elsewhere): every connection then closes. */
   events: EventEmitter
   retired: boolean
+  /** The note's advisory lock has been released (or handed back); set once. */
+  unlocked: boolean
   /** Serialises persists so an older snapshot never overwrites a newer one. */
   persisting: Promise<unknown>
 }
@@ -91,9 +93,54 @@ export function createServer(opts: Options) {
   const rooms = new Map<string, Room>()
   const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_FRAME })
 
+  // Single-writer fence across service instances: the room owner holds a session advisory lock per note on one
+  // dedicated connection. A second instance cannot open the note (409) until the first drops it or dies.
+  let lockConn: pg.Client | null = null
+  let lockPending: Promise<pg.Client> | null = null
+  function locker(): Promise<pg.Client> {
+    if (lockConn) return Promise.resolve(lockConn)
+    lockPending ??= (async () => {
+      const c = new pg.Client(pool.options)
+      const lost = () => {
+        if (lockConn !== c) return
+        lockConn = null // every lock died with the session: fence all our rooms out
+        for (const r of [...rooms.values()]) {
+          r.unlocked = true
+          retire(r)
+        }
+      }
+      c.on('error', lost)
+      c.on('end', lost)
+      try {
+        await c.connect()
+      } finally {
+        lockPending = null
+      }
+      lockConn = c
+      return c
+    })()
+    return lockPending
+  }
+  const lockSql = (fn: 'lock' | 'unlock') =>
+    `select pg_${fn === 'lock' ? 'try_' : ''}advisory_${fn}(hashtextextended('cnote-collab:' || $1, 0)) as ok`
+  let lockQ: Promise<unknown> = Promise.resolve() // pg clients must not run queries concurrently
+  function lockQuery(fn: 'lock' | 'unlock', note: string): Promise<boolean> {
+    const run = async () => (await (await locker()).query(lockSql(fn), [note])).rows[0].ok as boolean
+    const r = lockQ.then(run, run)
+    lockQ = r.catch(() => {})
+    return r
+  }
+  const lockNote = (note: string) => lockQuery('lock', note)
+  function unlockNote(room: Room) {
+    if (room.unlocked) return
+    room.unlocked = true
+    void lockQuery('unlock', room.note).catch(() => {})
+  }
+
   /** Fence a room out: drop it from the map (if still there) and close all of its connections. */
   function retire(room: Room) {
     if (rooms.get(room.key) === room) rooms.delete(room.key)
+    unlockNote(room)
     room.retired = true
     room.events.emit('stale')
   }
@@ -104,18 +151,24 @@ export function createServer(opts: Options) {
 
   /** Access check plus room lookup/creation. Returns the room and whether this caller may edit. */
   async function prepare(p: Principal, ws: string, note: string): Promise<{ room: Room; write: boolean }> {
-    const r = await tenant(pool, ws, async (tx) => {
+    const key = `${ws}/${note}`
+    const a = await tenant(pool, ws, async (tx) => {
       const write = await mayWrite(tx, p, note)
       const e = await tx.query('select collab_epoch from core.notes where id = $1', [note])
-      const epoch = e.rows[0].collab_epoch as number
-      const open = rooms.get(`${ws}/${note}`)
-      if (open && open.epoch === epoch) return { write, open, loaded: null }
-      if (open) retire(open) // restored since this room loaded
-      return { write, open: null, loaded: await loadDoc(tx, note) }
+      return { write, epoch: e.rows[0].collab_epoch as number }
     })
-    if (r.open) return { room: r.open, write: r.write }
-    const l = r.loaded!
-    const key = `${ws}/${note}`
+    const open = rooms.get(key)
+    if (open && open.epoch === a.epoch) return { room: open, write: a.write }
+    if (open) retire(open) // restored since this room loaded
+    // Own the note before reading it, so nobody else can log updates between our load and our first write.
+    if (!(await lockNote(note))) throw new CmdError('conflict', 'note is open on another collab instance')
+    let l: Awaited<ReturnType<typeof loadDoc>>
+    try {
+      l = await tenant(pool, ws, (tx) => loadDoc(tx, note))
+    } catch (e) {
+      await lockQuery('unlock', note).catch(() => {})
+      throw e
+    }
     const created: Room = {
       key,
       ws,
@@ -129,19 +182,21 @@ export function createServer(opts: Options) {
       editor: null,
       timerRunning: false,
       applied: l.ids,
-      events: new EventEmitter(),
+      events: new EventEmitter().setMaxListeners(0),
       retired: false,
+      unlocked: false,
       persisting: Promise.resolve(),
     }
     // Another connection may have created the room while this one was loading.
     const room = rooms.get(key) ?? created
+    if (room !== created) unlockNote(created)
     rooms.set(key, room)
     if (room === created && l.ids.length > 0) {
       // Updates logged before a crash: fold them into a snapshot soon.
       room.dirty = true
       kick(room)
     }
-    return { room, write: r.write }
+    return { room, write: a.write }
   }
 
   /** Sharing can change while a socket is open: a revoked user stops reading, a downgraded one stops writing. */
@@ -302,9 +357,10 @@ export function createServer(opts: Options) {
       for (const [client, clock, json] of msg.entries) peer.awareness.set(client, { clock, json })
     } else {
       if (!write) return // read-only: their edits never reach the shared doc
-      let changed = false
-      const mark = () => {
-        changed = true
+      // The doc's own emitted update, not msg.body: an out-of-order update that completes parked ones carries them too.
+      let changed: Uint8Array | null = null
+      const mark = (u: Uint8Array) => {
+        changed = u
       }
       room.doc.on('update', mark)
       try {
@@ -317,12 +373,13 @@ export function createServer(opts: Options) {
       if (!changed) return
       // Durable before anyone else sees it. If this fails the connection closes; the sender still holds
       // the edit and resends it on reconnect (sync step 2), and the in-memory doc reaches the next snapshot.
-      const id = await logUpdate(room, msg.body)
+      const delta: Uint8Array = changed
+      const id = await logUpdate(room, delta)
       room.applied.push(id)
       room.dirty = true
       room.lastEdit = Date.now()
       room.editor = p
-      sendAll(room, me, syncFrame(2, msg.body))
+      sendAll(room, me, syncFrame(2, delta))
       kick(room)
     }
   }
@@ -363,7 +420,10 @@ export function createServer(opts: Options) {
           .catch(() => {})
           .then(() => {
             // Keep the room if someone joined meanwhile or the final write failed (the timer retries).
-            if (room.peers.size === 0 && !room.dirty && rooms.get(room.key) === room) rooms.delete(room.key)
+            if (room.peers.size === 0 && !room.dirty && rooms.get(room.key) === room) {
+              rooms.delete(room.key)
+              unlockNote(room)
+            }
           })
       }
     }
@@ -448,6 +508,15 @@ export function createServer(opts: Options) {
       await Promise.allSettled([...rooms.values()].map(persist))
       server.close()
       server.closeAllConnections()
+      await lockConn?.end().catch(() => {})
+    },
+    /** Simulate a crash in-process: drop sockets and locks without flushing anything. */
+    async abandon() {
+      for (const w of wss.clients) w.terminate()
+      rooms.clear()
+      server.close()
+      server.closeAllConnections()
+      await lockConn?.end().catch(() => {})
     },
   }
 }

@@ -191,6 +191,7 @@ describe('collab gateway', () => {
     expect((await noteRow(f)).md).toBe('hello world')
 
     // "Crash": a new gateway with no rooms in memory serves the page from snapshot + log.
+    await first.abandon()
     const second = await gw(300)
     const c = new Y.Doc()
     const cc = await open(second.port, f, { cookie: f.owner.cookie })
