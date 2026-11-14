@@ -240,3 +240,30 @@ keeps them as integers matching Rust's `serde_json::json!({...})` output.
 (bad UUID, missing UUID from `notification.read`) run byte-for-byte against both servers with the
 same fixture. Mutating calls (`notification.read` mark-all and mark-by-id) use twin fixtures: one
 dedicated workspace per server so each starts from `updated=1` and responses are still byte-identical.
+
+## Module notes: project items and workflow (port/projects-items)
+
+Commands ported (`apps/api/internal/modules/projects`): `item.create/get/update/list/transition/assign/rank`,
+`triage.list/accept`, `workflow.get/update`, `space.drift/realign`, `evidence.record`. Sprints, versions, components
+and automations (`planning.rs`, `automation.rs`) are a separate port and stay proxied.
+
+- **CNQL** (`cnql.go`, `rustcompat.go`): lexer, parser and SQL compiler ported rule for rule; messages and 1-based
+  column positions are identical. Rust/chrono behaviour the language depends on is re-implemented: `str::to_lowercase`
+  (final sigma, U+0130), `char::is_alphanumeric`, `Uuid::parse_str` (simple/hyphenated/braced/urn), chrono's lenient
+  `%Y-%m-%d` style parsers (1-digit fields, leading spaces, signed years), `parse_from_rfc3339`, month arithmetic that
+  clamps the day, and sqlx's truncation of timestamps to microseconds. All Rust unit tests are Go table tests
+  (`cnql_test.go`, `workflow_test.go`); `internal/server/cnql_diff_test.go` compares ~2000 queries byte for byte.
+- **Workflow engine** (`workflow.go`): definitions are decoded with exact keys and serde's strictness; anything serde
+  would reject (and non-integer numbers in `set_field` values) falls back to Rust for the error text.
+- **Shared helpers** are exported for the planning/automation port: `LoadItem`, `TransitionItem`, `SpaceWF`,
+  `DefinitionFor`, `RankBetween`, `FilledFields`, `ParseCNQL`/`CompileCNQL`, `ItemMatches`, `MatchingItemIDs`, `Definition`.
+- **`ctx.call`**: new `command.Ctx.Call(name, input)` runs another command in the same transaction through the full gate
+  (role, scopes, rate limit, agent groups, usage), like Rust. `item.update` uses it for `note.update`, so a key scoped to
+  `write_items` only gets 403 when it changes title/description, as in Rust. `notes.InsertNote`, `notes.F64` and
+  `notes.NormValue` are the exported notes helpers.
+- Events and jobs are emitted exactly as in Rust (same kinds, payloads, actors), so the Rust worker still reacts
+  (`item.assigned_to_agent` etc.); `TestDifferentialProjectItems` compares events and the `event.dispatch` job kinds.
+- Not byte-identical by nature: item order is undefined in Rust when rank/number tie across spaces (unfiltered
+  `item.list`), and `item.get` with an `id` and a `key` of two different items returns an arbitrary one. Tests avoid both.
+- Tests: `projects_test.go` (port of the Rust item/workflow/evidence tests), `projects_diff_test.go` (twin fixtures,
+  ~1500 compared steps and rows, then raw reads), `cnql_diff_test.go` (corpus).

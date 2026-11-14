@@ -36,6 +36,7 @@ type Ctx struct {
 	Context   context.Context
 	Tx        pgx.Tx
 	Principal Principal
+	reg       *Registry // set by Execute; lets handlers call other commands (Rust ctx.call)
 }
 
 func (c *Ctx) WorkspaceID() string { return c.Principal.WorkspaceID }
@@ -88,7 +89,7 @@ func (r *Registry) Execute(ctx context.Context, pool *pgxpool.Pool, name string,
 		return nil, DB(err)
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
-	c := &Ctx{Context: ctx, Tx: tx, Principal: p}
+	c := &Ctx{Context: ctx, Tx: tx, Principal: p, reg: r}
 	out, err := r.run(c, name, input, o)
 	if err != nil {
 		return nil, err
