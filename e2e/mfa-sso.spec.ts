@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process'
 import { createHash, createHmac, createSign, generateKeyPairSync, randomBytes } from 'node:crypto'
 import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
@@ -149,10 +150,28 @@ test('SSO sign-in against a provider configured in workspace settings', async ({
     const slug: string = me.workspaces[0].slug
     await page.getByRole('link', { name: 'Settings' }).first().click()
     await page.getByRole('tab', { name: 'Security' }).click()
+    // the domain must be proven first: the TXT record is shown, and verification fails until DNS has it
+    await page.getByLabel('Domain to add').fill('e2e-sso.test')
+    await page.getByRole('button', { name: 'Add domain' }).click()
+    await expect(page.getByTestId('txt-record')).toContainText('cnote-verification=')
+    await page.getByRole('button', { name: 'Verify e2e-sso.test' }).click()
+    await expect(page.getByText(/TXT record was not found/)).toBeVisible()
+    // there is no real DNS in this test: publish the proof by marking the domain verified in the database
+    execFileSync(
+      'psql',
+      [
+        process.env.DATABASE_ADMIN_URL ?? '',
+        '-qc',
+        `update core.sso_domains set verified_at = now() where domain = 'e2e-sso.test' and workspace_id = '${me.workspaces[0].id}'`,
+      ],
+      { stdio: 'pipe' },
+    )
+    await page.reload()
+    await page.getByRole('tab', { name: 'Security' }).click()
+    await expect(page.getByText('Verified', { exact: true })).toBeVisible()
     await page.getByLabel('Issuer URL').fill(idp.base)
     await page.getByLabel('Client ID').fill(clientId)
     await page.getByLabel('Client secret').fill(secret)
-    await page.getByLabel(/Allowed email domains/).fill('e2e-sso.test')
     await page.getByLabel('Enable single sign-on').check()
     await page.getByRole('button', { name: 'Save single sign-on' }).click()
     await expect(page.getByText('Single sign-on settings saved.')).toBeVisible()

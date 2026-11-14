@@ -165,6 +165,15 @@ func (h *Handler) authorizeContext(w http.ResponseWriter, r *http.Request) {
 		apiErr(w, err)
 		return
 	}
+	if user.SSOWorkspace != "" { // an SSO session may only consent for the workspace that signed the person in
+		kept := workspaces[:0]
+		for _, x := range workspaces {
+			if x.ID == user.SSOWorkspace {
+				kept = append(kept, x)
+			}
+		}
+		workspaces = kept
+	}
 	noStore(w)
 	ws := make([]map[string]any, 0, len(workspaces)) // serde_json::Value: sorted keys
 	for _, x := range workspaces {

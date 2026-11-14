@@ -124,6 +124,17 @@ func (s *Server) mfaUser(w http.ResponseWriter, r *http.Request) (auth.SessionUs
 	return u, tok, true
 }
 
+// accountLevel is mfaUser for actions on the person's account itself (factors, new workspaces). An SSO session is
+// vouched for by one workspace's provider, so it must not change anything that outlives that workspace.
+func (s *Server) accountLevel(w http.ResponseWriter, r *http.Request) (auth.SessionUser, string, bool) {
+	u, tok, ok := s.mfaUser(w, r)
+	if ok && u.AMR == "sso" {
+		s.writeErr(w, r, command.ErrForbidden("a single sign-on session cannot change account-level settings: sign in with your password"))
+		return u, tok, false
+	}
+	return u, tok, ok
+}
+
 func (s *Server) mfaStatus(w http.ResponseWriter, r *http.Request) {
 	u, _, ok := s.mfaUser(w, r)
 	if !ok {
@@ -143,7 +154,7 @@ func (s *Server) mfaStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) mfaSetup(w http.ResponseWriter, r *http.Request) {
-	u, _, ok := s.mfaUser(w, r)
+	u, _, ok := s.accountLevel(w, r)
 	if !ok {
 		return
 	}
@@ -162,7 +173,7 @@ func (s *Server) mfaConfirm(w http.ResponseWriter, r *http.Request) {
 	if !s.strictJSON(w, r, map[string]*string{"code": &code}, nil) {
 		return
 	}
-	u, tok, ok := s.mfaUser(w, r)
+	u, tok, ok := s.accountLevel(w, r)
 	if !ok {
 		return
 	}
@@ -184,7 +195,7 @@ func (s *Server) mfaDisable(w http.ResponseWriter, r *http.Request) {
 	if !s.strictJSON(w, r, map[string]*string{"password": &pw, "code": &code}, nil) {
 		return
 	}
-	u, _, ok := s.mfaUser(w, r)
+	u, _, ok := s.accountLevel(w, r)
 	if !ok {
 		return
 	}

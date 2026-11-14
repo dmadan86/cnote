@@ -4,8 +4,11 @@ import { cmd } from '@/lib/api'
 import { useCmd } from '@/lib/hooks'
 import { btn, btnPrimary, ErrorText, Field, inputCls } from '../ui'
 
+type Domain = { domain: string; record: string; record_name: string; verified: boolean }
+
 type Policy = {
   require_mfa_admins: boolean
+  domains: Domain[]
   admins_without_mfa: { user_id: string; email: string }[]
   sso_callback_path: string
   sso_login_path: string
@@ -30,12 +33,12 @@ export function SignInSecurity({ ws }: { ws: string }) {
   if (!data) return null
   const callback = `${window.location.origin}${data.sso_callback_path}`
 
-  async function save(input: unknown, done: string) {
+  async function save(name: string, input: unknown, done: string) {
     setBusy(true)
     setError(undefined)
     setMsg(undefined)
     try {
-      await cmd(ws, 'security.update', input)
+      await cmd(ws, name, input)
       setMsg(done)
       setReplaceSecret(false)
       reload()
@@ -60,6 +63,7 @@ export function SignInSecurity({ ws }: { ws: string }) {
             disabled={busy}
             onChange={(e) =>
               save(
+                'security.update',
                 { require_mfa_admins: e.target.checked },
                 e.target.checked
                   ? 'MFA is now required for admins and owners.'
@@ -91,6 +95,81 @@ export function SignInSecurity({ ws }: { ws: string }) {
         )}
       </section>
 
+      <section className="space-y-3" aria-labelledby="sso-domains">
+        <h2 id="sso-domains" className="text-[15px] font-semibold">
+          SSO domains
+        </h2>
+        <p className="text-[12px] text-muted">
+          Single sign-on only applies to email domains you have proven you control. Add a domain, publish the
+          TXT record at your DNS host, then verify.
+        </p>
+        <form
+          className="flex gap-2"
+          onSubmit={(e) => {
+            e.preventDefault()
+            const form = e.currentTarget
+            const domain = String(new FormData(form).get('domain') ?? '').trim()
+            save(
+              'security.domain_add',
+              { domain },
+              'Domain added. Publish the TXT record, then verify.',
+            ).then(() => form.reset())
+          }}
+        >
+          <input
+            aria-label="Domain to add"
+            name="domain"
+            required
+            placeholder="acme.com"
+            className={inputCls}
+          />
+          <button type="submit" disabled={busy} className={btn}>
+            Add domain
+          </button>
+        </form>
+        <ul className="space-y-2">
+          {data.domains.map((d) => (
+            <li key={d.domain} className="space-y-1 rounded-md border border-line p-3 text-[13px]">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="break-all font-medium">{d.domain}</span>
+                <span className="rounded bg-side px-1.5 py-0.5 text-[12px]">
+                  {d.verified ? 'Verified' : 'Not verified'}
+                </span>
+                {!d.verified && (
+                  <button
+                    type="button"
+                    disabled={busy}
+                    className={btn}
+                    onClick={() =>
+                      save('security.domain_verify', { domain: d.domain }, `${d.domain} verified.`)
+                    }
+                  >
+                    Verify {d.domain}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  disabled={busy}
+                  className={btn}
+                  onClick={() => save('security.domain_remove', { domain: d.domain }, `${d.domain} removed.`)}
+                >
+                  Remove {d.domain}
+                </button>
+              </div>
+              {!d.verified && (
+                <div className="text-muted">
+                  Add a TXT record at <code className="break-all">{d.domain}</code> or{' '}
+                  <code className="break-all">{d.record_name}</code> with the value{' '}
+                  <code data-testid="txt-record" className="break-all">
+                    {d.record}
+                  </code>
+                </div>
+              )}
+            </li>
+          ))}
+        </ul>
+      </section>
+
       <form
         className="space-y-3"
         aria-labelledby="sso-title"
@@ -108,7 +187,7 @@ export function SignInSecurity({ ws }: { ws: string }) {
             enforce: f.get('enforce') === 'on',
           }
           if (g('client_secret')) sso.client_secret = g('client_secret')
-          save({ sso }, 'Single sign-on settings saved.')
+          save('security.update', { sso }, 'Single sign-on settings saved.')
         }}
       >
         <h2 id="sso-title" className="text-[15px] font-semibold">
@@ -176,24 +255,13 @@ export function SignInSecurity({ ws }: { ws: string }) {
             )
           }
         </Field>
-        <Field label="Allowed email domains (separated by spaces or commas)">
-          {(id) => (
-            <input
-              id={id}
-              name="domains"
-              defaultValue={data.sso.allowed_domains.join(' ')}
-              placeholder="acme.com"
-              className={inputCls}
-            />
-          )}
-        </Field>
         <label className="flex items-center gap-2 text-[14px]">
           <input type="checkbox" name="enabled" defaultChecked={data.sso.enabled} /> Enable single sign-on
         </label>
         <label className="flex items-start gap-2 text-[14px]">
           <input type="checkbox" name="enforce" defaultChecked={data.sso.enforce} className="mt-1" />
           <span>
-            Require SSO for people with these domains
+            Require SSO for people on verified domains
             <span className="block text-[12px] text-muted">
               Blocks password sign-in for them. Owners keep password sign-in so a provider outage cannot lock
               you out. New people who sign in this way join as members. Sign-in address:{' '}

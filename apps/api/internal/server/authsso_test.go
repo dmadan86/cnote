@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -16,6 +17,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/cnote/api/internal/modules/security"
 )
 
 // WP18 SSO against a fake OpenID Connect provider (httptest, a key generated per run). Nothing talks to a real IdP.
@@ -154,15 +157,47 @@ func loginError(res *http.Response) string {
 	return loc.Query().Get("sso_error")
 }
 
+// dns is the fake resolver: name -> TXT records. Nothing in these tests touches real DNS.
+func fakeDNS(t *testing.T) map[string][]string {
+	t.Helper()
+	recs := map[string][]string{}
+	old := security.LookupTXT
+	security.LookupTXT = func(_ context.Context, name string) ([]string, error) {
+		if r, ok := recs[name]; ok {
+			return r, nil
+		}
+		return nil, errors.New("no such host")
+	}
+	t.Cleanup(func() { security.LookupTXT = old })
+	return recs
+}
+
+// verified adds a domain through the command, publishes its record in the fake DNS and verifies it.
+func (e *env) verified(dns map[string][]string, ck, ws, domain string) {
+	e.t.Helper()
+	r := e.run(ck, ws, "security.domain_add", map[string]any{"domain": domain})
+	var d struct{ Record, RecordName string }
+	_ = json.Unmarshal(r.body, &d)
+	if r.status != 200 || d.Record == "" {
+		e.t.Fatalf("domain_add: %d %s", r.status, r.body)
+	}
+	dns["_cnote."+domain] = []string{d.Record}
+	if r := e.run(ck, ws, "security.domain_verify", map[string]any{"domain": domain}); r.status != 200 {
+		e.t.Fatalf("domain_verify: %d %s", r.status, r.body)
+	}
+}
+
 // ssoWorkspace: an owner, a fake provider, SSO switched on for corp.test.
 func ssoWorkspace(t *testing.T) (*env, *fakeIDP, acct, string, string) {
 	t.Helper()
 	t.Setenv("AI_ALLOW_PRIVATE_ENDPOINTS", "1") // the fake provider is on loopback
 	e := sec(t)
+	dns := fakeDNS(t)
 	f := newFakeIDP(t)
 	owner := e.newAcct("SsoOwner", true)
 	ck := e.session(owner)
-	r := e.run(ck, owner.ws, "security.update", map[string]any{"sso": map[string]any{"enabled": true, "issuer": f.srv.URL, "client_id": f.clientID, "client_secret": f.secret, "allowed_domains": []string{"Corp.Test"}}})
+	e.verified(dns, ck, owner.ws, "corp.test")
+	r := e.run(ck, owner.ws, "security.update", map[string]any{"sso": map[string]any{"enabled": true, "issuer": f.srv.URL, "client_id": f.clientID, "client_secret": f.secret}})
 	if r.status != 200 || strings.Contains(string(r.body), f.secret) {
 		t.Fatalf("configure: %d %s", r.status, r.body)
 	}
@@ -287,7 +322,7 @@ func TestSSOConfigurationRules(t *testing.T) {
 	owner := e.newAcct("CfgOwner", true)
 	ck := e.session(owner)
 	sso := func(m map[string]any) resp {
-		base := map[string]any{"enabled": true, "issuer": f.srv.URL, "client_id": f.clientID, "client_secret": f.secret, "allowed_domains": []string{"corp.test"}}
+		base := map[string]any{"enabled": true, "issuer": f.srv.URL, "client_id": f.clientID, "client_secret": f.secret}
 		for k, v := range m {
 			base[k] = v
 		}
@@ -303,6 +338,14 @@ func TestSSOConfigurationRules(t *testing.T) {
 			t.Errorf("%s: %d %s", name, r.status, r.body)
 		}
 	}
+	// without a verified domain SSO cannot be switched on
+	if r := sso(nil); r.status != 400 || !strings.Contains(string(r.body), "verified domain") {
+		t.Fatalf("no verified domain: %d %s", r.status, r.body)
+	}
+	e.verified(fakeDNS(t), ck, owner.ws, "corp.test")
+	if r := e.run(ck, owner.ws, "security.domain_add", map[string]any{"domain": "gmail.com"}); r.status != 400 {
+		t.Fatalf("public mailbox domain: %d %s", r.status, r.body)
+	}
 	if r := sso(nil); r.status != 200 {
 		t.Fatalf("valid config: %d %s", r.status, r.body)
 	}
@@ -316,7 +359,7 @@ func TestSSOConfigurationRules(t *testing.T) {
 		t.Fatalf("security.get leaks or hides: %s", g.body)
 	}
 	// the secret can stay as it is when other fields change
-	if r := e.run(ck, owner.ws, "security.update", map[string]any{"sso": map[string]any{"allowed_domains": []string{"corp.test", "corp.example"}}}); r.status != 200 {
+	if r := e.run(ck, owner.ws, "security.update", map[string]any{"sso": map[string]any{"enforce": false}}); r.status != 200 {
 		t.Fatalf("update without the secret: %d %s", r.status, r.body)
 	}
 	// with a provider that is down, enabling is refused (the issuer is fetched through the SSRF guard)
@@ -326,31 +369,212 @@ func TestSSOConfigurationRules(t *testing.T) {
 	}
 }
 
-func TestSSOEnforcementBlocksPasswordLoginExceptOwners(t *testing.T) {
-	e, f, owner, ownerCk, _ := ssoWorkspace(t)
+func TestSSOEnforcementIsPerWorkspaceAndPasswordLoginStillWorks(t *testing.T) {
+	e, _, owner, ownerCk, _ := ssoWorkspace(t)
 	if r := e.run(ownerCk, owner.ws, "security.update", map[string]any{"sso": map[string]any{"enforce": true}}); r.status != 200 {
 		t.Fatalf("enforce: %d %s", r.status, r.body)
 	}
-	_ = f
 	member := e.newAcctAt("Emp", "emp-"+rnd()+"@corp.test")
 	if r := e.run(ownerCk, owner.ws, "member.add", map[string]any{"email": member.email, "role": "member"}); r.status != 200 {
 		t.Fatalf("%d %s", r.status, r.body)
 	}
+	// the same person is also a member of another workspace that has nothing to do with SSO
+	other := e.newAcct("Elsewhere", true)
+	oCk := e.session(other)
+	e.run(oCk, other.ws, "member.add", map[string]any{"email": member.email, "role": "member"})
+	// password login succeeds everywhere (MFA and throttling aside) ...
 	r := e.login(member, member.pw, nil)
-	if r.status != 403 || !strings.Contains(string(r.body), "single sign-on") || r.cookie() != "" {
-		t.Fatalf("password login of an SSO-enforced member: %d %s", r.status, r.body)
+	if r.status != 200 || r.cookie() == "" {
+		t.Fatalf("password login must not be blocked globally: %d %s", r.status, r.body)
 	}
-	if r := e.login(member, "wrong", nil); r.status != 401 { // the wrong password says nothing about SSO
-		t.Fatalf("wrong password: %d %s", r.status, r.body)
+	ck := sessionOf(t, r)
+	// ... the unrelated workspace still works ...
+	if r := e.run(ck, other.ws, "workspace.get", map[string]any{}); r.status != 200 {
+		t.Fatalf("other workspace: %d %s", r.status, r.body)
 	}
-	// a person on another domain keeps their password, and so does the owner (the way back in when the provider is down)
+	// ... and the enforcing one refuses the password session with a pointer to company sign-in
+	if r := e.run(ck, owner.ws, "workspace.get", map[string]any{}); r.status != 403 || !strings.Contains(string(r.body), "company single sign-on") {
+		t.Fatalf("enforcing workspace and a password session: %d %s", r.status, r.body)
+	}
+	// owners keep the way back in; people on other domains are not affected
+	if r := e.run(ownerCk, owner.ws, "workspace.get", map[string]any{}); r.status != 200 {
+		t.Fatalf("owner: %d %s", r.status, r.body)
+	}
 	outsider := e.newAcct("Outsider", false)
 	e.run(ownerCk, owner.ws, "member.add", map[string]any{"email": outsider.email, "role": "member"})
-	if r := e.login(outsider, outsider.pw, nil); r.status != 200 {
+	if r := e.run(e.session(outsider), owner.ws, "workspace.get", map[string]any{}); r.status != 200 {
 		t.Fatalf("other domain: %d %s", r.status, r.body)
 	}
-	if r := e.login(owner, owner.pw, nil); r.status != 200 {
-		t.Fatalf("owner: %d %s", r.status, r.body)
+}
+
+func TestSSOUnverifiedDomainIsIgnored(t *testing.T) {
+	e, f, owner, ownerCk, slug := ssoWorkspace(t)
+	// victim.test is registered but its TXT record was never published
+	if r := e.run(ownerCk, owner.ws, "security.domain_add", map[string]any{"domain": "victim.test"}); r.status != 200 {
+		t.Fatalf("%d %s", r.status, r.body)
+	}
+	// a victim who already has an account (with a password) is not linked or joined by an IdP vouching for their address
+	victim := e.newAcctAt("Victim", "vic-"+rnd()+"@victim.test")
+	f.set(map[string]any{"email": victim.email, "sub": "attacker-sub"}, nil)
+	res := e.ssoLogin(f, slug, nil)
+	if cookieOf(res, "cn_session") != "" || !strings.Contains(loginError(res), "domain is not allowed") {
+		t.Fatalf("unverified domain for linking: %q %q", loginError(res), cookieOf(res, "cn_session"))
+	}
+	var n int
+	_ = e.pool.QueryRow(context.Background(), "select count(*) from core.sessions where user_id = $1::uuid and amr = 'sso'", victim.userID).Scan(&n)
+	if n != 0 {
+		t.Fatal("no session may be created for the victim")
+	}
+	// nor does a brand-new address at that domain get created (JIT)
+	fresh := "new-" + rnd() + "@victim.test"
+	f.set(map[string]any{"email": fresh}, nil)
+	if res := e.ssoLogin(f, slug, nil); cookieOf(res, "cn_session") != "" {
+		t.Fatal("JIT join on an unverified domain")
+	}
+	_ = e.pool.QueryRow(context.Background(), "select count(*) from core.users where email = $1", fresh).Scan(&n)
+	if n != 0 {
+		t.Fatal("user created for an unverified domain")
+	}
+	// enforcement ignores it as well: an enforced workspace does not refuse the password session of that address
+	e.run(ownerCk, owner.ws, "security.update", map[string]any{"sso": map[string]any{"enforce": true}})
+	e.run(ownerCk, owner.ws, "member.add", map[string]any{"email": victim.email, "role": "member"})
+	if r := e.run(e.session(victim), owner.ws, "workspace.get", map[string]any{}); r.status != 200 {
+		t.Fatalf("unverified domain must not trigger enforcement: %d %s", r.status, r.body)
+	}
+}
+
+func TestSSODomainVerificationAgainstDNS(t *testing.T) {
+	e := sec(t)
+	dns := fakeDNS(t)
+	owner := e.newAcct("DnsOwner", true)
+	ck := e.session(owner)
+	r := e.run(ck, owner.ws, "security.domain_add", map[string]any{"domain": " Acme-" + rnd() + ".TEST "})
+	var d struct {
+		Domain, Token, Record string
+		RecordName            string `json:"record_name"`
+	}
+	_ = json.Unmarshal(r.body, &d)
+	if r.status != 200 || len(d.Token) != 32 || d.Record != "cnote-verification="+d.Token || d.RecordName != "_cnote."+d.Domain || d.Domain != strings.ToLower(d.Domain) {
+		t.Fatalf("add: %d %s", r.status, r.body)
+	}
+	verify := func() resp { return e.run(ck, owner.ws, "security.domain_verify", map[string]any{"domain": d.Domain}) }
+	// no record, a wrong record, and another workspace's token all fail
+	if r := verify(); r.status != 400 || !strings.Contains(string(r.body), "TXT record was not found") {
+		t.Fatalf("no record: %d %s", r.status, r.body)
+	}
+	dns["_cnote."+d.Domain] = []string{"cnote-verification=" + strings.Repeat("0", 32), "v=spf1 -all"}
+	if r := verify(); r.status != 400 {
+		t.Fatalf("wrong token: %d %s", r.status, r.body)
+	}
+	if !strings.Contains(string(e.run(ck, owner.ws, "security.domain_list", map[string]any{}).body), `"verified":false`) {
+		t.Fatal("still unverified")
+	}
+	// the record at the domain itself works too
+	dns[d.Domain] = []string{d.Record}
+	if r := verify(); r.status != 200 || !strings.Contains(string(r.body), `"verified":true`) {
+		t.Fatalf("verify: %d %s", r.status, r.body)
+	}
+	if l := e.run(ck, owner.ws, "security.domain_list", map[string]any{}); !strings.Contains(string(l.body), `"verified":true`) || !strings.Contains(string(l.body), d.Domain) {
+		t.Fatalf("list: %s", l.body)
+	}
+	// a second workspace cannot reuse the first one's proof: it gets its own token
+	rival := e.newAcct("Rival", true)
+	rk := e.session(rival)
+	e.run(rk, rival.ws, "security.domain_add", map[string]any{"domain": d.Domain})
+	if r := e.run(rk, rival.ws, "security.domain_verify", map[string]any{"domain": d.Domain}); r.status != 400 {
+		t.Fatalf("a token from another workspace verified a domain: %d %s", r.status, r.body)
+	}
+	// who may: members no, API keys need a confirmation
+	member := e.newAcct("Mem", false)
+	e.run(ck, owner.ws, "member.add", map[string]any{"email": member.email, "role": "member"})
+	if r := e.run(e.session(member), owner.ws, "security.domain_add", map[string]any{"domain": "x-" + rnd() + ".test"}); r.status != 403 {
+		t.Fatalf("member: %d", r.status)
+	}
+	k := e.run(ck, owner.ws, "apikey.create", map[string]any{"name": "ci"})
+	var kv struct {
+		APIKey string `json:"api_key"`
+	}
+	_ = json.Unmarshal(k.body, &kv)
+	ak := e.cmd(e.gosv.URL, who{bearer: kv.APIKey}, owner.ws, "security.domain_add", map[string]any{"domain": "agent-" + rnd() + ".test"}, nil)
+	if ak.status != 403 && !strings.Contains(string(ak.body), "confirmation_required") { // the admin group is off for agents by default; with it on a person must confirm
+		t.Fatalf("API key: %d %s", ak.status, ak.body)
+	}
+	if r := e.run(ck, owner.ws, "security.domain_add", map[string]any{"domain": "gmail.com"}); r.status != 400 {
+		t.Fatalf("public mailbox: %d", r.status)
+	}
+}
+
+func TestSSOIdentityLinkFollowsSubjectNotEmail(t *testing.T) {
+	e, f, owner, _, slug := ssoWorkspace(t)
+	a, b := "ann-"+rnd()+"@corp.test", "bob-"+rnd()+"@corp.test"
+	login := func(sub, email string) *http.Response {
+		f.set(map[string]any{"sub": sub, "email": email}, nil)
+		return e.ssoLogin(f, slug, nil)
+	}
+	subA, subB := "sub-a-"+rnd(), "sub-b-"+rnd()
+	if res := login(subA, a); cookieOf(res, "cn_session") == "" {
+		t.Fatalf("first login: %s", loginError(res))
+	}
+	if res := login(subB, b); cookieOf(res, "cn_session") == "" {
+		t.Fatalf("second person: %s", loginError(res))
+	}
+	// a different subject asserting Ann's email is refused (the account is linked to subA)
+	res := login("sub-evil-"+rnd(), a)
+	if cookieOf(res, "cn_session") != "" || !strings.Contains(loginError(res), "already linked") {
+		t.Fatalf("sub mismatch: %q", loginError(res))
+	}
+	// Ann's subject now claims Bob's email: she still gets Ann's account, nobody is re-linked
+	res = login(subA, b)
+	ck := cookieOf(res, "cn_session")
+	me := hit(t, e.gosv.URL, "GET", "/api/auth/me", cookieHdr(ck), "")
+	if ck == "" || !strings.Contains(string(me.body), a) || strings.Contains(string(me.body), `"email":"`+b) {
+		t.Fatalf("changed email must not switch accounts: %s", me.body)
+	}
+	var n int
+	_ = e.pool.QueryRow(context.Background(), "select count(*) from core.users where email = $1", b).Scan(&n)
+	if n != 1 {
+		t.Fatalf("users for Bob's email: %d", n)
+	}
+	_ = owner
+}
+
+func TestSSOSessionCannotTouchTheAccountOrOtherWorkspaces(t *testing.T) {
+	e, f, owner, _, slug := ssoWorkspace(t)
+	email := "sess-" + rnd() + "@corp.test"
+	f.set(map[string]any{"email": email}, nil)
+	ck := cookieOf(e.ssoLogin(f, slug, nil), "cn_session")
+	if ck == "" {
+		t.Fatal("login")
+	}
+	for path, body := range map[string]any{"/api/auth/mfa/setup": map[string]any{}, "/api/auth/mfa/confirm": map[string]any{"code": "123456"},
+		"/api/auth/mfa/disable": map[string]any{"password": "x", "code": "123456"}, "/api/workspaces": map[string]any{"name": "Mine"}} {
+		if r := e.post(path, fakeIP(), body, nil, ck); r.status != 403 || !strings.Contains(string(r.body), "single sign-on session") {
+			t.Errorf("%s: %d %s", path, r.status, r.body)
+		}
+	}
+	var n int
+	_ = e.pool.QueryRow(context.Background(), "select count(*) from core.user_mfa u join core.users x on x.id = u.user_id where x.email = $1", email).Scan(&n)
+	if n != 0 {
+		t.Fatal("an SSO session must not enrol MFA")
+	}
+	// another workspace the person belongs to is out of reach, and so is OAuth consent for it
+	other := e.newAcct("Elsewhere", true)
+	e.run(e.session(other), other.ws, "member.add", map[string]any{"email": email, "role": "member"})
+	if r := e.run(ck, other.ws, "workspace.get", map[string]any{}); r.status != 403 {
+		t.Fatalf("other workspace: %d", r.status)
+	}
+	o := newOCFor(t, e)
+	client := o.register(redirect)
+	_, challenge := pkce()
+	if r := o.authorize(who{cookie: ck, ws: other.ws}, o.authzBody(client, redirect, challenge), other.ws, true, nil); r.status != 403 {
+		t.Fatalf("OAuth consent for another workspace: %d %s", r.status, r.body)
+	}
+	if r := o.authorize(who{cookie: ck, ws: owner.ws}, o.authzBody(client, redirect, challenge), owner.ws, true, nil); r.status != 200 {
+		t.Fatalf("OAuth consent for the pinned workspace: %d %s", r.status, r.body)
+	}
+	ctx := o.postJSON("/api/oauth/authorize/context", map[string]string{"Cookie": "cn_session=" + ck}, o.authzBody(client, redirect, challenge)).json()
+	if ws, _ := ctx["workspaces"].([]any); len(ws) != 1 {
+		t.Fatalf("consent page lists %v", ctx["workspaces"])
 	}
 }
 

@@ -102,6 +102,9 @@ type sessInfo struct{ amr, ssoWS string }
 // matches on it to send the person to Account security).
 const MFAMessage = "this workspace requires multi-factor authentication for admins: turn it on in Account security and sign in again"
 
+// SSOMessage is the 403 text for a password session in a workspace that enforces single sign-on for the person's domain.
+const SSOMessage = "this workspace requires company single sign-on: sign out and use Company single sign-on on the sign-in page"
+
 func (a *Auth) userPrincipal(ctx context.Context, userID, workspaceID string, s *sessInfo) (command.Principal, error) {
 	tx, err := db.BeginTenant(ctx, a.Pool, workspaceID)
 	if err != nil {
@@ -109,9 +112,12 @@ func (a *Auth) userPrincipal(ctx context.Context, userID, workspaceID string, s 
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	var role string
-	var requireMFA bool
-	err = tx.QueryRow(ctx, `select m.role, coalesce((select require_mfa_admins from core.workspace_security where workspace_id = m.workspace_id), false)
-		from core.memberships m where m.user_id = $1::uuid and m.deactivated_at is null`, userID).Scan(&role, &requireMFA)
+	var requireMFA, ssoOnly bool
+	// ssoOnly: this workspace enforces SSO for a domain it has verified and the person's email is on it
+	err = tx.QueryRow(ctx, `select m.role, coalesce((select require_mfa_admins from core.workspace_security where workspace_id = m.workspace_id), false),
+		exists (select 1 from core.workspace_security s join core.sso_domains d on d.workspace_id = s.workspace_id and d.verified_at is not null
+		        where s.workspace_id = m.workspace_id and s.sso_enabled and s.sso_enforce and d.domain = lower(split_part(u.email, '@', 2)))
+		from core.memberships m join core.users u on u.id = m.user_id where m.user_id = $1::uuid and m.deactivated_at is null`, userID).Scan(&role, &requireMFA, &ssoOnly)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return command.Principal{}, command.ErrForbidden("not a member of this workspace")
 	}
@@ -121,6 +127,10 @@ func (a *Auth) userPrincipal(ctx context.Context, userID, workspaceID string, s 
 	if s != nil {
 		if s.ssoWS != "" && s.ssoWS != workspaceID {
 			return command.Principal{}, command.ErrForbidden("this single sign-on session is limited to the workspace that signed you in")
+		}
+		// owners keep password sign-in as the way back in when the provider is down
+		if ssoOnly && role != "owner" && s.amr != "sso" {
+			return command.Principal{}, command.ErrForbidden(SSOMessage)
 		}
 		if requireMFA && (role == "admin" || role == "owner") && s.amr == "pwd" {
 			return command.Principal{}, command.ErrForbidden(MFAMessage)

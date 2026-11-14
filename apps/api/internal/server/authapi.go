@@ -300,6 +300,9 @@ func (s *Server) createWorkspace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u, err := s.Auth.SessionUser(r.Context(), r.Header)
+	if err == nil && u.AMR == "sso" {
+		err = command.ErrForbidden("a single sign-on session cannot create workspaces: sign in with your password")
+	}
 	var id string
 	if err == nil {
 		id, err = s.Auth.CreateWorkspace(r.Context(), u.ID, name, admin.Slugify(name))

@@ -314,7 +314,7 @@ func (a *Auth) OIDCFinish(ctx context.Context, cookie, state, code, redirectURI 
 	case !slices.Contains(cfg.AllowedDomains, dom):
 		return "", "", "", ssoErr("your email domain is not allowed for this workspace")
 	}
-	userID, err = a.ssoMember(ctx, cfg.WorkspaceID, email, c.Name, c.Sub)
+	userID, err = a.ssoMember(ctx, cfg.WorkspaceID, cfg.Issuer, email, c.Name, c.Sub)
 	if err != nil {
 		return "", "", "", err
 	}
@@ -322,19 +322,39 @@ func (a *Auth) OIDCFinish(ctx context.Context, cookie, state, code, redirectURI 
 	return userID, cfg.WorkspaceID, token, err
 }
 
-// ssoMember finds or creates the person and makes sure they are a member (role member when new to the workspace).
-// A person created here has no password: they can only come in through SSO until they set one.
-func (a *Auth) ssoMember(ctx context.Context, ws, email, name, sub string) (string, error) {
+// ssoMember resolves the person for a verified identity and makes sure they are a member (role member when new to the
+// workspace). The (issuer, sub) pair is the identity: once linked, the same sub always signs in as the same account, even
+// if the email changed, and a different sub claiming a linked account's email is refused. A person created here has no
+// password. Only domains the workspace has proven it owns reach this point.
+func (a *Auth) ssoMember(ctx context.Context, ws, issuer, email, name, sub string) (string, error) {
+	if sub == "" {
+		return "", ssoErr("the provider sent no subject identifier")
+	}
 	tx, err := db.BeginTenant(ctx, a.Pool, ws)
 	if err != nil {
 		return "", command.DB(err)
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
-	if name = strings.TrimSpace(name); name == "" {
-		name, _, _ = strings.Cut(email, "@")
-	}
 	var uid string
-	if err := tx.QueryRow(ctx, "insert into core.users (email, name) values ($1,$2) on conflict (email) do update set email = excluded.email returning id::text", email, name).Scan(&uid); err != nil {
+	linked := true
+	err = tx.QueryRow(ctx, "select user_id::text from core.sso_identities where workspace_id = $1::uuid and issuer = $2 and sub = $3", ws, issuer, sub).Scan(&uid)
+	if errors.Is(err, pgx.ErrNoRows) {
+		linked = false
+		if name = strings.TrimSpace(name); name == "" {
+			name, _, _ = strings.Cut(email, "@")
+		}
+		if err = tx.QueryRow(ctx, "insert into core.users (email, name) values ($1,$2) on conflict (email) do update set email = excluded.email returning id::text", email, name).Scan(&uid); err != nil {
+			return "", command.DB(err)
+		}
+		var other string
+		err = tx.QueryRow(ctx, "select sub from core.sso_identities where workspace_id = $1::uuid and issuer = $2 and user_id = $3::uuid", ws, issuer, uid).Scan(&other)
+		if err == nil {
+			return "", ssoErr("this account is already linked to a different identity at the provider")
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return "", command.DB(err)
+		}
+	} else if err != nil {
 		return "", command.DB(err)
 	}
 	var deactivated *time.Time
@@ -349,7 +369,12 @@ func (a *Auth) ssoMember(ctx context.Context, ws, email, name, sub string) (stri
 	if err != nil {
 		return "", command.DB(err)
 	}
-	payload, _ := json.Marshal(map[string]any{"user_id": uid, "jit": jit, "sub": sub})
+	if !linked {
+		if _, err := tx.Exec(ctx, "insert into core.sso_identities (workspace_id, issuer, sub, user_id) values ($1::uuid,$2,$3,$4::uuid)", ws, issuer, sub, uid); err != nil {
+			return "", command.DB(err)
+		}
+	}
+	payload, _ := json.Marshal(map[string]any{"user_id": uid, "jit": jit, "linked_now": !linked, "sub": sub})
 	if _, err := tx.Exec(ctx, "insert into core.events (workspace_id, kind, actor_type, actor_id, payload) values ($1::uuid, 'auth.sso_login', 'system', null, $2)", ws, json.RawMessage(payload)); err != nil {
 		return "", command.DB(err)
 	}
