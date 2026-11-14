@@ -1,8 +1,10 @@
 package notes
 
-import "encoding/json"
+import (
+	"encoding/json"
 
-import "github.com/cnote/api/internal/command"
+	"github.com/cnote/api/internal/command"
+)
 
 // Exports for other modules (docs): serde-like input decoding, typed note creation and the f64 printer.
 
@@ -26,9 +28,9 @@ func (x Obj) ReqBool(k string) (bool, error) {
 	return x.o.boolDef(k, false)
 }
 
-// InsertNote is Rust insert_note with no parent, owner or verify_by override.
-func InsertNote(c *command.Ctx, spaceID, title string, content *string, types []string) (Note, error) {
-	n, err := insertNote(c, createNote{spaceID: spaceID, title: title, content: content, types: types})
+// InsertNote is Rust insert_note with no owner or verify_by override.
+func InsertNote(c *command.Ctx, spaceID, title string, parentID, content *string, types []string) (Note, error) {
+	n, err := insertNote(c, createNote{spaceID: spaceID, title: title, parentID: parentID, content: content, types: types})
 	if err != nil {
 		return Note{}, err
 	}
@@ -42,3 +44,6 @@ type F64 = f64
 func AddRelation(c *command.Ctx, from, to, kind string) error {
 	return addRelation(c, from, to, kind, nil)
 }
+
+// NormValue is command.Norm for jsonb read back through serde_json::Value (numbers re-printed as serde does).
+func NormValue(raw []byte) (json.RawMessage, error) { return normValue(raw) }

@@ -656,7 +656,7 @@ func templateRender(c *command.Ctx, input json.RawMessage) (any, error) {
 	if strings.TrimSpace(title) == "" {
 		title = t.name
 	}
-	note, err := notes.InsertNote(c, space, title, &body, t.types)
+	note, err := notes.InsertNote(c, space, title, nil, &body, t.types)
 	if err != nil {
 		return nil, err
 	}

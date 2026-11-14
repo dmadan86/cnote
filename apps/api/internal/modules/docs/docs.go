@@ -366,7 +366,7 @@ func docProposalDecide(c *command.Ctx, input json.RawMessage) (any, error) {
 		if err != nil {
 			return nil, err
 		}
-		if err := c.Call("note.update", body); err != nil {
+		if _, err := c.Call("note.update", body); err != nil {
 			return nil, err
 		}
 		if flagID != nil {

@@ -41,13 +41,6 @@ type Ctx struct {
 
 func (c *Ctx) WorkspaceID() string { return c.Principal.WorkspaceID }
 
-// Call runs another command inside this transaction with the full gate (role, scope, rate limit, usage),
-// like Rust ctx.call. The result is discarded.
-func (c *Ctx) Call(name string, input json.RawMessage) error {
-	_, err := c.reg.run(c, name, input, ExecOptions{})
-	return err
-}
-
 // Handler receives the raw JSON input and returns a value that is marshaled as the response.
 // Return ErrFallback to delegate the request to Rust.
 type Handler func(c *Ctx, input json.RawMessage) (any, error)

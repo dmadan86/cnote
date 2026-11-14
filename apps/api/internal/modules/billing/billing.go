@@ -519,7 +519,7 @@ func invoiceCreateDraft(c *command.Ctx, input json.RawMessage) (any, error) {
 	if invDate != nil {
 		date = *invDate
 	}
-	note, err := notes.InsertNote(c, spaceID, "Invoice for "+ci.name, notesMD, []string{"invoice"})
+	note, err := notes.InsertNote(c, spaceID, "Invoice for "+ci.name, nil, notesMD, []string{"invoice"})
 	if err != nil {
 		return nil, err
 	}
@@ -1048,7 +1048,7 @@ func issueCreditNote(c *command.Ctx, orig invoiceRow, lines []ln, reason string)
 	if err := c.Tx.QueryRow(c.Context, "select space_id::text from core.notes where id = $1::uuid", orig.ID).Scan(&space); err != nil {
 		return invoiceRow{}, command.DB(err)
 	}
-	note, err := notes.InsertNote(c, space, "Credit note for "+onum, &reason, []string{"credit_note"})
+	note, err := notes.InsertNote(c, space, "Credit note for "+onum, nil, &reason, []string{"credit_note"})
 	if err != nil {
 		return invoiceRow{}, err
 	}
