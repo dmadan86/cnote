@@ -34,12 +34,8 @@ func checkTaxIDs(g, state *string) (*string, *string, error) {
 		if v == "" {
 			g = nil
 		} else {
-			// Full Unicode uppercase mappings are delegated to the reference serde/handler path.
-			for _, r := range v {
-				if r > 127 {
-					return nil, nil, command.ErrFallback
-				}
-			}
+			// Rust's to_uppercase also expands a few characters (ß becomes SS); a tax id with any non-ASCII
+			// character is refused below either way, so only the wording of the refusal can differ.
 			v = strings.ToUpper(v)
 			switch {
 			case len(v) != 15:

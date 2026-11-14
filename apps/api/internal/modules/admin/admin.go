@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/cnote/api/internal/command"
@@ -211,12 +212,7 @@ func memberAdd(c *command.Ctx, b json.RawMessage) (any, error) {
 	if !slices.Contains([]string{"admin", "member", "guest"}, role) {
 		return nil, command.ErrInvalid("role must be admin, member or guest")
 	}
-	// Rust applies contextual Greek final-sigma lowercasing; Go does not. Preserve
-	// exact behavior through the reference for that uncommon email spelling.
-	if strings.ContainsRune(email, 'Σ') {
-		return nil, command.ErrFallback
-	}
-	email = strings.ToLower(strings.ReplaceAll(strings.TrimSpace(email), "İ", "i\u0307"))
+	email = lowerRust(strings.TrimSpace(email))
 	n := strings.Split(email, "@")[0]
 	if name != nil {
 		n = *name
@@ -433,3 +429,23 @@ func confirmationDecide(c *command.Ctx, b json.RawMessage) (any, error) {
 // NewKey and Slugify are exported for the HTTP surface (marketplace token exchange, workspace creation).
 func NewKey() (string, string, string, error) { return newKey() }
 func Slugify(s string) string                 { return slugify(s) }
+
+// lowerRust is str::to_lowercase: Go's ToLower plus U+0130 as "i\u0307" and the contextual final sigma (a sigma
+// that ends a word, after a letter, becomes ς).
+func lowerRust(s string) string {
+	rs := []rune(strings.ReplaceAll(s, "İ", "i\u0307"))
+	var b strings.Builder
+	for i, r := range rs {
+		if r == 'Σ' {
+			final := i > 0 && unicode.IsLetter(rs[i-1]) && (i+1 == len(rs) || !unicode.IsLetter(rs[i+1]))
+			if final {
+				b.WriteRune('ς')
+			} else {
+				b.WriteRune('σ')
+			}
+			continue
+		}
+		b.WriteRune(unicode.ToLower(r))
+	}
+	return b.String()
+}

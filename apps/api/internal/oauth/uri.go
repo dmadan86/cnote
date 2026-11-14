@@ -2,6 +2,7 @@ package oauth
 
 import (
 	"net/netip"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -131,7 +132,9 @@ func validateRedirectURI(raw string) (msg string, sure bool) {
 	}
 	u, ok := plainURI(raw)
 	if !ok {
-		return "", false
+		if u, ok = looseURI(raw); !ok {
+			return "redirect_uri is not a valid absolute URI", true
+		}
 	}
 	if u.hasFragment || u.hasCreds {
 		return "redirect_uri must not contain a fragment or credentials", true
@@ -187,4 +190,19 @@ func withQuery(base string, u uri, pairs [][2]string) string {
 		b.WriteString(formEscape(p[0]) + "=" + formEscape(p[1]))
 	}
 	return b.String()
+}
+
+// looseURI is the fallback for URIs plainURI declines (odd escapes, IDNs, unusual hosts): net/url decides, which is
+// not always what the url crate decides. Documented difference; real clients register plain URLs.
+func looseURI(raw string) (uri, bool) {
+	p, err := url.Parse(raw)
+	if err != nil || p.Scheme == "" {
+		return uri{}, false
+	}
+	u := uri{scheme: strings.ToLower(p.Scheme), path: p.EscapedPath(), hasQuery: p.RawQuery != "", query: p.RawQuery,
+		hasFragment: strings.Contains(raw, "#"), hasCreds: p.User != nil, host: strings.ToLower(p.Hostname()), port: p.Port()}
+	if strings.Contains(p.Host, ":") && strings.HasPrefix(p.Host, "[") {
+		u.host = "[" + u.host + "]"
+	}
+	return u, true
 }

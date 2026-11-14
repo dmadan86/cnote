@@ -220,8 +220,8 @@ func monthRange(period string) (time.Time, time.Time, error) {
 		return time.Time{}, time.Time{}, bad
 	}
 	if y < 1 || y > 9999 {
-		// chrono accepts a wider year range; Postgres text dates do not round-trip there. Let Rust answer.
-		return time.Time{}, time.Time{}, command.ErrFallback
+		// chrono accepts a wider year range than Postgres dates round-trip; the period is simply refused
+		return time.Time{}, time.Time{}, bad
 	}
 	start := time.Date(int(y), time.Month(m), 1, 0, 0, 0, 0, time.UTC)
 	return start, start.AddDate(0, 1, -1), nil

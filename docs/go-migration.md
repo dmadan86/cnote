@@ -606,10 +606,8 @@ same meaning as in Rust.
 - Claiming is the same SQL as Rust (`core.claim_jobs`: `UPDATE ... WHERE id IN (SELECT ... FOR UPDATE SKIP LOCKED)`), so
   a job runs in exactly one worker. A claimed job is finished like Rust: `done`, or back to `queued` with
   `run_at = now() + 2^attempts seconds` and `last_error`, or `failed` at `max_attempts`.
-- The Go worker claims only the kinds it can run (`event.dispatch`, `hook.deliver`, `import.run`). The two AI kinds,
-  `ai.index_note` and `docs.propose_edit`, are never claimed by Go; Rust (which claims everything) runs them. The Go
-  `event.dispatch` still enqueues them exactly like Rust, so the Rust worker keeps working. **With Rust's worker
-  stopped these two kinds stay queued until the AI port lands.**
+- The Go worker claims every kind Rust has (`event.dispatch`, `hook.deliver`, `import.run`, `ai.index_note`,
+  `docs.propose_edit`; the last two since the final wave, see the end of this file), so it can replace Rust's worker.
 - Sweeps (first run at start, then every period, like tokio's interval): `docs.freshness_sweep` 24h, `finance.irn_window`
   24h, `projects.automations` 60s, `hooks.schedule` 60s. `hooks.schedule` and the automation sweep are safe to run in both
   workers at once (`for update skip locked`; the same `pg_try_advisory_xact_lock(hashtextextended('sweep:<id>'))`
@@ -639,11 +637,10 @@ Differences a client or operator can see:
   commands the registry knows; commands Go answers with `ErrFallback` surface that as the failure text).
 - The Go `automation.create` command still falls back to Rust for `command` actions (planning module, unchanged).
 
-### Left to Rust (they call an AI provider)
+### Left to Rust
 
-`docs.propose_edit` (job), `ai.index_note` (job), and the `ai.*` / `search.hybrid` / `doc.ask` / `doc.capture` commands.
-Also still in Rust and untouched: `import.start|status|list` and `hook.*` commands, workspace hooks (`seed_templates`,
-`seed_chart`, `default_space`).
+Nothing since the final wave (the AI jobs and commands, imports and hooks are all native; the workspace hooks
+`seed_templates`, `seed_chart`, `default_space` run from `Auth.CreateWorkspace`).
 
 ### Tests (`internal/worker`, `internal/hooks`, `internal/importers`)
 
@@ -724,8 +721,77 @@ Native in Go now (same bytes as Rust, differential tests in `internal/server/ai_
 - **`hook.test` MCP delivery** is a small streamable-HTTP client (initialize, initialized, `tools/call` with the same
   `_meta.progressToken`). The `last_error` text for an MCP failure mimics rmcp for a rejected initialize and approximates
   it for other failures.
-- **Revisions**: `note.revisions` and `note.revision` are native. `note.restore` stays in Rust: it renders the live Yjs
-  document to Markdown (yrs), which Go cannot do.
+- **Revisions**: `note.revisions`, `note.revision` and (final wave) `note.restore` are native.
 - Known approximations: `Redact` uses Go's ASCII `\b`/`\d` (Rust's are Unicode); `HashEmbed` lowercases rune by rune
   (no final-sigma rule); `search.hybrid` ties (chunks at equal vector distance) rank arbitrarily in Rust as well, so the
   differential test compares those queries as sets and compares exact bytes elsewhere.
+
+## Final wave: nothing needs Rust any more (`port/final`)
+
+With `COLLAB_URL` and `COLLAB_INTERNAL_SECRET` set, the Go API answers every request itself: `crates/` can be deleted
+once this lands (the `no-rust` CI job and `TestCriticalFlowsNeverReachRust` prove it; the Rust binary is only used to
+run the SQL migrations). Without `COLLAB_URL` only `/collab/*` still goes to `RUST_API_URL` (development convenience).
+
+**Worker.** `ai.index_note` (`modules/ai/index.go`, chunking and embedding exactly like cnote-ai) and
+`docs.propose_edit` (`worker/propose.go`) run in Go; the Go worker now claims every job kind. The differential worker
+test compares the chunks, proposals, audit rows and usage with Rust's real worker.
+
+**`note.restore`** (`modules/revisions/restore.go`). Go reads the page and its `core.note_updates` log in its own
+transaction (holding the `for update` lock, so snapshots and other restores serialise like in Rust) and POSTs them to the
+collab service, `POST {COLLAB_URL}/internal/render` (`apps/collab/src/server.ts`), which rebuilds the document with the
+same `buildDoc` the websocket path uses and answers `{"markdown": ...}`. The endpoint is stateless (no database), is not
+under `/collab/` (the Go front never forwards it) and requires the shared secret `COLLAB_INTERNAL_SECRET` in
+`x-collab-secret` (constant-time compare; without a configured secret it answers 404). If `COLLAB_URL` or the secret is
+unset Go hands `note.restore` to Rust. Tests: `TestDifferentialRestoreLiveDocument` (types into the note through the
+real collab service, then restores on Rust and on Go and compares responses, versions, notes and events; checks that
+Go never proxied it), `apps/collab/test/render.test.ts` (secret, 404, malformed bodies).
+
+**`import.start`** counts records with the parsers of the `import.run` job (`internal/importers`), so Jira content,
+HTML pages and every malformed input are answered natively; the live Jira fetch (`importers/jira_fetch.go`: https,
+`*.atlassian.net`, no redirects, 30 s, 10 000 issues) is a port of `fetch_issues`. serde_json's syntax errors
+("expected ident at line 1 column 2") come from `internal/serdejson`, a validating parser written against serde_json
+and fuzz-compared with Rust (`TestSerdeJSONErrorsMatchRust`, 40 000 mutations clean).
+
+**What used to be proxied, and what answers it now**
+
+| Rust answered | Now |
+| --- | --- |
+| Unknown paths, wrong methods | `server.unmatched`: axum's empty 404 / 405 with `Allow` |
+| `/api/w/{ws}/commands/{name}`: bad `{ws}`, non-JSON content type, malformed JSON, unknown command | 400 `Invalid URL: ...` (`internal/uuidparse` reproduces the uuid crate's texts and spellings), 415, 400 `Failed to parse the request body as JSON: ...` (path prefix included), 404 `command x not found` |
+| Inputs a Go handler cannot decode (`ErrFallback`) | `internal/serdecheck` words serde's error from the command's JSON Schema + the Rust input struct names (`structs.json`, probed from Rust): `invalid input: missing field ...`, `invalid type: ..., expected ...`, enum variants, integer ranges, UUID and date text, first error in serde's key order |
+| Other UUID spellings (upper case, simple, braced, urn) in inputs | `serdecheck.NormalizeUUIDs` rewrites them to the canonical form before the handler runs |
+| Typed bodies of auth, workspaces, marketplace token, OAuth register / authorize / context | `serdejson.StructError`: 400 syntax, 422 `Failed to deserialize the JSON body into the target type: ... at line L column C` with serde's positions, duplicate fields, `#[serde(flatten)]` ordering, 415 for a wrong content type |
+| OAuth token / revoke forms | 415 `Form requests must have ...`, 422 `Failed to deserialize form body: duplicate field`, lenient percent decoding like serde_urlencoded |
+| MCP corner cases | `mcp.decline`: 415 `fail to deserialize request body ...`, 400 for JSON-RPC responses, 202 for every notification, `-32601 <method>` for unknown methods or untypable params, `_meta` and extra keys accepted, non-POST 405 after authentication |
+| Odd redirect URIs | `oauth/uri.go looseURI` (net/url) when the strict recognizer declines |
+| GitHub webhook body that is not JSON after a valid signature | `body is not JSON: <serde_json text>` |
+
+`TestUUIDErrorsMatchRust`, `TestRequestBodyRejectionsMatchRust` and `TestSerdeInputErrorsMatchRust` compare these
+byte for byte with the running Rust server (the last one over every Rust command and every wrongly typed field:
+322 of 323 refusals identical, see below).
+
+**Known differences (all in error wording or exotic input, never in status or JSON shape)**
+
+- Tagged enums (automation triggers, workflow definitions): Rust says `expected internally tagged enum Trigger`; Go
+  reports the first problem it can see in the other fields, or `invalid input`.
+- The sequence form of a struct (`["<uuid>"]` instead of `{"id": ...}`) works on Rust for every struct; Go accepts it
+  only for the endpoints above that declare all-default fields.
+- Redirect URIs the strict recognizer declines are judged by `net/url`, not the `url` crate (for example `127.1` is
+  not seen as loopback, so Go refuses an `http://127.1/cb` redirect that Rust would allow; stricter, never looser).
+- The 2026-07-28 MCP request-metadata lifecycle (`_meta` with `io.modelcontextprotocol/protocolVersion`,
+  `Mcp-*` headers, elicitation round trips) is not served: Go answers 400 like Rust does when the header is missing
+  and an empty 400 otherwise. Legacy lifecycles (2024-11-05 to 2025-11-25) are unchanged.
+- Tax ids: Rust upper-cases with full Unicode rules (`ß` becomes `SS`), Go per character; a non-ASCII id is refused
+  either way, only the wording can differ. A report period with a year outside 1..9999 is refused as a bad period.
+- `serdecheck` does not reproduce chrono's messages for `date-time` strings and custom deserializers.
+
+**Test mode.** `TestCriticalFlowsNeverReachRust` runs signup, login, notes, versions and restore (through a real
+collab service), invoices, an import on the Go worker, MCP and OAuth against a Go server whose upstream records and
+refuses every request. The CI job `no-rust` does the same with the real binary (`RUST_API_URL=http://127.0.0.1:1`,
+`WITH_WORKER=1`, `COLLAB_URL`, `COLLAB_INTERNAL_SECRET`) and then runs the whole Playwright suite against it (run locally against
+a Go-only stack: 71 of 72 specs passed; `bank.spec.ts` failed only its phone-width layout assertion, which does not
+involve the API). New env var: `COLLAB_INTERNAL_SECRET` (API and collab).
+
+**Still needs Rust:** nothing at run time. Build time: `cnote migrate` runs the SQL migrations (`migrations/`); a Go or
+SQL-only runner is the only thing to write before `crates/` can go. The WebSocket for live editing is the TypeScript
+service. `/collab/*` is forwarded to `RUST_API_URL` only when `COLLAB_URL` is unset.

@@ -36,10 +36,12 @@ func TestRedirectURIRules(t *testing.T) {
 			t.Errorf("%.40s: got %q sure=%v want %q", bad, msg, sure, want)
 		}
 	}
-	// URIs Go cannot judge like the url crate are left to Rust (never decided here).
-	for _, odd := range []string{"HTTPS://EXAMPLE.com/cb", "https://exa mple.com/", "https://example.com/a/../b", "http://127.1/cb", "https://exämple.com/", "https://example.com:443/cb", "http://[::2]/cb"} {
-		if _, sure := validateRedirectURI(odd); sure {
-			t.Errorf("%q: should be left to Rust", odd)
+	// URIs plainURI declines are judged by net/url (looseURI) rather than the url crate: a documented difference
+	// for exotic spellings, but never a crash or an accept of something unsafe.
+	for odd, want := range map[string]string{"HTTPS://EXAMPLE.com/cb": "", "https://exa mple.com/": "redirect_uri is not a valid absolute URI", "https://example.com/a/../b": "",
+		"http://127.1/cb": "http redirect_uri is only allowed for loopback", "https://example.com:443/cb": "", "javascript:alert(1)//x": "redirect_uri scheme not allowed"} {
+		if msg, _ := validateRedirectURI(odd); msg != want {
+			t.Errorf("%q: got %q want %q", odd, msg, want)
 		}
 	}
 }

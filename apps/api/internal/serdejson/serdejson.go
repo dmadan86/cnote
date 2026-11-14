@@ -43,7 +43,7 @@ type parser struct {
 	remaining int
 	path      []seg
 	withPath  bool
-	err       *Error
+	lenient   bool // inside a value serde skips (unknown struct fields): strings are not validated
 }
 
 type seg struct {
@@ -341,20 +341,20 @@ func (p *parser) str() *Error {
 	badCol := -1 // first invalid UTF-8 chunk; serde_json reports it once the whole string was read
 	for {
 		start := p.i
-		for p.i < len(p.b) && p.b[p.i] != '"' && p.b[p.i] != '\\' && p.b[p.i] >= 0x20 {
+		for p.i < len(p.b) && p.b[p.i] != '"' && p.b[p.i] != '\\' && (p.lenient || p.b[p.i] >= 0x20) {
 			p.i++
 		}
 		if p.i == len(p.b) {
 			return p.errAt(eofString)
 		}
 		term := p.b[p.i]
-		if term < 0x20 {
+		if term < 0x20 && !p.lenient {
 			p.i++
 			return p.errAt("control character (\\u0000-\\u001F) found while parsing a string")
 		}
 		// Position of the error: just after the first invalid byte, one further when the chunk ended at a
 		// backslash (measured against Rust).
-		if n := validUpTo(p.b[start:p.i]); start+n < p.i && badCol < 0 {
+		if n := validUpTo(p.b[start:p.i]); start+n < p.i && badCol < 0 && !p.lenient {
 			badCol = start + n + 1
 			if term == '\\' {
 				badCol++
@@ -401,6 +401,8 @@ func (p *parser) escape() *Error {
 			return e
 		}
 		switch {
+		case p.lenient:
+			return nil
 		case n >= 0xDC00 && n <= 0xDFFF:
 			return p.errAt("lone leading surrogate in hex escape")
 		case n >= 0xD800 && n <= 0xDBFF:

@@ -16,6 +16,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"github.com/cnote/api/internal/serdejson"
 	"io"
 	"log/slog"
 	"mime"
@@ -24,6 +25,8 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"slices"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -190,17 +193,72 @@ func isForm(r *http.Request) bool {
 func (h *Handler) readBody(w http.ResponseWriter, r *http.Request, limit int) ([]byte, bool) {
 	buf, err := io.ReadAll(io.LimitReader(r.Body, int64(limit)+1))
 	if err != nil || len(buf) > limit {
-		r.Body = io.NopCloser(io.MultiReader(bytes.NewReader(buf), r.Body))
-		h.Upstream.ServeHTTP(w, r)
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Header().Set("Connection", "close")
+		w.WriteHeader(http.StatusRequestEntityTooLarge) // axum's DefaultBodyLimit layer
+		_, _ = io.WriteString(w, "Failed to buffer the request body: length limit exceeded")
 		return nil, false
 	}
 	return buf, true
 }
 
-func (h *Handler) proxy(w http.ResponseWriter, r *http.Request, body []byte) {
-	r.Body = io.NopCloser(bytes.NewReader(body))
-	h.Upstream.ServeHTTP(w, r)
+func plain(w http.ResponseWriter, status int, body string) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.WriteHeader(status)
+	_, _ = io.WriteString(w, body)
 }
+
+// checkJSON is the Json<T> extractor in front of a handler: false after it has answered a body serde refuses.
+// An empty array is the sequence form of a struct whose fields all have defaults; it is read as {}.
+func (h *Handler) checkJSON(w http.ResponseWriter, r *http.Request, buf []byte, spec serdejson.Spec) ([]byte, bool) {
+	if !isJSON(r) {
+		plain(w, http.StatusUnsupportedMediaType, "Expected request with `Content-Type: application/json`")
+		return nil, false
+	}
+	if status, msg := serdejson.StructError(buf, spec); status != 0 {
+		plain(w, status, msg)
+		return nil, false
+	}
+	if strings.TrimSpace(string(buf)) == "[]" {
+		return []byte("{}"), true
+	}
+	return buf, true
+}
+
+// rejectJSON answers a body axum's Json<T> extractor would refuse, with the wording serde gives.
+func (h *Handler) rejectJSON(w http.ResponseWriter, r *http.Request, buf []byte, spec serdejson.Spec) {
+	if !isJSON(r) {
+		plain(w, http.StatusUnsupportedMediaType, "Expected request with `Content-Type: application/json`")
+		return
+	}
+	if status, msg := serdejson.StructError(buf, spec); status != 0 {
+		plain(w, status, msg)
+		return
+	}
+	plain(w, http.StatusUnprocessableEntity, "Failed to deserialize the JSON body into the target type: invalid request body")
+}
+
+// rejectForm answers what axum's Form<T> extractor refuses: another content type, or a repeated field.
+func rejectForm(w http.ResponseWriter, r *http.Request, buf []byte, keys ...string) {
+	if !isForm(r) {
+		plain(w, http.StatusUnsupportedMediaType, "Form requests must have `Content-Type: application/x-www-form-urlencoded`")
+		return
+	}
+	_, dup := form(buf, keys...)
+	plain(w, http.StatusUnprocessableEntity, "Failed to deserialize form body: duplicate field `"+dup+"`")
+}
+
+var (
+	authzFields = []serdejson.Field{{Name: "client_id", Default: true}, {Name: "redirect_uri", Default: true}, {Name: "response_type", Default: true},
+		{Name: "code_challenge", Default: true}, {Name: "code_challenge_method", Default: true}, {Name: "resource", Default: true},
+		{Name: "state", Optional: true, Default: true}, {Name: "scope", Optional: true, Default: true}}
+	authzSpec     = serdejson.Spec{Name: "AuthzParams", Fields: authzFields}
+	authorizeSpec = serdejson.Spec{Name: "AuthorizeReq", Flatten: true, Fields: append(flat(authzFields),
+		serdejson.Field{Name: "workspace_id", Kind: serdejson.UUID}, serdejson.Field{Name: "approve", Kind: serdejson.Bool})}
+	registerSpec = serdejson.Spec{Name: "RegisterReq", Fields: []serdejson.Field{{Name: "client_name", Default: true},
+		{Name: "redirect_uris", Default: true, Kind: serdejson.StrList}, {Name: "token_endpoint_auth_method", Optional: true, Default: true},
+		{Name: "grant_types", Optional: true, Default: true, Kind: serdejson.StrList}, {Name: "response_types", Optional: true, Default: true, Kind: serdejson.StrList}}}
+)
 
 var surrogateEsc = regexp.MustCompile(`(?i)\\u[d][89a-f]`)
 
@@ -225,10 +283,7 @@ func jsonObject(b []byte) (map[string]json.RawMessage, bool) {
 		if dec.Decode(&v) != nil {
 			return nil, false
 		}
-		if _, dup := o[ks]; dup {
-			return nil, false
-		}
-		o[ks] = v
+		o[ks] = v // a repeated unknown key is fine to serde; repeated known ones were refused by checkJSON
 	}
 	if t, err := dec.Token(); err != nil || t != json.Delim('}') {
 		return nil, false
@@ -286,24 +341,47 @@ func (f *fields) boolean(k string) bool {
 }
 
 // form parses an urlencoded body; ok=false when serde_urlencoded might disagree (bad escapes, ';', repeated keys).
-func form(b []byte, keys ...string) (map[string]string, bool) {
-	if !utf8.Valid(b) {
-		return nil, false
-	}
-	vals, err := url.ParseQuery(string(b))
-	if err != nil {
-		return nil, false
-	}
-	out := map[string]string{}
+// form is serde_urlencoded for a struct of Option<String>: '+' is a space, bad escapes stay as written, invalid UTF-8
+// becomes U+FFFD. A repeated key is a serde error: dup names it and ok is false.
+func form(b []byte, keys ...string) (out map[string]string, dup string) {
+	out = map[string]string{}
+	want := map[string]bool{}
 	for _, k := range keys {
-		if v := vals[k]; len(v) > 1 {
-			return nil, false
-		} else if len(v) == 1 {
-			out[k] = v[0]
-		}
+		want[k] = true
 	}
-	return out, true
+	for _, pair := range strings.Split(string(b), "&") {
+		if pair == "" {
+			continue
+		}
+		k, v, _ := strings.Cut(pair, "=")
+		k, v = formDecode(k), formDecode(v)
+		if !want[k] {
+			continue
+		}
+		if _, seen := out[k]; seen && dup == "" {
+			dup = k
+		}
+		out[k] = v
+	}
+	return out, dup
 }
+
+func formDecode(s string) string {
+	s = strings.ReplaceAll(s, "+", " ")
+	var b []byte
+	for i := 0; i < len(s); i++ {
+		if s[i] == '%' && i+2 < len(s)+0 && i+2 <= len(s)-1+0 && isHex(s[i+1]) && isHex(s[i+2]) {
+			n, _ := strconv.ParseUint(s[i+1:i+3], 16, 8)
+			b = append(b, byte(n))
+			i += 2
+			continue
+		}
+		b = append(b, s[i])
+	}
+	return strings.ToValidUTF8(string(b), "\uFFFD")
+}
+
+func isHex(c byte) bool { return c >= '0' && c <= '9' || c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F' }
 
 // ---------- helpers ----------
 
@@ -475,10 +553,14 @@ func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	buf, ok = h.checkJSON(w, r, buf, registerSpec)
+	if !ok {
+		return
+	}
 	o, valid := jsonObject(buf)
-	f := &fields{o: o, ok: valid && isJSON(r)}
+	f := &fields{o: o, ok: valid}
 	if !f.ok {
-		h.proxy(w, r, buf)
+		h.rejectJSON(w, r, buf, registerSpec)
 		return
 	}
 	name, _ := f.str("client_name", false)
@@ -487,7 +569,7 @@ func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
 	grants, hasGrants := f.strList("grant_types", true)
 	resps, hasResps := f.strList("response_types", true)
 	if !f.ok {
-		h.proxy(w, r, buf)
+		h.rejectJSON(w, r, buf, registerSpec)
 		return
 	}
 	if _, ok := baseOf(r); !ok {
@@ -518,11 +600,7 @@ func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, u := range uris {
-		msg, sure := validateRedirectURI(u)
-		if !sure {
-			h.proxy(w, r, buf)
-			return
-		}
+		msg, _ := validateRedirectURI(u)
 		if msg != "" {
 			bad(w, "invalid_redirect_uri", msg)
 			return
@@ -551,4 +629,12 @@ func contains(l []string, s string) bool {
 		}
 	}
 	return false
+}
+
+func flat(fs []serdejson.Field) []serdejson.Field {
+	out := slices.Clone(fs)
+	for i := range out {
+		out[i].Flat = true
+	}
+	return out
 }

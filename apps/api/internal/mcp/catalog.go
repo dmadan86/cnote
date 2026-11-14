@@ -92,3 +92,19 @@ func (s *Server) resolve(name string) (entry, bool) {
 	}
 	return entry{}, false
 }
+
+// InputSchema is the JSON Schema of a command's input: Rust's (catalog snapshot) when Rust has the command, else
+// the Go-only command's own. nil when neither is known.
+func InputSchema(reg *command.Registry, name string) json.RawMessage {
+	for _, e := range rustEntries() {
+		if e.Name == name {
+			return e.Schema
+		}
+	}
+	for _, c := range reg.List() {
+		if c.Name == name {
+			return c.Schema
+		}
+	}
+	return nil
+}
