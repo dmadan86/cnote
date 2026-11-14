@@ -31,15 +31,17 @@ func sha256Hex(s string) string {
 	return hex.EncodeToString(h[:])
 }
 
-func cookie(h http.Header, name string) string {
+// cookie returns the first cookie called name; ok is true even when its value is empty (Rust treats that as a
+// presented, expired session rather than a missing one).
+func cookie(h http.Header, name string) (string, bool) {
 	for _, line := range h.Values("Cookie") {
 		for _, kv := range strings.Split(line, ";") {
 			if k, v, ok := strings.Cut(strings.TrimSpace(kv), "="); ok && k == name {
-				return v
+				return v, true
 			}
 		}
 	}
-	return ""
+	return "", false
 }
 
 func bearer(h http.Header) (string, bool) {
@@ -47,10 +49,10 @@ func bearer(h http.Header) (string, bool) {
 	return strings.TrimSpace(v), ok
 }
 
-func sessionToken(h http.Header) string {
+func sessionToken(h http.Header) (string, bool) {
 	if b, ok := bearer(h); ok {
 		if t, ok := strings.CutPrefix(b, nativeSessionPrefix); ok {
-			return t
+			return t, true
 		}
 	}
 	return cookie(h, SessionCookie)
@@ -75,8 +77,8 @@ func (a *Auth) PrincipalFor(ctx context.Context, h http.Header, workspaceID stri
 		}
 		return p, nil
 	}
-	token := sessionToken(h)
-	if token == "" {
+	token, present := sessionToken(h)
+	if !present {
 		return command.Principal{}, command.NewError(command.Unauthenticated, "sign in required")
 	}
 	var userID string

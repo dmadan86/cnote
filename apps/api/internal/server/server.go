@@ -47,6 +47,9 @@ const maxBody = 2 << 20
 // which would make the proxy visibly different from Rust.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Request-Id", requestID(r))
+	if s.authSurface(w, r) {
+		return
+	}
 	switch {
 	case r.Method == http.MethodGet && r.URL.Path == "/healthz":
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")

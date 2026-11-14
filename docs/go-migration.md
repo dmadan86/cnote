@@ -534,3 +534,31 @@ Dr 1310 GST paid on advances / Cr output GST; apply Dr 2300 / Cr receivables and
 share; refund reverses the unapplied part. Accounts are seeded lazily and can be changed in workspace settings
 (`advance_account`, `advance_gst_account`). `report.gstr1` adds `advances_11a` / `advances_adjusted_11b` only in months
 that have advances. `receipt.refund` can be held by an approval rule. Receipts can be shared with `share.create`.
+
+## Auth and HTTP surface (Wave 3, `port/auth`)
+
+Go now serves `POST /api/auth/signup|login|logout`, `GET /api/auth/me`, `POST /api/workspaces`, `GET /api/commands`,
+`POST /api/marketplace/token`, `POST /api/hooks/github/{ws}` and `GET /healthz` itself (`internal/server/authapi.go`,
+accounts in `internal/auth/accounts.go`). OAuth (`/oauth/*`, `/api/oauth/*`) and `/mcp` are not part of this.
+
+- Passwords: argon2id v19 `m=19456,t=2,p=1`, 16-byte salt, 32-byte output, PHC string (`golang.org/x/crypto/argon2`,
+  the only new dependency). Verification reads the parameters stored in the hash, so every Rust hash verifies in Go
+  and the reverse. Sessions are `core.sessions` rows keyed by sha256(token), 30 days, so a session made by either
+  server works on the other. Cookie, `Max-Age=0` on logout and `Secure` (`COOKIE_SECURE=1|true`) are byte for byte.
+  Native clients (`x-cnote-client: native`) also get `"token":"cs_<token>"`.
+- Like Rust there is no login throttle and no hashing for unknown emails; keep that in mind before exposing it.
+- Everything axum would reject before the handler (non-JSON content type: Go answers the same 415; bad JSON, wrong
+  field types, duplicate keys, lone surrogates, NUL escapes, odd UUID spellings, wrong methods) is replayed to Rust, so
+  the error texts stay Rust's. Auth decisions are native.
+- `POST /api/workspaces` and signup with `workspace_name` run the same bootstrap hooks Rust registers: the General
+  space (core), the two docs templates (docs) and the chart of accounts (finance). A new module with a Rust
+  `workspace_hooks` entry must be added to `Auth.CreateWorkspace`.
+- `GET /api/commands` is `internal/server/catalog.json`, a snapshot of Rust's response (descriptions and schemars input
+  schemas have no Go source), plus Go-only commands from their MCP metadata, sorted by name. Regenerate after a Rust
+  command changes: `curl -s localhost:4000/api/commands > apps/api/internal/server/catalog.json`.
+  `TestDifferentialCommandCatalog` fails when it drifts.
+- Marketplace token: 4 KiB body, per-IP bucket (20 burst, 1/s; `TRUST_PROXY=1|true` trusts the first
+  `X-Forwarded-For` IP), one `invalid_grant` for every failure, `Cache-Control: no-store`, constant-time secret compare.
+  The bucket is in-process like Rust's, so a client can briefly use both servers' budgets.
+- GitHub webhook: the HMAC-SHA256 signature is checked in constant time before the body is parsed; evidence is recorded
+  through the Go `evidence.record` as the system principal. A signed body that is not JSON is replayed to Rust.

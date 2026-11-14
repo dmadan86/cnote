@@ -429,3 +429,7 @@ func confirmationDecide(c *command.Ctx, b json.RawMessage) (any, error) {
 	_, e = c.Emit("confirmation.decided", nil, map[string]any{"confirmation_id": uid, "command": cmd, "status": status})
 	return map[string]string{"status": status}, e
 }
+
+// NewKey and Slugify are exported for the HTTP surface (marketplace token exchange, workspace creation).
+func NewKey() (string, string, string, error) { return newKey() }
+func Slugify(s string) string                 { return slugify(s) }

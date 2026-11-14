@@ -27,7 +27,12 @@ func envFloat(k string, def float64) float64 {
 }
 
 func checkRate(key string) error {
-	cap, refill := envFloat("FAIR_USE_BURST", 240), envFloat("FAIR_USE_PER_SEC", 20)
+	return CheckRateWith(key, envFloat("FAIR_USE_BURST", 240), envFloat("FAIR_USE_PER_SEC", 20))
+}
+
+// CheckRateWith is ratelimit::check_with: same bucket store, explicit burst and refill per second
+// (unauthenticated endpoints use tighter limits).
+func CheckRateWith(key string, cap, refill float64) error {
 	if len(key) > 128 {
 		key = key[:128]
 	}
