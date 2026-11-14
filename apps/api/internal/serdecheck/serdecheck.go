@@ -53,6 +53,7 @@ const Generic = "unsupported value"
 
 type walker struct {
 	defs map[string]any
+	prop string // the property being checked
 }
 
 // Describe returns the message after "invalid input: " for the input of command `name`.
@@ -175,6 +176,7 @@ func (w *walker) object(sc map[string]any, obj map[string]any) string {
 	sort.Strings(keys)
 	for _, k := range keys {
 		if p, ok := props[k]; ok {
+			w.prop = k
 			if msg := w.value(p, obj[k]); msg != "" {
 				return msg
 			}
@@ -270,12 +272,16 @@ func (w *walker) value(s any, v any) string {
 			case "date":
 				return fmt.Sprintf("invalid type: %s, expected a formatted date string", unexpected(v))
 			case "date-time":
-				return fmt.Sprintf("invalid type: %s, expected a formatted date and time string", unexpected(v))
+				return fmt.Sprintf("invalid type: %s, expected an RFC 3339 formatted date and time string", unexpected(v))
 			}
 			return fmt.Sprintf("invalid type: %s, expected a string", unexpected(v))
 		}
-		if format == "date" {
+		switch format {
+		case "date":
 			return chronoDate(str)
+		case "date-time":
+			_, msg := ParseDateTime(str)
+			return msg
 		}
 		if format == "uuid" {
 			if _, msg := uuidparse.Parse(str); msg != "" {
@@ -293,6 +299,9 @@ func (w *walker) value(s any, v any) string {
 			exp := "f64"
 			if format == "float" {
 				exp = "f32"
+			}
+			if w.prop == "quantity" { // Option<serde_json::Number>
+				exp = "a JSON number"
 			}
 			return fmt.Sprintf("invalid type: %s, expected %s", unexpected(v), exp)
 		}
@@ -316,6 +325,10 @@ func (w *walker) value(s any, v any) string {
 				}
 				if name == "" {
 					return ""
+				}
+				if arr, isArr := v.([]any); isArr && len(arr) == 0 { // the positional form of a nested struct
+					n := len(m["properties"].(map[string]any))
+					return fmt.Sprintf("invalid length 0, expected struct %s with %d element%s", name, n, plural(n))
 				}
 				return fmt.Sprintf("invalid type: %s, expected struct %s", unexpected(v), name)
 			}
@@ -642,4 +655,119 @@ func parseChronoDate(s string) (string, string) {
 		return s, ""
 	}
 	return fmt.Sprintf("%04d-%02d-%02d", y, m, d), ""
+}
+
+// ParseDateTime is chrono's DateTime<Utc> from a string: lenient about 't', ' ' and a space before the offset, and
+// the error chrono gives otherwise ("" for a valid one).
+func ParseDateTime(s string) (time.Time, string) {
+	const (
+		invalid = "input contains invalid characters"
+		short   = "premature end of input"
+	)
+	i := 0
+	for i < len(s) && s[i] == ' ' {
+		i++
+	}
+	num := func(maxDigits int) (int, string) {
+		start := i
+		for i < len(s) && i-start < maxDigits && s[i] >= '0' && s[i] <= '9' {
+			i++
+		}
+		if i == start {
+			if i >= len(s) {
+				return 0, short
+			}
+			return 0, invalid
+		}
+		n, _ := strconv.Atoi(s[start:i])
+		return n, ""
+	}
+	lit := func(set string) string {
+		if i >= len(s) {
+			return short
+		}
+		if !strings.ContainsRune(set, rune(s[i])) {
+			return invalid
+		}
+		i++
+		return ""
+	}
+	var f [6]int
+	steps := []struct {
+		digits int
+		after  string
+	}{{4, "-"}, {2, "-"}, {2, "Tt "}, {2, ":"}, {2, ":"}, {2, ""}}
+	for k, st := range steps {
+		n, msg := num(st.digits)
+		if msg != "" {
+			return time.Time{}, msg
+		}
+		f[k] = n
+		if st.after != "" {
+			if msg := lit(st.after); msg != "" {
+				return time.Time{}, msg
+			}
+		}
+	}
+	nanos := 0
+	if i < len(s) && s[i] == '.' {
+		i++
+		start := i
+		for i < len(s) && s[i] >= '0' && s[i] <= '9' {
+			i++
+		}
+		if i == start {
+			if i >= len(s) {
+				return time.Time{}, short
+			}
+			return time.Time{}, invalid
+		}
+		frac := (s[start:i] + "000000000")[:9]
+		nanos, _ = strconv.Atoi(frac)
+	}
+	for i < len(s) && s[i] == ' ' {
+		i++
+	}
+	if i >= len(s) {
+		return time.Time{}, short
+	}
+	off := 0
+	switch s[i] {
+	case 'Z', 'z':
+		i++
+	case '+', '-':
+		sign := 1
+		if s[i] == '-' {
+			sign = -1
+		}
+		i++
+		h, msg := num(2)
+		if msg != "" {
+			return time.Time{}, msg
+		}
+		if i < len(s) && s[i] == ':' {
+			i++
+		}
+		m, msg := num(2)
+		if msg != "" {
+			return time.Time{}, msg
+		}
+		if h > 23 || m > 59 {
+			return time.Time{}, "input is out of range"
+		}
+		off = sign * (h*3600 + m*60)
+	default:
+		return time.Time{}, invalid
+	}
+	if i < len(s) {
+		return time.Time{}, "trailing input"
+	}
+	y, mo, d, hh, mi, ss := f[0], f[1], f[2], f[3], f[4], f[5]
+	if mo < 1 || mo > 12 || d < 1 || d > 31 || hh > 23 || mi > 59 || ss > 60 || d > time.Date(y, time.Month(mo)+1, 0, 0, 0, 0, 0, time.UTC).Day() {
+		return time.Time{}, "input is out of range"
+	}
+	if ss == 60 { // a leap second reads as the next second's start
+		ss = 59
+	}
+	return time.Date(y, time.Month(mo), d, hh, mi, ss, nanos, time.FixedZone("", off)).UTC(), ""
 }

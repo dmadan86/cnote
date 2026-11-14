@@ -94,7 +94,7 @@ func TestDifferentialRestoreLiveDocument(t *testing.T) {
 		// restored content is the new live document; type again and restore the version before
 		r.typeInto(port, "owner", r.v("p1"), " again")
 		revs = r.list("owner", "note.revisions", map[string]any{"note_id": r.v("p1")})
-		r.call("owner", "note.restore", map[string]any{"note_id": r.v("p1"), "revision_id": revs[1]["id"].(string)})
+		r.call("owner", "note.restore", map[string]any{"note_id": r.v("p1"), "revision_id": revs[len(revs)-1]["id"].(string)})
 		r.call("owner", "note.restore", map[string]any{"note_id": r.v("p1"), "revision_id": revs[0]["id"].(string), "expected_epoch": 2})
 	}
 	_, gov := runTwin(t, script, map[string]string{

@@ -44,7 +44,15 @@ func parseDate(s string) time.Time {
 	return t
 }
 
-func fmtDate(t time.Time) string { return t.Format("2006-01-02") }
+func fmtDate(t time.Time) string { return pgDate(t.Format("2006-01-02")) }
+
+// pgDate is a YYYY-MM-DD text as Postgres reads it: chrono's year 0 is 1 BC there.
+func pgDate(s string) string {
+	if strings.HasPrefix(s, "0000-") {
+		return "0001-" + s[5:] + " BC"
+	}
+	return s
+}
 
 // todayIST is today in India (UTC+5:30).
 func todayIST() time.Time {

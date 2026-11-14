@@ -147,7 +147,7 @@ func gstSummary(c *command.Ctx, input json.RawMessage) (any, error) {
 		   join core.notes n on n.id = i.note_id
 		 where i.status <> 'draft' and i.invoice_date between $1::date and $2::date and n.space_id = any($3::text[]::uuid[])
 		   and core.note_access(n.id, $4::uuid, $5, $3::text[]::uuid[]) <> 'none'
-		 group by 1, 2 order by 1, 2`, from, to, spaces, uid, admin)
+		 group by 1, 2 order by 1, 2`, pgDate(from), pgDate(to), spaces, uid, admin)
 	if err != nil {
 		return nil, command.DB(err)
 	}
@@ -219,8 +219,7 @@ func monthRange(period string) (time.Time, time.Time, error) {
 	if err != nil || m < 1 || m > 12 {
 		return time.Time{}, time.Time{}, bad
 	}
-	if y < 1 || y > 9999 {
-		// chrono accepts a wider year range than Postgres dates round-trip; the period is simply refused
+	if y < 0 || y > 262142 { // chrono's range; negative years (BC) are refused here
 		return time.Time{}, time.Time{}, bad
 	}
 	start := time.Date(int(y), time.Month(m), 1, 0, 0, 0, 0, time.UTC)
@@ -455,7 +454,7 @@ func exportTally(c *command.Ctx, input json.RawMessage) (any, error) {
 		   left join billing.payments p on e.source_type = 'payment' and p.id = e.source_id
 		   left join billing.invoices i on i.note_id = case when e.source_type = 'payment' then p.invoice_id else e.source_id end
 		   left join core.notes c on c.id = i.contact_id
-		 where e.posted_at >= $1::date and e.posted_at < $2::date + 1 order by e.posted_at, e.id`, from, to)
+		 where e.posted_at >= $1::date and e.posted_at < $2::date + 1 order by e.posted_at, e.id`, pgDate(from), pgDate(to))
 	if err != nil {
 		return nil, command.DB(err)
 	}

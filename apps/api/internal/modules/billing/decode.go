@@ -136,9 +136,9 @@ func (o obj) optBool(k string) (*bool, error) {
 
 var dateRe = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
 
-// validDate accepts YYYY-MM-DD for years 0001-9999 (year 0 and wider years fall back: chrono and Postgres BC text differ).
+// validDate accepts YYYY-MM-DD for years 0000-9999 (chrono also takes wider and negative years; those are refused).
 func validDate(s string) bool {
-	if !dateRe.MatchString(s) || s[:4] == "0000" {
+	if !dateRe.MatchString(s) {
 		return false
 	}
 	_, err := time.Parse("2006-01-02", s)

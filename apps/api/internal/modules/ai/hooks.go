@@ -21,6 +21,7 @@ import (
 
 	"github.com/cnote/api/internal/command"
 	"github.com/cnote/api/internal/modules/notes"
+	"github.com/cnote/api/internal/serdecheck"
 )
 
 // Outbound hooks (crates/cnote-ai/src/hooks.rs): the five Admin commands. Queued deliveries, retries and the
@@ -226,17 +227,16 @@ func anyOf(s []string, f func(string) bool) bool {
 	return false
 }
 
-// optTime is Option<DateTime<Utc>>; anything this strict RFC 3339 parser rejects goes to Rust.
+// optTime is Option<DateTime<Utc>>; what chrono's parser rejects is worded by serdecheck.
 func optTime(o notes.Obj, k string) (*time.Time, error) {
 	s, err := o.OptStr(k)
 	if err != nil || s == nil {
 		return nil, err
 	}
-	t, err := time.Parse(time.RFC3339Nano, *s)
-	if err != nil {
+	t, msg := serdecheck.ParseDateTime(*s)
+	if msg != "" {
 		return nil, command.ErrFallback
 	}
-	t = t.UTC()
 	return &t, nil
 }
 

@@ -768,7 +768,7 @@ and fuzz-compared with Rust (`TestSerdeJSONErrorsMatchRust`, 40 000 mutations cl
 
 `TestUUIDErrorsMatchRust`, `TestRequestBodyRejectionsMatchRust` and `TestSerdeInputErrorsMatchRust` compare these
 byte for byte with the running Rust server (the last one over every Rust command and every wrongly typed field:
-322 of 323 refusals identical, see below).
+every refusal identical except the tagged-enum commands the test skips, see below).
 
 **Known differences (all in error wording or exotic input, never in status or JSON shape)**
 
