@@ -19,7 +19,7 @@ var SubjectCatalog = map[string]string{
 	"crm.activities.note_id": "export", "crm.contacts.note_id": "export", "billing.invoices.note_id": "export (as the invoice)",
 	"core.relations.from_id": "export", "core.relations.to_id": "export",
 	"billing.receipts.contact_id": "export (when billing.receipts exists)", "billing.receipts.note_id": "export (as the receipt)",
-	"crm.deals.note_id": "export (as the deal)", "crm.tickets.contact_id": "export", "crm.tickets.note_id": "export (as the ticket)", "core.data_requests.subject_note_id": "request log: ids and counts only",
+	"crm.deals.note_id": "export (as the deal)", "crm.tickets.contact_id": "export", "crm.tickets.note_id": "export (as the ticket)", "crm.ticket_messages.ticket_id": "export (ticket_messages)", "crm.portal_tokens.contact_id": "sign-in token hashes; deleted on erase", "core.data_requests.subject_note_id": "request log: ids and counts only",
 	"core.notes.parent_id":                         "structure only: child pages are other records",
 	"core.confirmations.note_id":                   "approval requests name the document, not the person",
 	"core.note_permissions.note_id":                "access control, no personal data of the subject",
@@ -117,6 +117,7 @@ func exportSubject(c *command.Ctx, raw json.RawMessage) (any, error) {
 		put("comments", `select id, author_name, body, created_at from core.comments where note_id = $1::uuid order by created_at`, contact)
 		put("tickets", `select t.*, n.title from crm.tickets t join core.notes n on n.id = t.note_id where t.contact_id = $1::uuid order by t.created_at`, contact)
 		put("ticket_replies", `select c.note_id, c.id, c.author_name, c.body, c.created_at from core.comments c join crm.tickets t on t.note_id = c.note_id where t.contact_id = $1::uuid order by c.created_at`, contact)
+		put("ticket_messages", `select m.ticket_id, m.id, m.origin, m.body, m.created_at from crm.ticket_messages m join crm.tickets t on t.note_id = m.ticket_id where t.contact_id = $1::uuid order by m.created_at`, contact)
 		put("attachments", `select id, filename, content_type, size_bytes, created_at from core.attachments where note_id = $1::uuid`, contact)
 		put("invoices", `select i.* from billing.invoices i where i.contact_id = $1::uuid order by i.invoice_date`, contact)
 		put("payments", `select p.* from billing.payments p join billing.invoices i on i.note_id = p.invoice_id where i.contact_id = $1::uuid order by p.received_at`, contact)
@@ -273,6 +274,8 @@ func eraseSubject(c *command.Ctx, raw json.RawMessage) (any, error) {
 	exec("comments", `update core.comments set body = '[erased]', anchor_text = null, anchor_prefix = null, author_name = null where note_id = $1::uuid`)
 	exec("tickets", `update crm.tickets set description = '[erased]' where contact_id = $1::uuid`)
 	exec("ticket_replies", `update core.comments set body = '[erased]', anchor_text = null, anchor_prefix = null, author_name = null where note_id in (select note_id from crm.tickets where contact_id = $1::uuid)`)
+	exec("ticket_messages", `update crm.ticket_messages set body = '[erased]', message_id = null where ticket_id in (select note_id from crm.tickets where contact_id = $1::uuid)`)
+	exec("portal_tokens", `delete from crm.portal_tokens where contact_id = $1::uuid`)
 	exec("search_chunks", `delete from ai.chunks where note_id = $1::uuid or note_id in (select note_id from crm.tickets where contact_id = $1::uuid)`)
 	exec("collab_log", `delete from core.note_updates where note_id = $1::uuid`)
 	if err != nil {

@@ -2,7 +2,7 @@ package leads
 
 // Support tickets (WP12): a ticket is a typed note ('ticket') linked to a CRM contact or company, optionally an
 // invoice and a project (space). Replies are the ordinary note comments (comment.add / comment.list).
-// Deferred: email-to-ticket, customer portal, business-hours SLA, first-response SLA, canned replies.
+// Deferred: business-hours SLA, first-response SLA, canned replies. Email-in, customer replies and the portal: support.go, mailin.go, portal.go.
 
 import (
 	"context"
@@ -274,7 +274,7 @@ type ticketFilter struct {
 
 const ticketCols = `n.id::text, n.title, t.status, t.priority, t.assignee_id::text, coalesce(u.name,''), t.contact_id::text, coalesce(cn.title,''), ct.phone,
 	t.invoice_id::text, t.project_id::text, t.description, t.source, t.sla_due_at, t.resolved_at, t.created_at,
-	(t.status in ('open','pending') and t.sla_due_at < now())`
+	(t.status in ('open','pending') and t.sla_due_at < now()), t.number`
 
 func ticketRows(c *command.Ctx, f ticketFilter) ([]map[string]any, error) {
 	spaces, err := access.ReadableSpaceIDs(c)
@@ -302,12 +302,13 @@ func ticketRows(c *command.Ctx, f ticketFilter) ([]map[string]any, error) {
 		var due, created time.Time
 		var resolved *time.Time
 		var breached bool
-		if err := rows.Scan(&id, &title, &st, &pr, &assignee, &aname, &contact, &cname, &phone, &inv, &proj, &desc, &src, &due, &resolved, &created, &breached); err != nil {
+		var number int
+		if err := rows.Scan(&id, &title, &st, &pr, &assignee, &aname, &contact, &cname, &phone, &inv, &proj, &desc, &src, &due, &resolved, &created, &breached, &number); err != nil {
 			return nil, command.DB(err)
 		}
 		out = append(out, map[string]any{"id": id, "title": title, "status": st, "priority": pr, "assignee_id": assignee, "assignee_name": aname,
 			"contact_id": contact, "contact_name": cname, "contact_phone": phone, "invoice_id": inv, "project_id": proj, "description": desc,
-			"source": src, "sla_due_at": command.Ts(due), "resolved_at": command.TsPtr(resolved), "created_at": command.Ts(created), "breached": breached})
+			"source": src, "ref": Ref(number), "sla_due_at": command.Ts(due), "resolved_at": command.TsPtr(resolved), "created_at": command.Ts(created), "breached": breached})
 	}
 	return out, command.DB(rows.Err())
 }

@@ -68,6 +68,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.WriteString(w, "ok")
 	case strings.HasPrefix(r.URL.Path, inquiryPrefix) || strings.HasPrefix(r.URL.Path, ticketPrefix):
 		s.inquiry(w, r)
+	case strings.HasPrefix(r.URL.Path, mailPrefix):
+		s.ticketMail(w, r)
+	case strings.HasPrefix(r.URL.Path, portalPrefix):
+		s.portal(w, r)
 	case strings.HasPrefix(r.URL.Path, "/api/public/"):
 		s.Public.ServeHTTP(w, r)
 	case r.Method == http.MethodGet && chatStreamRe.MatchString(r.URL.EscapedPath()):
