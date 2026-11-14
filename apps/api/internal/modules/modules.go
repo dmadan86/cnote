@@ -10,6 +10,7 @@ import (
 	"github.com/cnote/api/internal/modules/approvals"
 	"github.com/cnote/api/internal/modules/audit"
 	"github.com/cnote/api/internal/modules/billing"
+	"github.com/cnote/api/internal/modules/chat"
 	"github.com/cnote/api/internal/modules/company"
 	"github.com/cnote/api/internal/modules/crm"
 	"github.com/cnote/api/internal/modules/docs"
@@ -57,6 +58,7 @@ func Commands() []command.Command {
 	cmds = append(cmds, expenses.Commands()...)
 	cmds = append(cmds, timelog.Commands()...)
 	cmds = append(cmds, hr.Commands()...)
+	cmds = append(cmds, chat.Commands()...)
 	cmds = append(cmds, files.Commands()...)
 	return withMeta(markFinance(approvals.Wire(cmds)))
 }

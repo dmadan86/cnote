@@ -74,3 +74,8 @@ func sendMail(smtpURL, from, to, subject, body string) error {
 	}
 	return cl.Quit()
 }
+
+// SendMail is sendMail for other modules (chat mention emails).
+func SendMail(smtpURL, from, to, subject, body string) error {
+	return sendMail(smtpURL, from, to, subject, body)
+}

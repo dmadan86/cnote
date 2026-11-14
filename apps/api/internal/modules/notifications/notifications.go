@@ -40,6 +40,7 @@ type NotificationOut struct {
 	ID        string      `json:"id"`
 	Kind      string      `json:"kind"`
 	NoteID    *string     `json:"note_id"`
+	ChannelID *string     `json:"channel_id,omitempty"` // only chat mentions carry one; absent keeps page notifications identical to Rust
 	NoteTitle string      `json:"note_title"`
 	ActorName *string     `json:"actor_name"`
 	CreatedAt command.Ts  `json:"created_at"`
@@ -57,7 +58,7 @@ func list(c *command.Ctx, input json.RawMessage) (any, error) {
 		return nil, err
 	}
 	rows, err := c.Tx.Query(c.Context,
-		`select n.id::text, n.kind, n.note_id::text, n.title as note_title,
+		`select n.id::text, n.kind, n.note_id::text, n.channel_id::text, n.title as note_title,
 		        u.name as actor_name, n.created_at, n.read_at
 		   from core.notifications n
 		   left join core.users u on u.id = n.actor_user_id
@@ -72,7 +73,7 @@ func list(c *command.Ctx, input json.RawMessage) (any, error) {
 		var n NotificationOut
 		var createdAt time.Time
 		var readAt *time.Time
-		if err := rows.Scan(&n.ID, &n.Kind, &n.NoteID, &n.NoteTitle,
+		if err := rows.Scan(&n.ID, &n.Kind, &n.NoteID, &n.ChannelID, &n.NoteTitle,
 			&n.ActorName, &createdAt, &readAt); err != nil {
 			return nil, err
 		}

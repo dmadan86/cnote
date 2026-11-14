@@ -9,6 +9,7 @@ type Item = {
   id: string
   kind: string
   note_id: string | null
+  channel_id?: string
   note_title: string
   actor_name: string | null
   created_at: string
@@ -20,14 +21,17 @@ const text = (n: Item) => {
   if (n.kind === 'approval_requested') return `${who} asked for your approval: ${n.note_title || 'Untitled'}`
   if (n.kind === 'approval_decided' || n.kind === 'reminder' || n.kind === 'quote_decided')
     return n.note_title // the server wrote the sentence
+  if (n.kind === 'chat_mention') return `${who} mentioned you in ${n.note_title}`
   return `${who} mentioned you in ${n.note_title || 'Untitled'}`
 }
 const link = (ws: string, n: Item) =>
-  n.kind === 'reminder'
-    ? `/w/${ws}`
-    : n.kind.startsWith('approval')
-      ? `/w/${ws}/approvals`
-      : `/w/${ws}/n/${n.note_id}`
+  n.kind === 'chat_mention'
+    ? `/w/${ws}/chat?c=${n.channel_id}`
+    : n.kind === 'reminder'
+      ? `/w/${ws}`
+      : n.kind.startsWith('approval')
+        ? `/w/${ws}/approvals`
+        : `/w/${ws}/n/${n.note_id}`
 
 /** Bell with an unread badge (polled every 30s and on focus) and a panel of the latest notifications. */
 export function NotificationBell({ ws }: { ws: string }) {

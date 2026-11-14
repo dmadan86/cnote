@@ -17,6 +17,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { auth, cmd, type Me, type Member, type Note, type SharedNote, type Space } from '@/lib/api'
 import { MODULES, moduleOn } from '@/lib/modules'
 import { BusinessTypeChooser } from './business-type'
+import { ChatNavLink } from './chat/nav'
 import { NotificationBell } from './notifications'
 import { Palette } from './palette'
 import { PersonHoverLayer } from './person'
@@ -402,12 +403,15 @@ export function ShellView({ ws, children }: { ws: string; children: React.ReactN
             >
               <Store size={18} />
             </Link>
+            <div className="mt-auto flex flex-col gap-1">
+              <ChatNavLink ws={ws} active={active('chat')} />
+            </div>
             <Link
               href={`${base}/people`}
               aria-label="People"
               title="People"
               aria-current={active('people') ? 'page' : undefined}
-              className="mt-auto rounded-md p-2 text-muted hover:bg-hover aria-[current=page]:bg-hover aria-[current=page]:text-fg"
+              className="rounded-md p-2 text-muted hover:bg-hover aria-[current=page]:bg-hover aria-[current=page]:text-fg"
             >
               <UsersRound size={18} />
             </Link>
