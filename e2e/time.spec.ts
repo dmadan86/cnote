@@ -47,7 +47,10 @@ test('time: log on an item -> invoice unbilled hours -> entries show invoiced; m
   await page.getByLabel('Customer', { exact: true }).selectOption({ label: customer })
   await page.getByLabel('Hourly rate (INR)').fill('1000')
   await page.getByLabel('SAC').fill('998314')
+  // The profile save has no visible acknowledgement; the Time tab reads the profile when it mounts, so wait for the save to land first.
+  const saved = page.waitForResponse((r) => r.url().includes('project.billing_set') && r.ok())
   await page.getByRole('button', { name: 'Save profile' }).click()
+  await saved
   await page.getByRole('tab', { name: 'Time' }).click()
   await expect(page.getByRole('status').filter({ hasText: '1h 30m billable' })).toContainText('₹1,500.00')
   await page.getByRole('button', { name: 'Create invoice' }).click()
