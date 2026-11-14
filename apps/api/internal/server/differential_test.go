@@ -116,6 +116,7 @@ func TestDifferentialErrors(t *testing.T) {
 // Writes run on two identical fixtures (one per server). Responses must match byte for byte after replacing
 // the ids the fixtures do not share, and the resulting permission rows and events must match too.
 var tsRe = regexp.MustCompile(`\d{4}-\d\d-\d\dT[\d:.]+Z`)
+var confIDRe = regexp.MustCompile(`"confirmation_id":"[0-9a-f-]{36}"`)
 
 // settle waits until the workspace has no queued or running jobs.
 func (e *env) settle(ws string) {
@@ -157,6 +158,8 @@ func TestDifferentialSharingWrites(t *testing.T) {
 	norm := func(f *fx, b []byte) string {
 		s := string(b)
 		s = tsRe.ReplaceAllString(s, "TS")
+		// confirmations get a fresh random id on each server
+		s = confIDRe.ReplaceAllString(s, `"confirmation_id":"CONF"`)
 		for k, v := range map[string]string{e.space(f.owner): "SPACE", f.page: "PAGE", f.kid: "KID", f.hidden: "HIDDEN", f.owner.userID: "OWNER", f.member.userID: "MEMBER",
 			f.guest.userID: "GUEST", f.other.userID: "OTHER", f.owner.ws: "WS", f.member.email: "MEMBER_EMAIL", f.guest.email: "GUEST_EMAIL",
 			f.owner.email: "OWNER_EMAIL", f.other.email: "OTHER_EMAIL"} {
