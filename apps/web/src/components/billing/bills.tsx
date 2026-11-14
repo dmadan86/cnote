@@ -3,6 +3,7 @@ import { Plus, Trash2 } from 'lucide-react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { use, useState } from 'react'
+import { ApprovalBanner } from '@/components/approvals/banner'
 import { NeedSpace } from '@/components/crm/contacts'
 import { useShell } from '@/components/shell'
 import { btn, btnPrimary, ErrorText, Field, inputCls, Modal, Pill } from '@/components/ui'
@@ -487,6 +488,7 @@ export function BillView({ params }: { params: Promise<{ id: string }> }) {
         <BillPill status={b.status} />
       </div>
       <ErrorText error={err} />
+      <ApprovalBanner ws={ws} noteId={b.id} />
       {b.status === 'draft' ? (
         <>
           <DraftForm key={b.id} b={b} reload={reload} />

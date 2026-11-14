@@ -5,6 +5,7 @@ package modules
 import (
 	"github.com/cnote/api/internal/command"
 	"github.com/cnote/api/internal/modules/admin"
+	"github.com/cnote/api/internal/modules/approvals"
 	"github.com/cnote/api/internal/modules/billing"
 	"github.com/cnote/api/internal/modules/crm"
 	"github.com/cnote/api/internal/modules/docs"
@@ -36,7 +37,8 @@ func Commands() []command.Command {
 	cmds = append(cmds, purchases.Commands()...)
 	cmds = append(cmds, recurring.Commands()...)
 	cmds = append(cmds, home.Commands()...)
-	return cmds
+	cmds = append(cmds, approvals.Commands()...)
+	return approvals.Wire(cmds)
 }
 
 func Registry() *command.Registry { return command.NewRegistry(Commands()...) }

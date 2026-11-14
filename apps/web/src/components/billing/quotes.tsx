@@ -3,6 +3,7 @@ import { Plus, Trash2 } from 'lucide-react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { use, useState } from 'react'
+import { ApprovalBanner } from '@/components/approvals/banner'
 import { NeedSpace } from '@/components/crm/contacts'
 import { useShell } from '@/components/shell'
 import { btn, btnPrimary, ErrorText, Field, inputCls, Modal, Pill } from '@/components/ui'
@@ -413,6 +414,7 @@ export function QuoteView({ params }: { params: Promise<{ id: string }> }) {
         <QuotePill status={q.status} />
       </div>
       <ErrorText error={err} />
+      <ApprovalBanner ws={ws} noteId={q.id} />
       {q.status === 'draft' ? (
         <DraftForm key={q.id} q={q} reload={reload} />
       ) : (

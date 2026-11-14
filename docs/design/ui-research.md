@@ -72,3 +72,7 @@ radius (6px), pills for status/priority, one accent color for primary actions, d
 - C Note: restriction select with three plain options (anyone in the space / anyone views, listed people edit /
   only listed people), "Inherited from <page>" notice, lock icon beside restricted pages in the sidebar tree,
   "Shared with me" sidebar section, and a read-only editor for view-only people.
+
+## Approvals (WP1)
+
+Mobbin refs: Canva "Designs to review" table (https://mobbin.com/screens/476563dd-d2bd-418e-8ddf-8ba75b6130c8), Remote expense approval rule builder (https://mobbin.com/screens/5b8c1fc5-a2a0-4064-9eec-3e22ee6b6596), Square rules cards (https://mobbin.com/screens/89b02f1d-3d90-481c-b8aa-1f0859bc7f16). Codex consult applied: plain action labels, count on "Waiting for me", explicit approve label, labelled rejection field, one-sentence rule summary, per-row switch labels, stacked cards on phones, distinct empty states.

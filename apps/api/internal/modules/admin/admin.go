@@ -179,7 +179,7 @@ func listing(sql string) command.Handler {
 var memberList = listing("select m.user_id::text, u.email, u.name, m.role from core.memberships m join core.users u on u.id=m.user_id order by u.name")
 var agentList = listing("select id::text,name,kind,owner_user_id::text,scopes,created_at from core.agents order by name")
 var keyList = listing("select id::text,name,prefix,agent_id::text,scopes,last_used_at,revoked_at from core.api_keys order by created_at desc")
-var confirmationList = listing("select id::text,command,input,requested_by,status,created_at from core.confirmations where status='pending' order by created_at desc")
+var confirmationList = listing("select id::text,command,input,requested_by,status,created_at from core.confirmations where status='pending' and kind='agent' order by created_at desc")
 var usageSummary = listing("select kind,sum(quantity)::bigint as quantity from core.usage where created_at > now()-interval '30 days' group by kind order by kind")
 
 const workspaceCols = "id::text,name,slug,plan,region,settings"
@@ -419,7 +419,7 @@ func confirmationDecide(c *command.Ctx, b json.RawMessage) (any, error) {
 		status = "confirmed"
 	}
 	var cmd string
-	e = c.Tx.QueryRow(c.Context, "update core.confirmations set status=$2,confirmed_by=$3::uuid,decided_at=now() where id=$1::uuid and status='pending' returning command", uid, status, c.Principal.UserID).Scan(&cmd)
+	e = c.Tx.QueryRow(c.Context, "update core.confirmations set status=$2,confirmed_by=$3::uuid,decided_at=now() where id=$1::uuid and status='pending' and kind='agent' returning command", uid, status, c.Principal.UserID).Scan(&cmd)
 	if errors.Is(e, pgx.ErrNoRows) {
 		return nil, command.ErrNotFound("pending confirmation")
 	}

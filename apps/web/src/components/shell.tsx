@@ -1,5 +1,15 @@
 'use client'
-import { ChevronDown, ChevronRight, FileText, Lock, Plus, Search, Settings, Store } from 'lucide-react'
+import {
+  ChevronDown,
+  ChevronRight,
+  ClipboardCheck,
+  FileText,
+  Lock,
+  Plus,
+  Search,
+  Settings,
+  Store,
+} from 'lucide-react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
@@ -392,11 +402,20 @@ export function ShellView({ ws, children }: { ws: string; children: React.ReactN
               <Store size={18} />
             </Link>
             <Link
+              href={`${base}/approvals`}
+              aria-label="Approvals"
+              title="Approvals"
+              aria-current={active('approvals') ? 'page' : undefined}
+              className="mt-auto rounded-md p-2 text-muted hover:bg-hover aria-[current=page]:bg-hover aria-[current=page]:text-fg"
+            >
+              <ClipboardCheck size={18} />
+            </Link>
+            <Link
               href={`${base}/settings`}
               aria-label="Settings"
               title="Settings"
               aria-current={active('settings') ? 'page' : undefined}
-              className="mt-auto rounded-md p-2 text-muted hover:bg-hover aria-[current=page]:bg-hover aria-[current=page]:text-fg"
+              className="rounded-md p-2 text-muted hover:bg-hover aria-[current=page]:bg-hover aria-[current=page]:text-fg"
             >
               <Settings size={18} />
             </Link>

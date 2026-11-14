@@ -52,6 +52,7 @@ type Command struct {
 	Confirm       bool
 	ReturnsSecret bool
 	Handler       Handler
+	Amount        AmountFunc // set: a workspace approval rule may hold this command for a person's decision
 }
 
 func NewCommand(name string, g Group, h Handler) Command {
@@ -65,6 +66,7 @@ func NewCommand(name string, g Group, h Handler) Command {
 type ExecOptions struct {
 	IdempotencyKey *string
 	ConfirmationID *string
+	approved       bool // replay of an approved request: skip the approval gate
 }
 
 type Registry struct{ cmds map[string]Command }
@@ -164,6 +166,12 @@ func (r *Registry) run(c *Ctx, name string, input json.RawMessage, o ExecOptions
 
 	if cmd.Confirm && p.IsMachine() {
 		return r.confirm(c, cmd, input, o)
+	}
+
+	if cmd.Amount != nil && !o.approved {
+		if out, held, err := r.approvalGate(c, cmd, input); held || err != nil {
+			return out, err
+		}
 	}
 
 	out, err := cmd.Handler(c, input)
