@@ -24,7 +24,7 @@ export async function signup(page: Page, u = newUser(), { skipPicker = true } = 
   await expect(page).toHaveURL(/\/w\/[0-9a-f-]+$/)
   if (skipPicker) {
     await page
-      .getByRole('dialog', { name: /What kind of business/ })
+      .getByRole('dialog', { name: /Set up your company/ })
       .getByRole('button', { name: 'Skip' })
       .click()
     await expect(page.getByRole('dialog')).toHaveCount(0)

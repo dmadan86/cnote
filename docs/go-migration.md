@@ -413,6 +413,13 @@ input returns an `invalid` error from Go rather than `ErrFallback`. The Rust MCP
 them yet, so MCP clients cannot call them until the tool list is generated from the Go registry. Quotations never
 post to the ledger; their numbers (`QT/<FY>/<n>`) come from their own `quote:<FY>` series in `billing.sequences`.
 
+## Go-only command: contact.lifecycle
+
+`contact.lifecycle {id}` (`internal/modules/crm/lifecycle.go`, group `read`) returns one contact's `deals`, `quotes`,
+`invoices`, `projects` (items created from its visible quotes), `payments` and `outstanding_minor`. It composes
+`deal.list`, `quote.list`, `invoice.list` and `item.get` through `c.Call`, so each section obeys the same gate and
+note access as that command; payments are limited to the listed invoices. A section the caller may not read is null.
+
 ## Go-only commands: vendors and purchase bills
 
 `bill.create_draft`, `bill.update_draft`, `bill.get`, `bill.list`, `bill.record`, `bill.pay`, `bill.cancel`,
