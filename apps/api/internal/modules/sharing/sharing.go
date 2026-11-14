@@ -14,11 +14,13 @@ import (
 )
 
 func Commands() []command.Command {
+	// Changing who can open a page needs a person's approval when an agent or API key asks (like Rust).
+	confirm := func(c command.Command) command.Command { c.Confirm = true; return c }
 	return []command.Command{
 		command.NewCommand("note.permissions", command.GroupRead, permissions),
-		command.NewCommand("note.restrict", command.GroupWriteNotes, restrict),
-		command.NewCommand("note.share", command.GroupWriteNotes, share),
-		command.NewCommand("note.unshare", command.GroupWriteNotes, unshare),
+		confirm(command.NewCommand("note.restrict", command.GroupWriteNotes, restrict)),
+		confirm(command.NewCommand("note.share", command.GroupWriteNotes, share)),
+		confirm(command.NewCommand("note.unshare", command.GroupWriteNotes, unshare)),
 		command.NewCommand("note.shared_with_me", command.GroupRead, sharedWithMe),
 	}
 }

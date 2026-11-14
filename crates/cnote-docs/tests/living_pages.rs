@@ -818,3 +818,92 @@ async fn view_restricted_pages_never_leak_through_ask_score_or_templates() {
         .await;
     assert_eq!(e.unwrap_err().code, cnote_core::ErrorCode::NotFound);
 }
+
+/// A page bound to an item that changed, so the freshness worker has drafted one pending AI proposal.
+async fn proposal(t: &T, ws: Uuid, owner: &Principal) -> (Uuid, Value) {
+    let space = t.space(owner, "QA", "open").await;
+    let item = t.item(owner, space, "QA-12").await;
+    let page = t
+        .page(
+            owner,
+            space,
+            "Deploy guide",
+            "Releases are tracked in QA-12",
+        )
+        .await;
+    t.drain(ws).await;
+    let mut tx = cnote_db::begin_tenant(&t.pool, ws).await.unwrap();
+    cnote_core::events::emit(&mut tx, owner, "item.updated", Some(item), json!({}))
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    t.drain(ws).await;
+    let props = t.ok(owner, "doc.proposals", json!({})).await;
+    (page, props[0]["id"].clone())
+}
+
+/// The agent a user created: same user id and role as the owner, kind Agent.
+fn agent_of(p: &Principal) -> Principal {
+    Principal {
+        kind: cnote_core::PrincipalKind::Agent,
+        agent_id: Some(Uuid::new_v4()),
+        ..p.clone()
+    }
+}
+
+#[tokio::test]
+async fn cn_qa_ai_010_agent_cannot_approve_an_ai_proposal() {
+    let (t, ws, owner) = t().await;
+    let (page, pid) = proposal(&t, ws, &owner).await;
+    let e = t
+        .run(
+            &agent_of(&owner),
+            "doc.proposal_decide",
+            json!({"proposal_id": pid, "approve": true}),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(e.code, ErrorCode::Forbidden);
+    let n = t.ok(&owner, "note.get", json!({"id": page})).await;
+    assert!(!n["content_md"].as_str().unwrap().contains("REVISED"));
+    assert_eq!(
+        t.ok(&owner, "doc.proposals", json!({}))
+            .await
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn cn_qa_ai_007_ai_011_mcp_006_stale_proposal_is_refused_after_the_page_changed() {
+    let (t, ws, owner) = t().await;
+    let (page, pid) = proposal(&t, ws, &owner).await;
+    t.ok(
+        &owner,
+        "note.update",
+        json!({"id": page, "content_md": "Edited by a human while the AI drafted"}),
+    )
+    .await;
+    let e = t
+        .run(
+            &owner,
+            "doc.proposal_decide",
+            json!({"proposal_id": pid, "approve": true}),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(e.code, ErrorCode::Conflict);
+    let n = t.ok(&owner, "note.get", json!({"id": page})).await;
+    assert_eq!(n["content_md"], "Edited by a human while the AI drafted");
+    // The stale proposal can still be rejected, which closes it.
+    let r = t
+        .ok(
+            &owner,
+            "doc.proposal_decide",
+            json!({"proposal_id": pid, "approve": false}),
+        )
+        .await;
+    assert_eq!(r["status"], "rejected");
+}

@@ -261,19 +261,22 @@ pub fn commands() -> Vec<Command> {
             "Restrict a page: none (space rules), edit (only listed people edit) or view (only listed people open it). Sub-pages inherit.",
             ToolGroup::WriteNotes,
             handler!(note_restrict),
-        ),
+        )
+        .confirm(),
         Command::new(
             "note.share",
             "Share a page with a workspace member as viewer or editor; also gives access to the page even without access to its space.",
             ToolGroup::WriteNotes,
             handler!(note_share),
-        ),
+        )
+        .confirm(),
         Command::new(
             "note.unshare",
             "Remove a person from a page's sharing list.",
             ToolGroup::WriteNotes,
             handler!(note_unshare),
-        ),
+        )
+        .confirm(),
         Command::new(
             "note.shared_with_me",
             "Pages shared with you from spaces you cannot otherwise read.",

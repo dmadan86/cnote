@@ -651,6 +651,7 @@ dependencies = [
  "chrono",
  "cnote-core",
  "cnote-db",
+ "cnote-docs",
  "dotenvy",
  "reqwest",
  "rmcp",

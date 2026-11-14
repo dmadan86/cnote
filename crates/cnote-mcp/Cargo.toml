@@ -20,5 +20,6 @@ schemars.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+cnote-docs.workspace = true
 reqwest.workspace = true
 dotenvy.workspace = true

@@ -60,8 +60,8 @@ func (d dg) lapses(id string) string {
 func (d dg) stale(page, md string) (flag, proposal string) {
 	d.sql("update core.notes set freshness = 'stale' where id = $1::uuid", page)
 	flag = d.scalar("insert into docs.freshness_flags (workspace_id, note_id, reason) values ($1::uuid,$2::uuid,'binding_changed') returning id::text", d.ws, page)
-	proposal = d.scalar(`insert into docs.edit_proposals (workspace_id, note_id, flag_id, proposed_md, rationale)
-		values ($1::uuid,$2::uuid,$3::uuid,$4,'Ship it changed') returning id::text`, d.ws, page, flag, md)
+	proposal = d.scalar(`insert into docs.edit_proposals (workspace_id, note_id, flag_id, proposed_md, rationale, base_version)
+		select $1::uuid,$2::uuid,$3::uuid,$4,'Ship it changed', version from core.notes where id = $2::uuid returning id::text`, d.ws, page, flag, md)
 	return
 }
 
@@ -549,5 +549,77 @@ func TestDocsNestedNoteUpdateUsesTheFullGate(t *testing.T) {
 	d.ok(agent, "doc.proposal_decide", map[string]any{"proposal_id": pid, "approve": true})
 	if got := d.scalar("select string_agg(meta->>'command', ',' order by meta->>'command') from core.usage where kind = 'mcp.call'"); got != "doc.proposal_decide,note.update" {
 		t.Fatalf("usage rows: %s", got)
+	}
+}
+
+func TestCnQaAI010AgentCannotApproveAnAIProposal(t *testing.T) {
+	d, owner := newDG(t)
+	d.ok(owner, "workspace.update", map[string]any{"settings": map[string]any{"agent_tool_groups": []string{"read", "write_notes"}}})
+	key := d.ok(owner, "agent.create", map[string]any{"name": "Reviser", "scopes": []string{"read", "write_notes"}})["api_key"].(string)
+	agent := who{ws: owner.ws, bearer: key}
+	page := d.page(owner, d.space(owner, "ENG", "open"), "Deploy guide", nil, "Releases are tracked in ENG-12")
+	_, pid := d.stale(page, "Releases are tracked in ENG-12\nREVISED")
+	d.code("forbidden", agent, "doc.proposal_decide", map[string]any{"proposal_id": pid, "approve": true})
+	if strings.Contains(d.ok(owner, "note.get", map[string]any{"id": page})["content_md"].(string), "REVISED") {
+		t.Fatal("agent applied the proposal")
+	}
+	if n := len(d.list(owner, "doc.proposals", map[string]any{})); n != 1 {
+		t.Fatalf("proposal should stay pending: %d", n)
+	}
+}
+
+func TestCnQaAI007AI011MCP006StaleProposalIsRefusedAfterThePageChanged(t *testing.T) {
+	d, owner := newDG(t)
+	page := d.page(owner, d.space(owner, "ENG", "open"), "Deploy guide", nil, "Releases are tracked in ENG-12")
+	_, pid := d.stale(page, "Releases are tracked in ENG-12\nREVISED")
+	d.ok(owner, "note.update", map[string]any{"id": page, "content_md": "Edited by a human while the AI drafted"})
+	d.code("conflict", owner, "doc.proposal_decide", map[string]any{"proposal_id": pid, "approve": true})
+	if got := d.ok(owner, "note.get", map[string]any{"id": page})["content_md"]; got != "Edited by a human while the AI drafted" {
+		t.Fatalf("human edit lost: %v", got)
+	}
+	eq(t, d.ok(owner, "doc.proposal_decide", map[string]any{"proposal_id": pid, "approve": false})["status"], "rejected")
+}
+
+func TestCnQaAI012AgentPermissionChangesNeedHumanApproval(t *testing.T) {
+	d, owner := newDG(t)
+	d.ok(owner, "workspace.update", map[string]any{"settings": map[string]any{"agent_tool_groups": []string{"read", "write_notes"}}})
+	key := d.ok(owner, "agent.create", map[string]any{"name": "Editor", "scopes": []string{"read", "write_notes"}})["api_key"].(string)
+	agent := who{ws: owner.ws, bearer: key}
+	page := d.page(owner, d.space(owner, "ENG", "open"), "Board minutes", nil, "private")
+	for cmd, in := range map[string]map[string]any{
+		"note.restrict": {"note_id": page, "restriction": "view"},
+		"note.share":    {"note_id": page, "email": owner.email, "level": "view"},
+		"note.unshare":  {"note_id": page, "user_id": owner.userID},
+	} {
+		if got := d.ok(agent, cmd, in)["confirmation_required"]; got != true {
+			t.Fatalf("%s ran without approval: %v", cmd, got)
+		}
+	}
+	eq(t, d.ok(owner, "note.permissions", map[string]any{"note_id": page})["restriction"], "none")
+}
+
+func TestCnQaSecRevokedAndReadOnlyAgentKeys(t *testing.T) {
+	d, owner := newDG(t)
+	created := d.ok(owner, "agent.create", map[string]any{"name": "Reader", "scopes": []string{"read"}})
+	agent := who{ws: owner.ws, bearer: created["api_key"].(string)}
+	space := d.space(owner, "ENG", "open")
+	d.code("forbidden", agent, "note.create", map[string]any{"space_id": space, "title": "nope"})
+	d.ok(agent, "space.list", map[string]any{})
+	d.ok(owner, "apikey.revoke", map[string]any{"id": created["api_key_id"]})
+	if r := d.run(agent, "space.list", map[string]any{}); r.status != 401 {
+		t.Fatalf("revoked key: %d %s", r.status, r.body)
+	}
+}
+
+// MCP-003 (Go-only commands visible to agents). The Rust /mcp endpoint, which the Go API proxies, lists only the Rust
+// registry, so commands that exist only in Go (quote.*) cannot be found with `discover` nor run with `invoke`.
+func TestCnQaMCP003GoOnlyCommandsAreDiscoverableByAgents(t *testing.T) {
+	t.Skip("known gap: /mcp is proxied to Rust, whose registry lacks Go-only commands (quote.*); fix = Go answers tools/call discover+invoke for its native commands (merge into Rust's discover) and proxies the rest")
+	d, owner := newDG(t)
+	key := d.ok(owner, "agent.create", map[string]any{"name": "Seller"})["api_key"].(string)
+	body := map[string]any{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": map[string]any{"name": "discover", "arguments": map[string]any{"query": "quote send"}}}
+	r := d.e.do(d.e.gosv.URL, "POST", "/mcp", who{bearer: key}, body, map[string]string{"Accept": "application/json, text/event-stream"})
+	if !strings.Contains(string(r.body), "quote.send") {
+		t.Fatalf("quote.send not discoverable through /mcp: %s", r.body)
 	}
 }
