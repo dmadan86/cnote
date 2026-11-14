@@ -37,7 +37,7 @@ func New(pool *pgxpool.Pool, reg *command.Registry, upstream http.Handler) *Serv
 
 var wsRe = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
-// maxBody matches axum's default Json limit; larger bodies go to Rust to get its exact rejection.
+// maxBody matches axum's default Json limit; larger bodies get axum's exact 413 rejection.
 const maxBody = 2 << 20
 
 // ServeHTTP dispatches by hand instead of http.ServeMux: ServeMux redirects "unclean" paths (//, ..),
