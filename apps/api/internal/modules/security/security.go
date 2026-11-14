@@ -4,10 +4,14 @@
 package security
 
 import (
+	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"slices"
+	"net"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -21,7 +25,16 @@ func Commands() []command.Command {
 	get.MinRole = command.Admin
 	upd := command.NewCommand("security.update", command.GroupAdmin, update)
 	upd.MinRole, upd.Confirm = command.Owner, true
-	return []command.Command{get, upd}
+	dom := func(name string, g command.Group, h command.Handler, confirm bool) command.Command {
+		c := command.NewCommand(name, g, h)
+		c.MinRole, c.Confirm = command.Admin, confirm
+		return c
+	}
+	return []command.Command{get, upd,
+		dom("security.domain_list", command.GroupRead, domainList, false),
+		dom("security.domain_add", command.GroupAdmin, domainAdd, true),
+		dom("security.domain_verify", command.GroupAdmin, domainVerify, true),
+		dom("security.domain_remove", command.GroupAdmin, domainRemove, true)}
 }
 
 type policy struct {
@@ -30,22 +43,18 @@ type policy struct {
 	Issuer     string
 	ClientID   string
 	SecretEnc  []byte
-	Domains    []string
 	Enforce    bool
 }
 
 func load(c *command.Ctx) (policy, error) {
 	var p policy
 	var iss, cid *string
-	err := c.Tx.QueryRow(c.Context, `select require_mfa_admins, sso_enabled, sso_issuer, sso_client_id, sso_client_secret_enc, sso_allowed_domains, sso_enforce
-		from core.workspace_security where workspace_id = $1::uuid`, c.WorkspaceID()).Scan(&p.RequireMFA, &p.SSOEnabled, &iss, &cid, &p.SecretEnc, &p.Domains, &p.Enforce)
+	err := c.Tx.QueryRow(c.Context, `select require_mfa_admins, sso_enabled, sso_issuer, sso_client_id, sso_client_secret_enc, sso_enforce
+		from core.workspace_security where workspace_id = $1::uuid`, c.WorkspaceID()).Scan(&p.RequireMFA, &p.SSOEnabled, &iss, &cid, &p.SecretEnc, &p.Enforce)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return p, command.DB(err)
 	}
 	p.Issuer, p.ClientID = deref(iss), deref(cid)
-	if p.Domains == nil {
-		p.Domains = []string{}
-	}
 	return p, nil
 }
 
@@ -58,7 +67,7 @@ func deref(s *string) string {
 
 func view(p policy, extra map[string]any) map[string]any {
 	out := map[string]any{"require_mfa_admins": p.RequireMFA, "sso": map[string]any{"enabled": p.SSOEnabled, "issuer": p.Issuer, "client_id": p.ClientID,
-		"has_client_secret": len(p.SecretEnc) > 0, "allowed_domains": p.Domains, "enforce": p.Enforce}}
+		"has_client_secret": len(p.SecretEnc) > 0, "enforce": p.Enforce}}
 	for k, v := range extra {
 		out[k] = v
 	}
@@ -86,20 +95,23 @@ func get(c *command.Ctx, _ json.RawMessage) (any, error) {
 		}
 		without = append(without, map[string]string{"user_id": id, "email": email})
 	}
+	doms, err := domains(c)
+	if err != nil {
+		return nil, err
+	}
 	var slug string
 	if err := c.Tx.QueryRow(c.Context, "select slug from core.workspaces where id = $1::uuid", c.WorkspaceID()).Scan(&slug); err != nil {
 		return nil, command.DB(err)
 	}
-	return view(p, map[string]any{"admins_without_mfa": without, "sso_login_path": "/api/auth/sso/start?workspace=" + slug, "sso_callback_path": "/api/auth/sso/callback"}), rows.Err()
+	return view(p, map[string]any{"domains": doms, "admins_without_mfa": without, "sso_login_path": "/api/auth/sso/start?workspace=" + slug, "sso_callback_path": "/api/auth/sso/callback"}), rows.Err()
 }
 
 type ssoIn struct {
-	Enabled        *bool     `json:"enabled"`
-	Issuer         *string   `json:"issuer"`
-	ClientID       *string   `json:"client_id"`
-	ClientSecret   *string   `json:"client_secret"`
-	AllowedDomains *[]string `json:"allowed_domains"`
-	Enforce        *bool     `json:"enforce"`
+	Enabled      *bool   `json:"enabled"`
+	Issuer       *string `json:"issuer"`
+	ClientID     *string `json:"client_id"`
+	ClientSecret *string `json:"client_secret"`
+	Enforce      *bool   `json:"enforce"`
 }
 
 func update(c *command.Ctx, b json.RawMessage) (any, error) {
@@ -141,21 +153,6 @@ func update(c *command.Ctx, b json.RawMessage) (any, error) {
 		if s.ClientID != nil {
 			p.ClientID = strings.TrimSpace(*s.ClientID)
 		}
-		if s.AllowedDomains != nil {
-			p.Domains = []string{}
-			for _, d := range *s.AllowedDomains {
-				d = strings.ToLower(strings.TrimSpace(d))
-				if !auth.ValidDomain(d) {
-					return nil, command.ErrInvalid("allowed domain " + d + " is not valid: use your company domain, not a public mailbox provider")
-				}
-				if !slices.Contains(p.Domains, d) {
-					p.Domains = append(p.Domains, d)
-				}
-			}
-			if len(p.Domains) > 20 {
-				return nil, command.ErrInvalid("at most 20 allowed domains")
-			}
-		}
 		if s.ClientSecret != nil && *s.ClientSecret != "" {
 			key, err := secretbox.MasterKey()
 			if err != nil {
@@ -169,8 +166,12 @@ func update(c *command.Ctx, b json.RawMessage) (any, error) {
 			p.Enforce = *s.Enforce
 		}
 		if p.SSOEnabled {
-			if p.Issuer == "" || p.ClientID == "" || len(p.SecretEnc) == 0 || len(p.Domains) == 0 {
-				return nil, command.ErrInvalid("single sign-on needs an issuer URL, client id, client secret and at least one allowed domain")
+			var verified int
+			if err := c.Tx.QueryRow(c.Context, "select count(*) from core.sso_domains where workspace_id = $1::uuid and verified_at is not null", c.WorkspaceID()).Scan(&verified); err != nil {
+				return nil, command.DB(err)
+			}
+			if p.Issuer == "" || p.ClientID == "" || len(p.SecretEnc) == 0 || verified == 0 {
+				return nil, command.ErrInvalid("single sign-on needs an issuer URL, client id, client secret and at least one verified domain (security.domain_add, then security.domain_verify)")
 			}
 			if err := auth.ValidateIssuer(c.Context, p.Issuer); err != nil {
 				return nil, command.ErrInvalid("the identity provider could not be reached: " + err.Error())
@@ -180,12 +181,12 @@ func update(c *command.Ctx, b json.RawMessage) (any, error) {
 		}
 		changed = append(changed, "sso")
 	}
-	_, err = c.Tx.Exec(c.Context, `insert into core.workspace_security (workspace_id, require_mfa_admins, sso_enabled, sso_issuer, sso_client_id, sso_client_secret_enc, sso_allowed_domains, sso_enforce)
-		values ($1::uuid,$2,$3,nullif($4,''),nullif($5,''),$6,$7,$8)
+	_, err = c.Tx.Exec(c.Context, `insert into core.workspace_security (workspace_id, require_mfa_admins, sso_enabled, sso_issuer, sso_client_id, sso_client_secret_enc, sso_enforce)
+		values ($1::uuid,$2,$3,nullif($4,''),nullif($5,''),$6,$7)
 		on conflict (workspace_id) do update set require_mfa_admins = excluded.require_mfa_admins, sso_enabled = excluded.sso_enabled, sso_issuer = excluded.sso_issuer,
-		  sso_client_id = excluded.sso_client_id, sso_client_secret_enc = excluded.sso_client_secret_enc, sso_allowed_domains = excluded.sso_allowed_domains,
+		  sso_client_id = excluded.sso_client_id, sso_client_secret_enc = excluded.sso_client_secret_enc,
 		  sso_enforce = excluded.sso_enforce, updated_at = now()`,
-		c.WorkspaceID(), p.RequireMFA, p.SSOEnabled, p.Issuer, p.ClientID, p.SecretEnc, p.Domains, p.Enforce)
+		c.WorkspaceID(), p.RequireMFA, p.SSOEnabled, p.Issuer, p.ClientID, p.SecretEnc, p.Enforce)
 	if err != nil {
 		return nil, command.DB(err)
 	}
@@ -210,4 +211,132 @@ func CheckPromotion(c *command.Ctx, userID, role string) error {
 		return command.ErrInvalid("this workspace requires multi-factor authentication for admins: ask this person to turn it on in Account security before promoting them")
 	}
 	return nil
+}
+
+// LookupTXT resolves TXT records; tests replace it so no real DNS is used.
+var LookupTXT = func(ctx context.Context, name string) ([]string, error) {
+	return net.DefaultResolver.LookupTXT(ctx, name)
+}
+
+type domainRow struct {
+	Domain     string  `json:"domain"`
+	Token      string  `json:"token"`
+	Record     string  `json:"record"`
+	RecordName string  `json:"record_name"`
+	Verified   bool    `json:"verified"`
+	VerifiedAt *string `json:"verified_at"`
+}
+
+func domains(c *command.Ctx) ([]domainRow, error) {
+	rows, err := c.Tx.Query(c.Context, "select domain, token, to_char(verified_at at time zone 'utc', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') from core.sso_domains where workspace_id = $1::uuid order by domain", c.WorkspaceID())
+	if err != nil {
+		return nil, command.DB(err)
+	}
+	defer rows.Close()
+	out := []domainRow{}
+	for rows.Next() {
+		var d domainRow
+		if err := rows.Scan(&d.Domain, &d.Token, &d.VerifiedAt); err != nil {
+			return nil, command.DB(err)
+		}
+		d.Verified, d.Record, d.RecordName = d.VerifiedAt != nil, "cnote-verification="+d.Token, "_cnote."+d.Domain
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
+func domainList(c *command.Ctx, _ json.RawMessage) (any, error) { return domains(c) }
+
+func domainArg(b json.RawMessage) (string, error) {
+	var in struct {
+		Domain string `json:"domain"`
+	}
+	if json.Unmarshal(b, &in) != nil {
+		return "", command.ErrInvalid("input must be a JSON object with domain")
+	}
+	d := strings.ToLower(strings.TrimSpace(in.Domain))
+	if !auth.ValidDomain(d) {
+		return "", command.ErrInvalid("domain " + d + " is not valid: use your company domain, not a public mailbox provider")
+	}
+	return d, nil
+}
+
+// domainAdd registers a domain and returns the TXT record that proves it: cnote-verification=<token> at the domain or
+// at _cnote.<domain>. Until that record is seen the domain is ignored by single sign-on.
+func domainAdd(c *command.Ctx, b json.RawMessage) (any, error) {
+	d, err := domainArg(b)
+	if err != nil {
+		return nil, err
+	}
+	buf := make([]byte, 16)
+	_, _ = rand.Read(buf)
+	if _, err := c.Tx.Exec(c.Context, "insert into core.sso_domains (workspace_id, domain, token) values ($1::uuid,$2,$3) on conflict do nothing", c.WorkspaceID(), d, hex.EncodeToString(buf)); err != nil {
+		return nil, command.DB(err)
+	}
+	if _, err := c.Emit("security.domain_added", nil, map[string]any{"domain": d}); err != nil {
+		return nil, err
+	}
+	all, err := domains(c)
+	for _, r := range all {
+		if r.Domain == d {
+			return r, err
+		}
+	}
+	return nil, err
+}
+
+func domainVerify(c *command.Ctx, b json.RawMessage) (any, error) {
+	d, err := domainArg(b)
+	if err != nil {
+		return nil, err
+	}
+	var token string
+	if err := c.Tx.QueryRow(c.Context, "select token from core.sso_domains where workspace_id = $1::uuid and domain = $2", c.WorkspaceID(), d).Scan(&token); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, command.ErrNotFound("domain")
+		}
+		return nil, command.DB(err)
+	}
+	ctx, cancel := context.WithTimeout(c.Context, 5*time.Second)
+	defer cancel()
+	want, found := "cnote-verification="+token, false
+	for _, name := range []string{d, "_cnote." + d} {
+		txt, _ := LookupTXT(ctx, name) // a failed lookup is just "not found"
+		for _, t := range txt {
+			found = found || strings.TrimSpace(t) == want
+		}
+	}
+	if !found {
+		return nil, command.ErrInvalid("the TXT record was not found: add " + want + " as a TXT record at " + d + " or _cnote." + d + ", then try again (DNS can take a while)")
+	}
+	if _, err := c.Tx.Exec(c.Context, "update core.sso_domains set verified_at = coalesce(verified_at, now()) where workspace_id = $1::uuid and domain = $2", c.WorkspaceID(), d); err != nil {
+		return nil, command.DB(err)
+	}
+	if _, err := c.Emit("security.domain_verified", nil, map[string]any{"domain": d}); err != nil {
+		return nil, err
+	}
+	all, err := domains(c)
+	for _, r := range all {
+		if r.Domain == d {
+			return r, err
+		}
+	}
+	return nil, err
+}
+
+func domainRemove(c *command.Ctx, b json.RawMessage) (any, error) {
+	d, err := domainArg(b)
+	if err != nil {
+		return nil, err
+	}
+	tag, err := c.Tx.Exec(c.Context, "delete from core.sso_domains where workspace_id = $1::uuid and domain = $2", c.WorkspaceID(), d)
+	if err != nil {
+		return nil, command.DB(err)
+	}
+	if tag.RowsAffected() == 1 {
+		if _, err := c.Emit("security.domain_removed", nil, map[string]any{"domain": d}); err != nil {
+			return nil, err
+		}
+	}
+	return map[string]bool{"removed": tag.RowsAffected() == 1}, nil
 }

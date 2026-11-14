@@ -202,15 +202,6 @@ func (a *Auth) SignIn(ctx context.Context, email, password, ip string) (LoginRes
 		return LoginResult{}, command.NewError(command.Unauthenticated, "invalid email or password")
 	}
 	a.forget(ctx, acct)
-	var enforced bool
-	if _, dom, ok := strings.Cut(email, "@"); ok {
-		if err := a.Pool.QueryRow(ctx, "select core.sso_enforced_for($1::uuid, $2)", id, dom).Scan(&enforced); err != nil {
-			return LoginResult{}, command.DB(err)
-		}
-	}
-	if enforced {
-		return LoginResult{}, command.ErrForbidden("your organisation requires single sign-on: use Sign in with SSO")
-	}
 	if on, err := a.MFAEnabled(ctx, id); err != nil {
 		return LoginResult{}, err
 	} else if on {
