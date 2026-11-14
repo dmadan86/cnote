@@ -30,10 +30,16 @@ const STAGES: [key: string, label: string, dot: string][] = [
   ['won', 'Won', 'bg-green-600'],
   ['lost', 'Lost', 'bg-red-500'],
 ]
-const stageLabel = (k: string) => STAGES.find(([s]) => s === k)?.[1] ?? k
+/** STAGES with workspace display labels (settings.deal_stage_labels) over the defaults. */
+function useStages() {
+  const { dealLabels } = useShell()
+  const stages = STAGES.map(([k, l, d]) => [k, dealLabels?.[k] || l, d] as (typeof STAGES)[number])
+  return { stages, stageLabel: (k: string) => stages.find(([s]) => s === k)?.[1] ?? k }
+}
 
 function DealForm({ stage, onClose, onSaved }: { stage: string; onClose: () => void; onSaved: () => void }) {
   const { ws, spaces } = useShell()
+  const { stageLabel } = useStages()
   const contacts = useCmd<Contact[]>(ws, 'contact.list', { limit: 500 })
   const [err, setErr] = useState<string>()
   return (
@@ -164,6 +170,7 @@ function Column({
 
 export function Board() {
   const { ws, spaces } = useShell()
+  const { stages } = useStages()
   const deals = useCmd<Deal[]>(ws, 'deal.list', { limit: 500 })
   const contacts = useCmd<Contact[]>(ws, 'contact.list', { limit: 500 })
   const [moved, setMoved] = useState<Record<string, string>>({}) // optimistic stage per deal
@@ -197,7 +204,7 @@ export function Board() {
       <ErrorText error={err ?? deals.error} />
       <DndContext sensors={sensors} onDragEnd={onDragEnd}>
         <div className="flex gap-3 overflow-x-auto pb-4">
-          {STAGES.map((s) => (
+          {stages.map((s) => (
             <Column
               key={s[0]}
               stage={s}
@@ -224,6 +231,7 @@ export function Board() {
 
 export function DealDetail({ id }: { id: string }) {
   const { ws, spaces } = useShell()
+  const { stages } = useStages()
   const router = useRouter()
   const list = useCmd<Deal[]>(ws, 'deal.list', { limit: 500 })
   const contacts = useCmd<Contact[]>(ws, 'contact.list', { limit: 500 })
@@ -297,7 +305,7 @@ export function DealDetail({ id }: { id: string }) {
         <Field label="Stage">
           {(i) => (
             <select id={i} name="stage" defaultValue={deal.stage} className={inputCls}>
-              {STAGES.map(([k, l]) => (
+              {stages.map(([k, l]) => (
                 <option key={k} value={k}>
                   {l}
                 </option>
