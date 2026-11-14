@@ -64,7 +64,7 @@ jobs:
       - name: Start the Go API
         run: |
           (cd apps/api && go build -o ../../cnote-api ./cmd/api && go build -o ../../loadtest ./cmd/loadtest)
-          PORT=4100 RUST_API_URL=http://localhost:4000 ./cnote-api > go-api.log 2>&1 &
+          AUTH_SIGNUP_FREE=100000 AUTH_IP_FREE=100000 PORT=4100 RUST_API_URL=http://localhost:4000 ./cnote-api > go-api.log 2>&1 &
           npx --yes wait-on -t 60000 http://localhost:4100/healthz
       # Thresholds are for a shared 4-core runner; they fail the job, so tune them from the nightly history.
       - name: Load test
