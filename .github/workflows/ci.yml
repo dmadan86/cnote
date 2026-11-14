@@ -178,6 +178,10 @@ jobs:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: apps/api/go.mod
+          cache-dependency-path: apps/api/go.sum
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v5
         with:
@@ -196,20 +200,26 @@ jobs:
           echo "alter role cnote_app password :'pw';" | psql "$DATABASE_ADMIN_URL" -v pw="$DB_APP_PASSWORD"
       - run: pnpm install --frozen-lockfile
       - run: pnpm exec playwright install --with-deps chromium
+      # The browser talks to the Go API (:4100), which serves ported commands, proxies the rest to Rust (:4000)
+      # and routes live editing to the TypeScript collab service (:4300), as in production.
       - run: pnpm build:web
-      - name: Start API and web
+        env:
+          API_URL: http://localhost:4100
+          NEXT_PUBLIC_COLLAB_URL: ws://localhost:4100
+      - name: Start Rust, Go, collab and web
         run: |
           CNOTE_MASTER_KEY=$(openssl rand -base64 32) CNOTE_PLATFORM_ADMINS=@example.test COLLAB_ALLOWED_ORIGINS=http://localhost:3000 ./target/debug/cnote serve --with-worker > api.log 2>&1 &
+          (cd apps/api && go build -o ../../cnote-api ./cmd/api)
+          PORT=4100 RUST_API_URL=http://localhost:4000 COLLAB_URL=http://localhost:4300 CNOTE_PLATFORM_ADMINS=@example.test ./cnote-api > go-api.log 2>&1 &
+          COLLAB_PORT=4300 COLLAB_ALLOWED_ORIGINS=http://localhost:3000 pnpm --filter @cnote/collab start > collab.log 2>&1 &
           pnpm --filter @cnote/web start > web.log 2>&1 &
-          npx --yes wait-on -t 120000 http://localhost:4000/healthz http://localhost:3000
-        env:
-          API_URL: http://localhost:4000
+          npx --yes wait-on -t 120000 http://localhost:4000/healthz http://localhost:4100/healthz http://localhost:4300/healthz http://localhost:3000
       - run: pnpm e2e
         env:
           BASE_URL: http://localhost:3000
-          API_URL: http://localhost:4000
+          API_URL: http://localhost:4100
       - if: failure()
-        run: tail -n 200 api.log web.log
+        run: tail -n 200 api.log go-api.log collab.log web.log
       - if: failure()
         uses: actions/upload-artifact@v4
         with:
