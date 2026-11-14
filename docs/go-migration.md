@@ -405,3 +405,15 @@ Final race-suite result: 55 top-level tests / 357 including subtests passed, zer
 input returns an `invalid` error from Go rather than `ErrFallback`. The Rust MCP endpoint (`/mcp`) does not list
 them yet, so MCP clients cannot call them until the tool list is generated from the Go registry. Quotations never
 post to the ledger; their numbers (`QT/<FY>/<n>`) come from their own `quote:<FY>` series in `billing.sequences`.
+
+## Go-only commands: vendors and purchase bills
+
+`bill.create_draft`, `bill.update_draft`, `bill.get`, `bill.list`, `bill.record`, `bill.pay`, `bill.cancel`,
+`vendor.list`, `report.payables_ageing` and `report.itc_summary` (`internal/modules/purchases`, migration
+`0970_purchase_bills.sql`) exist only in Go; like `quote.*` they are not in Rust's MCP tool list. A vendor is a CRM
+contact with `is_vendor` (set through `contact.create` / `contact.update`, filter with `contact.list {vendor}`; the
+contact JSON does not expose the flag, use `vendor.list`). Recording posts Dr expense (line `account_code`, default
+5000) + Dr input CGST/SGST/IGST (1301/1302/1303) / Cr accounts payable (2100); paying posts Dr 2100 / Cr 1200;
+cancelling a recorded unpaid bill posts the exact reverse. The five purchase accounts are seeded per workspace on the
+first recorded bill (Rust seeds the original seven), so trial balances of workspaces without bills are unchanged.
+`bill.pay` and `bill.cancel` need human confirmation from machine callers.
