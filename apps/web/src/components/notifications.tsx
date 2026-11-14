@@ -18,7 +18,8 @@ type Item = {
 const text = (n: Item) => {
   const who = n.actor_name ?? 'Someone'
   if (n.kind === 'approval_requested') return `${who} asked for your approval: ${n.note_title || 'Untitled'}`
-  if (n.kind === 'approval_decided' || n.kind === 'reminder') return n.note_title // the server wrote the sentence
+  if (n.kind === 'approval_decided' || n.kind === 'reminder' || n.kind === 'quote_decided')
+    return n.note_title // the server wrote the sentence
   return `${who} mentioned you in ${n.note_title || 'Untitled'}`
 }
 const link = (ws: string, n: Item) =>
