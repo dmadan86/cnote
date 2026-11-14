@@ -161,25 +161,79 @@ func (a *Auth) SignUp(ctx context.Context, email, name, password string) (string
 	return id, command.DB(err)
 }
 
-// SignIn returns (user id, session token).
-func (a *Auth) SignIn(ctx context.Context, email, password string) (string, string, error) {
+// LoginResult is what a correct password leads to: a session, or (MFA enrolled) a step-up token and no session yet.
+type LoginResult struct {
+	UserID, Token, MFAToken string
+	MFASetupRequired        bool // a workspace needs this person's MFA and none is set up: the browser sends them to enrol
+}
+
+// dummyHash is verified for emails with no password, so the unknown-account path costs one argon2 run like any other.
+var dummyHash, _ = HashPassword("dummy password for the unknown-email path")
+
+// SignIn checks the password. Throttle first (per account and per IP, before any hashing), then one argon2 check
+// that runs for unknown emails too, against a dummy hash, so timing does not reveal which accounts exist. Every
+// failure reads the same: "invalid email or password".
+func (a *Auth) SignIn(ctx context.Context, email, password, ip string) (LoginResult, error) {
+	email = NormEmail(email)
+	acct, ipKey := "acct:"+sha256Hex(email), "ip:"+ip
+	if d, err := a.locked(ctx, acct, ipKey); err != nil || d > 0 {
+		if err != nil {
+			return LoginResult{}, err
+		}
+		return LoginResult{}, throttled(d)
+	}
 	var id string
 	var hash *string
-	err := a.Pool.QueryRow(ctx, "select id::text, password_hash from core.users where email = $1", NormEmail(email)).Scan(&id, &hash)
+	err := a.Pool.QueryRow(ctx, "select id::text, password_hash from core.users where email = $1", email).Scan(&id, &hash)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return "", "", command.DB(err)
+		return LoginResult{}, command.DB(err)
 	}
-	if err != nil || hash == nil || !VerifyPassword(password, *hash) {
-		return "", "", command.NewError(command.Unauthenticated, "invalid email or password")
+	known := err == nil && hash != nil
+	if !known {
+		VerifyPassword(password, dummyHash)
+	}
+	if !known || !VerifyPassword(password, *hash) {
+		if d, err := a.fail(ctx, acct, freeAccount()); err == nil && d > 0 {
+			a.auditLockout(ctx, id, "account", d)
+		}
+		if d, err := a.fail(ctx, ipKey, freeIP()); err == nil && d > 0 {
+			a.auditLockout(ctx, "", "ip", d)
+		}
+		return LoginResult{}, command.NewError(command.Unauthenticated, "invalid email or password")
+	}
+	a.forget(ctx, acct)
+	var enforced bool
+	if _, dom, ok := strings.Cut(email, "@"); ok {
+		if err := a.Pool.QueryRow(ctx, "select core.sso_enforced_for($1::uuid, $2)", id, dom).Scan(&enforced); err != nil {
+			return LoginResult{}, command.DB(err)
+		}
+	}
+	if enforced {
+		return LoginResult{}, command.ErrForbidden("your organisation requires single sign-on: use Sign in with SSO")
+	}
+	if on, err := a.MFAEnabled(ctx, id); err != nil {
+		return LoginResult{}, err
+	} else if on {
+		tok, err := a.NewChallenge(ctx, id)
+		return LoginResult{UserID: id, MFAToken: tok}, err
+	}
+	var need bool
+	if err := a.Pool.QueryRow(ctx, "select core.mfa_required_for($1::uuid)", id).Scan(&need); err != nil {
+		return LoginResult{}, command.DB(err)
 	}
 	tok, err := a.CreateSession(ctx, id)
-	return id, tok, err
+	return LoginResult{UserID: id, Token: tok, MFASetupRequired: need}, err
 }
 
 func (a *Auth) CreateSession(ctx context.Context, userID string) (string, error) {
+	return a.createSession(ctx, userID, "pwd", "")
+}
+
+// createSession: amr is how the person proved themselves (pwd, mfa, sso); ssoWS pins an SSO session to one workspace.
+func (a *Auth) createSession(ctx context.Context, userID, amr, ssoWS string) (string, error) {
 	tok := RandomToken(32)
-	_, err := a.Pool.Exec(ctx, "insert into core.sessions (id, user_id, expires_at) values ($1, $2::uuid, now() + make_interval(days => $3))",
-		sha256Hex(tok), userID, sessionDays)
+	_, err := a.Pool.Exec(ctx, "insert into core.sessions (id, user_id, expires_at, amr, sso_workspace_id) values ($1, $2::uuid, now() + make_interval(days => $3), $4, nullif($5,'')::uuid)",
+		sha256Hex(tok), userID, sessionDays, amr, ssoWS)
 	return tok, command.DB(err)
 }
 
@@ -195,6 +249,9 @@ type SessionUser struct {
 	ID    string `json:"id"`
 	Email string `json:"email"`
 	Name  string `json:"name"`
+
+	AMR          string `json:"-"` // pwd, mfa or sso
+	SSOWorkspace string `json:"-"` // set for an SSO session: the only workspace it may use
 }
 
 // SessionUser resolves the caller's session; errors are the Rust ones ("sign in required" / "session expired").
@@ -205,8 +262,8 @@ func (a *Auth) SessionUser(ctx context.Context, h http.Header) (SessionUser, err
 	}
 	var u SessionUser
 	err := a.Pool.QueryRow(ctx,
-		`select u.id::text, u.email, u.name from core.sessions s join core.users u on u.id = s.user_id
-		 where s.id = $1 and s.expires_at > now()`, sha256Hex(tok)).Scan(&u.ID, &u.Email, &u.Name)
+		`select u.id::text, u.email, u.name, s.amr, coalesce(s.sso_workspace_id::text, '') from core.sessions s join core.users u on u.id = s.user_id
+		 where s.id = $1 and s.expires_at > now()`, sha256Hex(tok)).Scan(&u.ID, &u.Email, &u.Name, &u.AMR, &u.SSOWorkspace)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return u, command.NewError(command.Unauthenticated, "session expired")
 	}

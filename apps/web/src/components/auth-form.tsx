@@ -1,7 +1,7 @@
 'use client'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { auth } from '@/lib/api'
 import { btnPrimary, ErrorText, Field, inputCls } from './ui'
 
@@ -10,6 +10,20 @@ export function AuthForm({ mode }: { mode: 'login' | 'signup' }) {
   const [error, setError] = useState<string>()
   const [busy, setBusy] = useState(false)
   const signup = mode === 'signup'
+  const [challenge, setChallenge] = useState<string>()
+  const [recovery, setRecovery] = useState(false)
+  const [sso, setSso] = useState(false)
+
+  // The SSO callback sends the browser back here with the reason when it refuses a sign-in.
+  useEffect(() => {
+    const m = new URLSearchParams(window.location.search).get('sso_error')
+    if (m) setError(m)
+  }, [])
+
+  function done(r: { mfa_setup_required?: boolean }) {
+    if (r.mfa_setup_required) router.push('/account/security')
+    else router.push(sameOriginPath(new URLSearchParams(window.location.search).get('next')))
+  }
 
   async function submit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
@@ -27,13 +41,118 @@ export function AuthForm({ mode }: { mode: 'login' | 'signup' }) {
         })
         router.push(r.workspace_id ? `/w/${r.workspace_id}` : '/')
       } else {
-        await auth.login({ email: get('email'), password: get('password') })
-        router.push(sameOriginPath(new URLSearchParams(window.location.search).get('next')))
+        if (challenge) {
+          done(await auth.mfaVerify({ mfa_token: challenge, code: get('code') }))
+          return
+        }
+        const r = await auth.login({ email: get('email'), password: get('password') })
+        if (r.mfa_required && r.mfa_token) {
+          setChallenge(r.mfa_token)
+          setBusy(false)
+          return
+        }
+        done(r)
       }
     } catch (err) {
       setError((err as Error).message)
       setBusy(false)
     }
+  }
+
+  if (sso) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-side p-4">
+        <form
+          action="/api/auth/sso/start"
+          method="get"
+          className="w-full max-w-sm space-y-4 rounded-lg border border-line bg-canvas p-6"
+        >
+          <h1 className="text-lg font-semibold">Company single sign-on</h1>
+          <Field label="Workspace address">
+            {(id) => (
+              <input
+                id={id}
+                name="workspace"
+                required
+                placeholder="e.g. acme"
+                autoComplete="off"
+                className={inputCls}
+              />
+            )}
+          </Field>
+          <p className="text-[12px] text-muted">
+            The short name in your workspace settings. Your administrator can tell you.
+          </p>
+          <button type="submit" className={`${btnPrimary} w-full`}>
+            Continue
+          </button>
+          <button
+            type="button"
+            className="block w-full text-center text-[13px] text-accent underline"
+            onClick={() => setSso(false)}
+          >
+            Back to password sign-in
+          </button>
+        </form>
+      </main>
+    )
+  }
+
+  if (challenge) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-side p-4">
+        <form
+          onSubmit={submit}
+          className="w-full max-w-sm space-y-4 rounded-lg border border-line bg-canvas p-6"
+        >
+          <h1 className="text-lg font-semibold">
+            {recovery ? 'Use a recovery code' : 'Enter your 6-digit code'}
+          </h1>
+          <p className="text-[13px] text-muted">
+            {recovery
+              ? 'Each recovery code works once.'
+              : 'Open your authenticator app and type the code for C Note.'}
+          </p>
+          <Field label={recovery ? 'Recovery code' : 'Authentication code'}>
+            {(id) => (
+              <input
+                id={id}
+                name="code"
+                required
+                autoComplete="one-time-code"
+                inputMode={recovery ? 'text' : 'numeric'}
+                className={inputCls}
+              />
+            )}
+          </Field>
+          <ErrorText error={error} />
+          <button type="submit" disabled={busy} className={`${btnPrimary} w-full`}>
+            Verify
+          </button>
+          <button
+            type="button"
+            className="block w-full text-center text-[13px] text-accent underline"
+            onClick={() => {
+              setRecovery(!recovery)
+              setError(undefined)
+            }}
+          >
+            {recovery ? 'Use an authenticator code' : 'Use a recovery code'}
+          </button>
+          <button
+            type="button"
+            className="block w-full text-center text-[13px] text-muted underline"
+            onClick={() => {
+              setChallenge(undefined)
+              setRecovery(false)
+              setError(undefined)
+            }}
+          >
+            Back
+          </button>
+        </form>
+      </main>
+    )
   }
 
   return (
@@ -75,6 +194,15 @@ export function AuthForm({ mode }: { mode: 'login' | 'signup' }) {
         <button type="submit" disabled={busy} className={`${btnPrimary} w-full`}>
           {signup ? 'Sign up' : 'Sign in'}
         </button>
+        {!signup && (
+          <button
+            type="button"
+            className="block w-full text-center text-[13px] text-accent underline"
+            onClick={() => setSso(true)}
+          >
+            Use company single sign-on
+          </button>
+        )}
         <p className="text-center text-[13px] text-muted">
           {signup ? (
             <>

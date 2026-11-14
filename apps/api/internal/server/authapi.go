@@ -34,16 +34,22 @@ import (
 	"github.com/cnote/api/internal/db"
 	"github.com/cnote/api/internal/modules/admin"
 	"github.com/cnote/api/internal/modules/marketplace"
+	"github.com/cnote/api/internal/modules/publiclinks"
 )
 
 // sessionCookie is api.rs session_cookie, byte for byte (COOKIE_SECURE=1|true adds Secure).
 func sessionCookie(token string, maxAge int) string {
-	secure := ""
-	if v := os.Getenv("COOKIE_SECURE"); v == "1" || v == "true" {
-		secure = "; Secure"
-	}
-	return auth.SessionCookie + "=" + token + "; Path=/; HttpOnly; SameSite=Lax; Max-Age=" + strconv.Itoa(maxAge) + secure
+	return auth.SessionCookie + "=" + token + "; Path=/; HttpOnly; SameSite=Lax; Max-Age=" + strconv.Itoa(maxAge) + secureAttr()
 }
+
+func secureAttr() string {
+	if v := os.Getenv("COOKIE_SECURE"); v == "1" || v == "true" {
+		return "; Secure"
+	}
+	return ""
+}
+
+func publiclinksIP(r *http.Request) string { return publiclinks.ClientIP(r) }
 
 // authSurface serves the request when it is one of this surface's routes and reports whether it did.
 func (s *Server) authSurface(w http.ResponseWriter, r *http.Request) bool {
@@ -53,6 +59,7 @@ func (s *Server) authSurface(w http.ResponseWriter, r *http.Request) bool {
 		s.signup(w, r)
 	case r.Method == http.MethodPost && path == "/api/auth/login":
 		s.login(w, r)
+	case s.authSecurity(w, r, path):
 	case r.Method == http.MethodPost && path == "/api/auth/logout":
 		s.logout(w, r)
 	case r.Method == http.MethodGet && path == "/api/auth/me":
@@ -209,7 +216,11 @@ func withSession(w http.ResponseWriter, r *http.Request, body map[string]any, to
 func (s *Server) signup(w http.ResponseWriter, r *http.Request) {
 	var email, name, password string
 	var ws *string
-	if _, ok := s.jsonObject(w, r, maxBody, map[string]*string{"email": &email, "name": &name, "password": &password}, map[string]**string{"workspace_name": &ws}); !ok {
+	if !s.strictJSON(w, r, map[string]*string{"email": &email, "name": &name, "password": &password}, map[string]**string{"workspace_name": &ws}) {
+		return
+	}
+	if err := s.Auth.CheckSignup(r.Context(), publiclinks.ClientIP(r)); err != nil {
+		s.writeThrottle(w, r, err)
 		return
 	}
 	userID, err := s.Auth.SignUp(r.Context(), email, name, password)
@@ -233,15 +244,15 @@ func (s *Server) signup(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	var email, password string
-	if _, ok := s.jsonObject(w, r, maxBody, map[string]*string{"email": &email, "password": &password}, nil); !ok {
+	if !s.strictJSON(w, r, map[string]*string{"email": &email, "password": &password}, nil) {
 		return
 	}
-	userID, token, err := s.Auth.SignIn(r.Context(), email, password)
+	res, err := s.Auth.SignIn(r.Context(), email, password, publiclinks.ClientIP(r))
 	if err != nil {
-		s.writeErr(w, r, err)
+		s.writeThrottle(w, r, err)
 		return
 	}
-	withSession(w, r, map[string]any{"user_id": userID}, token)
+	s.loginResponse(w, r, res)
 }
 
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
@@ -264,6 +275,15 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.writeErr(w, r, err)
 		return
+	}
+	if u.SSOWorkspace != "" { // an SSO session reaches only the workspace whose provider signed the person in
+		kept := wss[:0]
+		for _, x := range wss {
+			if x.ID == u.SSOWorkspace {
+				kept = append(kept, x)
+			}
+		}
+		wss = kept
 	}
 	// maps, not structs: serde_json::Value sorts keys
 	list := make([]map[string]string, len(wss))

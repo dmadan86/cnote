@@ -8,6 +8,7 @@ import { CompanyProfile } from '@/components/business-type'
 import { CompanyTab } from '@/components/company/profile'
 import { HooksTab } from '@/components/hooks-settings'
 import { Secret } from '@/components/secret'
+import { SignInSecurity } from '@/components/security/sign-in'
 import { useShell } from '@/components/shell'
 import { btn, btnPrimary, ErrorText, Field, inputCls } from '@/components/ui'
 import { cmd } from '@/lib/api'
@@ -28,6 +29,7 @@ const TABS = [
   'Usage',
   'Audit log',
   'Privacy',
+  'Security',
 ] as const
 type TabName = (typeof TABS)[number]
 
@@ -441,6 +443,7 @@ export default function Settings() {
         {tab === 'Usage' && <UsageTab ws={ws} />}
         {tab === 'Audit log' && <AuditLog ws={ws} />}
         {tab === 'Privacy' && <Privacy ws={ws} />}
+        {tab === 'Security' && <SignInSecurity ws={ws} />}
       </div>
     </div>
   )

@@ -42,6 +42,13 @@ func rnd() string {
 
 func newEnv(t *testing.T, extra ...command.Command) *env {
 	t.Helper()
+	// Every test client is 127.0.0.1: the per-IP sign-in throttle (WP18) would otherwise lock the whole suite. The
+	// throttle tests set their own values before calling newEnv.
+	for _, k := range []string{"AUTH_IP_FREE", "AUTH_SIGNUP_FREE"} {
+		if _, ok := os.LookupEnv(k); !ok {
+			t.Setenv(k, "1000000")
+		}
+	}
 	url := os.Getenv("DATABASE_URL")
 	if url == "" {
 		t.Fatal("DATABASE_URL is required (load the repo .env)")

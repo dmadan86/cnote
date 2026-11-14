@@ -231,7 +231,7 @@ func (h *Handler) authorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Membership is re-checked here: the workspace id comes from the browser.
-	if _, err := h.Auth.UserPrincipal(r.Context(), user.ID, strings.ToLower(wsID)); err != nil {
+	if _, err := h.Auth.UserPrincipalFor(r.Context(), user, strings.ToLower(wsID)); err != nil {
 		w.Header().Del("Cache-Control")
 		w.Header().Del("Pragma")
 		apiErr(w, err)

@@ -72,8 +72,13 @@ func writeErr(w http.ResponseWriter, e perr) {
 	write(w, e.status, map[string]any{"error": map[string]any{"code": e.code, "message": e.msg}})
 }
 
-func (h *Handler) clientIP(r *http.Request) string {
-	if h.trustProxy {
+func (h *Handler) clientIP(r *http.Request) string { return clientIP(r, h.trustProxy) }
+
+// ClientIP is the caller's address under the same PUBLIC_TRUST_PROXY rule public links use (sign-in throttling).
+func ClientIP(r *http.Request) string { return clientIP(r, getenv("PUBLIC_TRUST_PROXY") == "1") }
+
+func clientIP(r *http.Request, trustProxy bool) string {
+	if trustProxy {
 		if xs := strings.Split(r.Header.Get("X-Forwarded-For"), ","); len(xs) > 0 {
 			if ip := strings.TrimSpace(xs[len(xs)-1]); ip != "" {
 				return ip
