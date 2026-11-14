@@ -143,3 +143,32 @@ Small, read-heavy, few events first; money, outbound and background-coupled last
   `core.events` and `core.jobs` written by Go.
 - The Go server needs `DATABASE_URL`; `RUST_API_URL` must be reachable or non-native traffic returns 502.
 - pgx v5.8.0 is the newest release that builds with Go 1.24; later pgx releases require Go 1.25.
+
+## Module notes: notifications (port/notifications)
+
+Commands ported: `notification.list`, `notification.read`, `notification.unread_count`.
+Package: `apps/api/internal/modules/notifications`.
+
+**`notify_mentions` not ported**: the helper that creates notifications is called by `note.update` and
+`comment.add` (Rust side); it is being ported by a separate agent. Go reads from `core.notifications`
+rows that the Rust worker writes, which is correct for phase 1.
+
+**`me()` check**: all three commands require `Principal.UserID != nil`. API keys and agent keys that
+resolve through `core.resolve_api_key` always carry a `user_id` column value, so they can call
+notification commands as the owning user. Pure unauthenticated requests get 401 (before the command
+gate) and the `me()` check is a defence-in-depth 403 guard matching the Rust `me()` helper message
+`"notifications belong to people"`.
+
+**`notification.read` input**: the `id` field is `Option<Uuid>` in Rust with `#[serde(default)]`.
+Go decodes it as `*string` with the same semantics: absent or JSON `null` → mark-all; present and
+valid UUID → mark one. Invalid UUID spellings (no dashes, wrong length) fall back to Rust so serde
+error messages stay identical.
+
+**Serialisation**: `notification.read` and `notification.unread_count` return plain `map[string]any`
+(`{"updated":n}` / `{"count":n}`). The `n` values are `int64`; `command.serialize` → `Norm`
+keeps them as integers matching Rust's `serde_json::json!({...})` output.
+
+**Differential test design**: read-only calls (`list`, `unread_count`) and zero-effect mutations
+(bad UUID, missing UUID from `notification.read`) run byte-for-byte against both servers with the
+same fixture. Mutating calls (`notification.read` mark-all and mark-by-id) use twin fixtures: one
+dedicated workspace per server so each starts from `updated=1` and responses are still byte-identical.
