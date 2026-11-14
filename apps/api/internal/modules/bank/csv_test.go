@@ -20,12 +20,12 @@ func TestParseMinor(t *testing.T) {
 func TestParseDateIsDayFirst(t *testing.T) {
 	for in, want := range map[string]string{"03/04/2024": "2024-04-03", "3/4/24": "2024-04-03", "03-04-2024": "2024-04-03", "03 Apr 2024": "2024-04-03",
 		"03-Apr-24": "2024-04-03", "2024-04-03": "2024-04-03", "03/04/2024 10:15:09": "2024-04-03", "31/12/2023": "2023-12-31"} {
-		d, ok := parseDate(in)
+		d, ok := parseDate(in, "")
 		if !ok || d.Format("2006-01-02") != want {
 			t.Errorf("%q: got %v %v, want %s", in, d, ok, want)
 		}
 	}
-	if _, ok := parseDate("31/13/2024"); ok {
+	if _, ok := parseDate("31/13/2024", ""); ok {
 		t.Error("month 13 must not parse")
 	}
 }
@@ -112,5 +112,56 @@ func TestBadRowsAndHeaders(t *testing.T) {
 	r, err = parseStatement("When,Memo,Out,In\n02/01/2024,Ok,,3.00\n", &mapping{Date: "When", Narration: "Memo", Debit: "Out", Credit: "In"})
 	if err != nil || len(r.Lines) != 1 || r.Lines[0].Narration != "Ok" {
 		t.Fatalf("%v %+v", err, r)
+	}
+}
+
+func TestParseDateFormats(t *testing.T) {
+	for _, c := range []struct{ in, format, want string }{{"03/04/2024", "mdy", "2024-03-04"}, {"03/04/2024", "dmy", "2024-04-03"}, {"2024/3/4", "ymd", "2024-03-04"},
+		{"2024-03-04", "mdy", "2024-03-04"}, {"4 Mar 2024", "mdy", "2024-03-04"}} {
+		d, ok := parseDate(c.in, c.format)
+		if !ok || d.Format("2006-01-02") != c.want {
+			t.Errorf("%q as %q: got %v %v, want %s", c.in, c.format, d, ok, c.want)
+		}
+	}
+	if _, ok := parseDate("31/12/2024", "mdy"); ok {
+		t.Error("month 31 must not parse")
+	}
+}
+
+func TestCombosAreExactBoundedAndRanked(t *testing.T) {
+	mk := func(amts ...int64) (out []suggestion) {
+		for i, a := range amts {
+			out = append(out, suggestion{ID: string(rune('a' + i)), Amount: a, Score: 100 - i})
+		}
+		return
+	}
+	got := combos(100, mk(50, 30, 20, 40, 60))
+	if len(got) == 0 {
+		t.Fatal("no combo")
+	}
+	for _, c := range got {
+		var sum int64
+		for _, s := range c {
+			sum += s.Amount
+		}
+		if sum != 100 || len(c) < 2 || len(c) > 4 {
+			t.Errorf("bad combo %v", c)
+		}
+	}
+	if len(combos(100, mk(50, 30, 15))) != 0 {
+		t.Error("no exact sum exists")
+	}
+	if len(combos(100, mk(100))) != 0 {
+		t.Error("a single movement is not a combo")
+	}
+	big := make([]int64, 200) // many candidates: only the first maxPool are searched, and quickly
+	for i := range big {
+		big[i] = 7
+	}
+	if len(combos(70, mk(big...))) != 0 { // ten 7s need five parts at least; four parts cannot reach 70
+		t.Error("more than 4 parts")
+	}
+	if len(combos(28, mk(big...))) != 3 {
+		t.Error("four 7s should give the three-combo cap")
 	}
 }

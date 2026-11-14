@@ -39,6 +39,9 @@ func Commands() []command.Command {
 		member(nc("bank.line_list", rd, lineList)),
 		nc("bank.match", mi, match),
 		nc("bank.unmatch", mi, unmatch),
+		nc("bank.ignore", mi, ignore),
+		nc("bank.unignore", mi, unignore),
+		member(nc("bank.csv_preview", rd, csvPreview)),
 		confirm(nc("bank.record_expense", mi, recordExpense)),
 		confirm(nc("bank.record_receipt", mi, recordReceipt)),
 		member(nc("bank.summary", rd, summary)),
@@ -53,6 +56,8 @@ type in struct {
 	LineID      string   `json:"line_id"`
 	MatchKind   string   `json:"match_kind"`
 	MatchID     string   `json:"match_id"`
+	Matches     []ref    `json:"matches"` // a split: several movements that sum to the line
+	Reason      *string  `json:"reason"`
 	Name        *string  `json:"name"`
 	AccountHint *string  `json:"account_hint"`
 	Active      *bool    `json:"active"`
@@ -85,6 +90,14 @@ func decode(raw json.RawMessage) (in, error) {
 	if v.ContactID != nil && !uuidRe.MatchString(*v.ContactID) {
 		return v, command.ErrInvalid("invalid id")
 	}
+	for _, m := range v.Matches {
+		if !uuidRe.MatchString(m.ID) {
+			return v, command.ErrInvalid("invalid id")
+		}
+	}
+	if v.Mapping != nil && !validFormats[v.Mapping.DateFormat] {
+		return v, command.ErrInvalid("date_format must be dmy, mdy or ymd")
+	}
 	for _, d := range []*string{v.From, v.To} {
 		if d != nil {
 			if _, err := time.Parse("2006-01-02", *d); err != nil {
@@ -105,8 +118,27 @@ func decode(raw json.RawMessage) (in, error) {
 	if v.CSV != nil && len(*v.CSV) > maxCSV {
 		return v, command.ErrInvalid("csv is larger than 2 MB; import one period at a time")
 	}
+	for i := range v.Matches {
+		v.Matches[i].ID = strings.ToLower(v.Matches[i].ID)
+	}
 	v.ID, v.AccountID, v.LineID, v.MatchID = strings.ToLower(v.ID), strings.ToLower(v.AccountID), strings.ToLower(v.LineID), strings.ToLower(v.MatchID)
 	return v, nil
+}
+
+func nilIf(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+
+// view is one line as lineList shows it: matches, suggestions and combos included.
+func view(c *command.Ctx, id string) (any, error) {
+	out, err := lineList(c, json.RawMessage(fmt.Sprintf(`{"line_id":%q}`, id)))
+	if err != nil {
+		return nil, err
+	}
+	return out.([]line)[0], nil
 }
 
 func nilStr(s *string) any {
@@ -327,13 +359,24 @@ type suggestion struct {
 	Score    int    `json:"score"`
 }
 
-// suggest returns, per unmatched line, the free candidates with the exact amount in the right direction within +-3 days, best first.
-func suggest(c *command.Ctx, lineIDs []string) (map[string][]suggestion, error) {
+// maxSplit bounds a split; maxPool bounds the candidates searched for exact-sum combinations per line (C(15,4) is about 1,400 subsets).
+const (
+	maxSplit = 10
+	maxPool  = 15
+)
+
+// candidates returns, per unmatched line, the free movements in the right direction within +-3 days, best first. exact keeps those
+// whose amount equals the line; otherwise those smaller than it (the parts of a split).
+func candidates(c *command.Ctx, lineIDs []string, exact bool) (map[string][]suggestion, error) {
+	op := "<"
+	if exact {
+		op = "="
+	}
 	rows, err := c.Tx.Query(c.Context, candidateCTE+`
 		select l.id::text, c.kind, c.id::text, c.label, c.d::text, c.amt, (c.d - l.line_date), c.ref, l.narration || ' ' || coalesce(l.reference,'')
-		from bank.lines l join cand c on c.amt = abs(l.amount_minor) and c.dir = sign(l.amount_minor) and c.d between l.line_date - $2::int and l.line_date + $2::int
+		from bank.lines l join cand c on c.amt `+op+` abs(l.amount_minor) and c.dir = sign(l.amount_minor) and c.d between l.line_date - $2::int and l.line_date + $2::int
 		where l.id = any($1::uuid[]) and l.status = 'unmatched'
-		  and not exists (select 1 from bank.lines m where m.match_kind = c.kind and m.match_id = c.id)`, lineIDs, window)
+		  and not exists (select 1 from bank.line_matches m where m.match_kind = c.kind and m.match_id = c.id)`, lineIDs, window)
 	if err != nil {
 		return nil, command.DB(err)
 	}
@@ -358,6 +401,46 @@ func suggest(c *command.Ctx, lineIDs []string) (map[string][]suggestion, error) 
 	return out, command.DB(rows.Err())
 }
 
+func suggest(c *command.Ctx, lineIDs []string) (map[string][]suggestion, error) {
+	return candidates(c, lineIDs, true)
+}
+
+// combos finds up to three sets of 2 to 4 candidates whose amounts add up to target exactly, trying the best-scored maxPool
+// candidates only, so the search stays small whatever the workspace holds. A set is ranked by the sum of its parts' scores.
+func combos(target int64, pool []suggestion) [][]suggestion {
+	if len(pool) > maxPool {
+		pool = pool[:maxPool]
+	}
+	var out [][]suggestion
+	var pick []suggestion
+	var walk func(from int, left int64)
+	walk = func(from int, left int64) {
+		if left == 0 && len(pick) >= 2 {
+			out = append(out, append([]suggestion(nil), pick...))
+			return
+		}
+		if len(pick) == 4 {
+			return
+		}
+		for i := from; i < len(pool); i++ {
+			if pool[i].Amount <= left {
+				pick = append(pick, pool[i])
+				walk(i+1, left-pool[i].Amount)
+				pick = pick[:len(pick)-1]
+			}
+		}
+	}
+	walk(0, target)
+	score := func(x []suggestion) (t int) {
+		for _, s := range x {
+			t += s.Score
+		}
+		return t / len(x)
+	}
+	sort.SliceStable(out, func(i, j int) bool { return score(out[i]) > score(out[j]) })
+	return out[:min(len(out), 3)]
+}
+
 func abs[T int | int64](v T) T {
 	if v < 0 {
 		return -v
@@ -368,26 +451,41 @@ func abs[T int | int64](v T) T {
 // ---------- lines ----------
 
 type line struct {
-	ID           string       `json:"id"`
-	AccountID    string       `json:"account_id"`
-	Date         string       `json:"date"`
-	AmountMinor  int64        `json:"amount_minor"`
-	Narration    string       `json:"narration"`
-	Reference    *string      `json:"reference"`
-	BalanceMinor *int64       `json:"balance_minor"`
-	Status       string       `json:"status"`
-	MatchKind    *string      `json:"match_kind"`
-	MatchID      *string      `json:"match_id"`
-	MatchLabel   *string      `json:"match_label"`
-	Suggestions  []suggestion `json:"suggestions"`
+	ID           string         `json:"id"`
+	AccountID    string         `json:"account_id"`
+	Date         string         `json:"date"`
+	AmountMinor  int64          `json:"amount_minor"`
+	Narration    string         `json:"narration"`
+	Reference    *string        `json:"reference"`
+	BalanceMinor *int64         `json:"balance_minor"`
+	Status       string         `json:"status"`
+	MatchKind    *string        `json:"match_kind"`
+	MatchID      *string        `json:"match_id"`
+	MatchLabel   *string        `json:"match_label"`
+	Split        bool           `json:"split"`
+	Matches      []matchOut     `json:"matches"`
+	IgnoreReason *string        `json:"ignore_reason"`
+	Suggestions  []suggestion   `json:"suggestions"`
+	Combos       [][]suggestion `json:"combos"`
 }
 
-const lineCols = `l.id::text, l.account_id::text, l.line_date::text, l.amount_minor, l.narration, l.reference, l.balance_minor, l.status, l.match_kind, l.match_id::text`
+type ref struct {
+	Kind string `json:"kind"`
+	ID   string `json:"id"`
+}
+
+type matchOut struct {
+	ref
+	Label  string `json:"label"`
+	Amount int64  `json:"amount_minor"`
+}
+
+const lineCols = `l.id::text, l.account_id::text, l.line_date::text, l.amount_minor, l.narration, l.reference, l.balance_minor, l.status, l.match_kind, l.match_id::text, l.split, l.ignore_reason`
 
 func scanLine(r pgx.Row) (line, error) {
 	var l line
-	err := r.Scan(&l.ID, &l.AccountID, &l.Date, &l.AmountMinor, &l.Narration, &l.Reference, &l.BalanceMinor, &l.Status, &l.MatchKind, &l.MatchID)
-	l.Suggestions = []suggestion{}
+	err := r.Scan(&l.ID, &l.AccountID, &l.Date, &l.AmountMinor, &l.Narration, &l.Reference, &l.BalanceMinor, &l.Status, &l.MatchKind, &l.MatchID, &l.Split, &l.IgnoreReason)
+	l.Suggestions, l.Combos, l.Matches = []suggestion{}, [][]suggestion{}, []matchOut{}
 	return l, err
 }
 
@@ -412,8 +510,8 @@ func lineList(c *command.Ctx, input json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if v.Status != nil && *v.Status != "unmatched" && *v.Status != "matched" {
-		return nil, command.ErrInvalid("status must be unmatched or matched")
+	if v.Status != nil && *v.Status != "unmatched" && *v.Status != "matched" && *v.Status != "ignored" {
+		return nil, command.ErrInvalid("status must be unmatched, matched or ignored")
 	}
 	lim := int64(200)
 	if v.Limit != nil {
@@ -425,14 +523,15 @@ func lineList(c *command.Ctx, input json.RawMessage) (any, error) {
 	}
 	rows, err := c.Tx.Query(c.Context, `select `+lineCols+` from bank.lines l
 		where ($1::uuid is null or l.account_id = $1::uuid) and ($2::text is null or l.status = $2) and ($3::date is null or l.line_date >= $3::date)
-		  and ($4::date is null or l.line_date <= $4::date)
-		order by l.line_date desc, l.seq desc limit $5`, acct, nilStr(v.Status), nilStr(v.From), nilStr(v.To), lim)
+		  and ($4::date is null or l.line_date <= $4::date) and ($6::uuid is null or l.id = $6::uuid)
+		order by l.line_date desc, l.seq desc limit $5`, acct, nilStr(v.Status), nilStr(v.From), nilStr(v.To), lim, nilIf(v.LineID))
 	if err != nil {
 		return nil, command.DB(err)
 	}
 	defer rows.Close()
 	out := []line{}
 	var open, matched []string
+	byID := map[string]int{}
 	for rows.Next() {
 		l, err := scanLine(rows)
 		if err != nil {
@@ -440,9 +539,10 @@ func lineList(c *command.Ctx, input json.RawMessage) (any, error) {
 		}
 		if l.Status == "unmatched" {
 			open = append(open, l.ID)
-		} else {
-			matched = append(matched, *l.MatchID)
+		} else if l.Status == "matched" {
+			matched = append(matched, l.ID)
 		}
+		byID[l.ID] = len(out)
 		out = append(out, l)
 	}
 	if err := rows.Err(); err != nil {
@@ -455,40 +555,79 @@ func lineList(c *command.Ctx, input json.RawMessage) (any, error) {
 			return nil, err
 		}
 	}
-	labels := map[string]string{}
+	if len(open) > 0 { // exact-sum combinations, only for lines that no single movement explains
+		var none []string
+		for _, id := range open {
+			if len(sugg[id]) == 0 {
+				none = append(none, id)
+			}
+		}
+		if len(none) > 0 {
+			parts, err := candidates(c, none, false)
+			if err != nil {
+				return nil, err
+			}
+			for _, id := range none {
+				if cs := combos(abs(out[byID[id]].AmountMinor), parts[id]); len(cs) > 0 {
+					out[byID[id]].Combos = cs
+				}
+			}
+		}
+	}
 	if len(matched) > 0 {
-		lr, err := c.Tx.Query(c.Context, candidateCTE+" select kind || ':' || id::text, label from cand where id = any($1::uuid[])", matched)
+		lr, err := c.Tx.Query(c.Context, candidateCTE+` select m.line_id::text, m.match_kind, m.match_id::text, m.amount_minor, coalesce(c.label, '')
+			from bank.line_matches m left join cand c on c.kind = m.match_kind and c.id = m.match_id where m.line_id = any($1::uuid[]) order by m.created_at, m.id`, matched)
 		if err != nil {
 			return nil, command.DB(err)
 		}
 		for lr.Next() {
-			var k, lab string
-			if err := lr.Scan(&k, &lab); err != nil {
+			var lid string
+			var m matchOut
+			if err := lr.Scan(&lid, &m.Kind, &m.ID, &m.Amount, &m.Label); err != nil {
 				lr.Close()
 				return nil, command.DB(err)
 			}
-			labels[k] = lab
+			out[byID[lid]].Matches = append(out[byID[lid]].Matches, m)
 		}
 		lr.Close()
+		if err := lr.Err(); err != nil {
+			return nil, command.DB(err)
+		}
 	}
 	for i := range out {
 		if s := sugg[out[i].ID]; len(s) > 0 {
 			out[i].Suggestions = s[:min(len(s), 3)]
 		}
-		if out[i].MatchID != nil {
-			if lab, ok := labels[*out[i].MatchKind+":"+*out[i].MatchID]; ok {
-				out[i].MatchLabel = &lab
-			}
+		if m := out[i].Matches; len(m) == 1 {
+			out[i].MatchLabel = &m[0].Label
+		} else if len(m) > 1 {
+			lab := fmt.Sprintf("%d records: %s", len(m), strings.Join(labelsOf(m), "; "))
+			out[i].MatchLabel = &lab
 		}
 	}
 	return out, nil
 }
 
+func labelsOf(m []matchOut) []string {
+	out := make([]string, len(m))
+	for i, x := range m {
+		out[i] = x.Label
+	}
+	return out
+}
+
 // ---------- match / unmatch ----------
 
-func link(c *command.Ctx, l line, kind, id string) error {
-	ct, err := c.Tx.Exec(c.Context, `update bank.lines set status = 'matched', match_kind = $2, match_id = $3::uuid, matched_by = $4::uuid, matched_at = now()
-		where id = $1::uuid and status = 'unmatched'`, l.ID, kind, id, c.Principal.UserID)
+// link matches a locked, unmatched line to one movement or, given several, to a split. The unique index on bank.line_matches
+// refuses a movement already used by any line, so two concurrent matches of one payment cannot both succeed.
+func link(c *command.Ctx, l line, items []matchOut) error {
+	single := len(items) == 1
+	var kind, id any
+	if single {
+		kind, id = items[0].Kind, items[0].ID
+	}
+	ct, err := c.Tx.Exec(c.Context, `update bank.lines set status = 'matched', split = $5, match_kind = $2, match_id = $3::uuid, matched_by = $4::uuid, matched_at = now()
+		where id = $1::uuid and status = 'unmatched'`, l.ID, kind, id, c.Principal.UserID, !single)
 	if isUnique(err) {
 		return command.ErrConflict("that payment is already matched to another statement line")
 	}
@@ -498,10 +637,21 @@ func link(c *command.Ctx, l line, kind, id string) error {
 	if ct.RowsAffected() == 0 {
 		return command.ErrConflict("this line is already matched")
 	}
-	_, err = c.Emit("bank.matched", nil, map[string]any{"line_id": l.ID, "kind": kind, "match_id": id, "amount_minor": l.AmountMinor})
+	for _, m := range items {
+		_, err := c.Tx.Exec(c.Context, `insert into bank.line_matches (workspace_id, line_id, match_kind, match_id, amount_minor) values ($1::uuid,$2::uuid,$3,$4::uuid,$5)`,
+			c.WorkspaceID(), l.ID, m.Kind, m.ID, m.Amount)
+		if isUnique(err) {
+			return command.ErrConflict("that payment is already matched to another statement line")
+		}
+		if err != nil {
+			return command.DB(err)
+		}
+	}
+	_, err = c.Emit("bank.matched", nil, map[string]any{"line_id": l.ID, "matches": items, "amount_minor": l.AmountMinor})
 	return err
 }
 
+// match: one movement (match_kind + match_id) or a split (matches: 2 to 10 of {kind, id}) whose amounts add up exactly to the line.
 func match(c *command.Ctx, input json.RawMessage) (any, error) {
 	v, err := decode(input)
 	if err != nil {
@@ -514,24 +664,46 @@ func match(c *command.Ctx, input json.RawMessage) (any, error) {
 	if l.Status != "unmatched" {
 		return nil, command.ErrConflict("this line is already matched")
 	}
-	if v.MatchKind == "" || v.MatchID == "" {
-		return nil, command.ErrInvalid("match_kind and match_id are required")
+	want := v.Matches
+	if len(want) == 0 {
+		if v.MatchKind == "" || v.MatchID == "" {
+			return nil, command.ErrInvalid("match_kind and match_id are required")
+		}
+		want = []ref{{v.MatchKind, v.MatchID}}
 	}
-	s, err := suggest(c, []string{l.ID})
+	if len(want) > maxSplit {
+		return nil, command.ErrInvalid(fmt.Sprintf("a split is at most %d records", maxSplit))
+	}
+	// every part must be free, same direction and inside the date window; an exact single is also one of the suggestions
+	pool, err := candidates(c, []string{l.ID}, len(want) == 1)
 	if err != nil {
 		return nil, err
 	}
-	ok := false
-	for _, x := range s[l.ID] {
-		ok = ok || (x.Kind == v.MatchKind && x.ID == v.MatchID)
+	free := map[ref]suggestion{}
+	for _, x := range pool[l.ID] {
+		free[ref{x.Kind, x.ID}] = x
 	}
-	if !ok {
-		return nil, command.ErrConflict("that is not a free payment of the same amount within 3 days of this line")
+	var items []matchOut
+	var sum int64
+	for _, w := range want {
+		x, ok := free[w]
+		if !ok {
+			if len(want) == 1 {
+				return nil, command.ErrConflict("that is not a free payment of the same amount within 3 days of this line")
+			}
+			return nil, command.ErrConflict("each part must be a free payment in the same direction within 3 days of this line, and no part may repeat")
+		}
+		delete(free, w) // a repeated part finds nothing the second time
+		items = append(items, matchOut{ref: w, Label: x.Label, Amount: x.Amount})
+		sum += x.Amount
 	}
-	if err := link(c, l, v.MatchKind, v.MatchID); err != nil {
+	if sum != abs(l.AmountMinor) {
+		return nil, command.ErrConflict(fmt.Sprintf("the parts add up to %d paise but the line is %d", sum, abs(l.AmountMinor)))
+	}
+	if err := link(c, l, items); err != nil {
 		return nil, err
 	}
-	return loadLine(c, l.ID, false)
+	return view(c, l.ID)
 }
 
 func unmatch(c *command.Ctx, input json.RawMessage) (any, error) {
@@ -546,13 +718,64 @@ func unmatch(c *command.Ctx, input json.RawMessage) (any, error) {
 	if l.Status != "matched" {
 		return nil, command.ErrConflict("this line is not matched")
 	}
-	if _, err := c.Tx.Exec(c.Context, "update bank.lines set status = 'unmatched', match_kind = null, match_id = null, matched_by = null, matched_at = null where id = $1::uuid", l.ID); err != nil {
+	if _, err := c.Tx.Exec(c.Context, "delete from bank.line_matches where line_id = $1::uuid", l.ID); err != nil {
 		return nil, command.DB(err)
 	}
-	if _, err := c.Emit("bank.unmatched", nil, map[string]any{"line_id": l.ID, "kind": l.MatchKind, "match_id": l.MatchID}); err != nil {
+	if _, err := c.Tx.Exec(c.Context, "update bank.lines set status = 'unmatched', split = false, match_kind = null, match_id = null, matched_by = null, matched_at = null where id = $1::uuid", l.ID); err != nil {
+		return nil, command.DB(err)
+	}
+	if _, err := c.Emit("bank.unmatched", nil, map[string]any{"line_id": l.ID}); err != nil {
 		return nil, err
 	}
-	return loadLine(c, l.ID, false)
+	return view(c, l.ID)
+}
+
+// ignore sets an unmatched line aside with a reason (a bank charge not worth recording, an internal transfer). Reconciliation
+// counts it as reconciled; nothing is posted. unignore puts it back.
+func ignore(c *command.Ctx, input json.RawMessage) (any, error) {
+	v, err := decode(input)
+	if err != nil {
+		return nil, err
+	}
+	l, err := loadLine(c, v.LineID, true)
+	if err != nil {
+		return nil, err
+	}
+	if v.Reason == nil || strings.TrimSpace(*v.Reason) == "" || len(strings.TrimSpace(*v.Reason)) > 200 {
+		return nil, command.ErrInvalid("reason is required (1 to 200 characters)")
+	}
+	if l.Status != "unmatched" {
+		return nil, command.ErrConflict("only an unmatched line can be ignored")
+	}
+	reason := strings.TrimSpace(*v.Reason)
+	if _, err := c.Tx.Exec(c.Context, "update bank.lines set status = 'ignored', ignore_reason = $2, matched_by = $3::uuid, matched_at = now() where id = $1::uuid", l.ID, reason, c.Principal.UserID); err != nil {
+		return nil, command.DB(err)
+	}
+	if _, err := c.Emit("bank.ignored", nil, map[string]any{"line_id": l.ID, "reason": reason, "amount_minor": l.AmountMinor}); err != nil {
+		return nil, err
+	}
+	return view(c, l.ID)
+}
+
+func unignore(c *command.Ctx, input json.RawMessage) (any, error) {
+	v, err := decode(input)
+	if err != nil {
+		return nil, err
+	}
+	l, err := loadLine(c, v.LineID, true)
+	if err != nil {
+		return nil, err
+	}
+	if l.Status != "ignored" {
+		return nil, command.ErrConflict("this line is not ignored")
+	}
+	if _, err := c.Tx.Exec(c.Context, "update bank.lines set status = 'unmatched', ignore_reason = null, matched_by = null, matched_at = null where id = $1::uuid", l.ID); err != nil {
+		return nil, command.DB(err)
+	}
+	if _, err := c.Emit("bank.unignored", nil, map[string]any{"line_id": l.ID}); err != nil {
+		return nil, err
+	}
+	return view(c, l.ID)
 }
 
 // ---------- record an unmatched line ----------
@@ -574,7 +797,7 @@ func unmatchedLine(c *command.Ctx, id string, debit bool) (line, error) {
 	return l, nil
 }
 
-func ref(l line) any {
+func lineRef(l line) any {
 	if l.Reference != nil && strings.TrimSpace(*l.Reference) != "" {
 		return *l.Reference
 	}
@@ -601,10 +824,10 @@ func recordAndLink(c *command.Ctx, l line, kind string, h command.Handler, body 
 	if err := json.Unmarshal(b, &made); err != nil || made.ID == "" {
 		return nil, command.ErrInvalid("recorded row has no id")
 	}
-	if err := link(c, l, kind, made.ID); err != nil {
+	if err := link(c, l, []matchOut{{ref: ref{kind, made.ID}, Amount: abs(l.AmountMinor)}}); err != nil {
 		return nil, err
 	}
-	ln, err := loadLine(c, l.ID, false)
+	ln, err := view(c, l.ID)
 	return map[string]any{"line": ln, "created": json.RawMessage(b)}, err
 }
 
@@ -621,7 +844,7 @@ func recordExpense(c *command.Ctx, input json.RawMessage) (any, error) {
 		return nil, command.ErrInvalid("category is required")
 	}
 	return recordAndLink(c, l, "expense", expenses.RecordDirect, map[string]any{"spent_on": l.Date, "category": *v.Category, "amount_minor": -l.AmountMinor,
-		"vendor_name": v.VendorName, "description": v.Description, "method": "bank", "reference": ref(l), "space_id": v.SpaceID})
+		"vendor_name": v.VendorName, "description": v.Description, "method": "bank", "reference": lineRef(l), "space_id": v.SpaceID})
 }
 
 func recordReceipt(c *command.Ctx, input json.RawMessage) (any, error) {
@@ -637,7 +860,7 @@ func recordReceipt(c *command.Ctx, input json.RawMessage) (any, error) {
 		return nil, command.ErrInvalid("contact_id and supply_type are required")
 	}
 	return recordAndLink(c, l, "receipt", receipts.Create, map[string]any{"contact_id": *v.ContactID, "supply_type": *v.SupplyType, "gst_rate_bp": v.GSTRateBP,
-		"amount_minor": l.AmountMinor, "received_at": l.Date, "method": "bank", "reference": ref(l), "description": v.Description, "space_id": v.SpaceID})
+		"amount_minor": l.AmountMinor, "received_at": l.Date, "method": "bank", "reference": lineRef(l), "description": v.Description, "space_id": v.SpaceID})
 }
 
 // ---------- summary ----------
@@ -656,13 +879,15 @@ func summary(c *command.Ctx, input json.RawMessage) (any, error) {
 		Lines, Matched, Unmatched                      int64
 		Credits, Debits, MatchedCredits, MatchedDebits int64
 		UnmatchedCredits, UnmatchedDebits              int64
+		Ignored, IgnoredCredits, IgnoredDebits         int64
 	}
 	if err := c.Tx.QueryRow(c.Context, `select count(*), count(*) filter (where status='matched'), count(*) filter (where status='unmatched'),
 		coalesce(sum(amount_minor) filter (where amount_minor > 0),0), coalesce(-sum(amount_minor) filter (where amount_minor < 0),0),
 		coalesce(sum(amount_minor) filter (where amount_minor > 0 and status='matched'),0), coalesce(-sum(amount_minor) filter (where amount_minor < 0 and status='matched'),0),
-		coalesce(sum(amount_minor) filter (where amount_minor > 0 and status='unmatched'),0), coalesce(-sum(amount_minor) filter (where amount_minor < 0 and status='unmatched'),0)
+		coalesce(sum(amount_minor) filter (where amount_minor > 0 and status='unmatched'),0), coalesce(-sum(amount_minor) filter (where amount_minor < 0 and status='unmatched'),0),
+		count(*) filter (where status='ignored'), coalesce(sum(amount_minor) filter (where amount_minor > 0 and status='ignored'),0), coalesce(-sum(amount_minor) filter (where amount_minor < 0 and status='ignored'),0)
 		from bank.lines where account_id = $1::uuid and ($2::date is null or line_date >= $2::date) and ($3::date is null or line_date <= $3::date)`,
-		a.ID, nilStr(v.From), nilStr(v.To)).Scan(&s.Lines, &s.Matched, &s.Unmatched, &s.Credits, &s.Debits, &s.MatchedCredits, &s.MatchedDebits, &s.UnmatchedCredits, &s.UnmatchedDebits); err != nil {
+		a.ID, nilStr(v.From), nilStr(v.To)).Scan(&s.Lines, &s.Matched, &s.Unmatched, &s.Credits, &s.Debits, &s.MatchedCredits, &s.MatchedDebits, &s.UnmatchedCredits, &s.UnmatchedDebits, &s.Ignored, &s.IgnoredCredits, &s.IgnoredDebits); err != nil {
 		return nil, command.DB(err)
 	}
 	var closing *int64
@@ -674,6 +899,75 @@ func summary(c *command.Ctx, input json.RawMessage) (any, error) {
 	}
 	return map[string]any{"account_id": a.ID, "name": a.Name, "from": v.From, "to": v.To, "lines": s.Lines, "matched": s.Matched, "unmatched": s.Unmatched,
 		"credits_minor": s.Credits, "debits_minor": s.Debits, "matched_credits_minor": s.MatchedCredits, "matched_debits_minor": s.MatchedDebits,
-		"unmatched_credits_minor": s.UnmatchedCredits, "unmatched_debits_minor": s.UnmatchedDebits,
+		"ignored": s.Ignored, "ignored_credits_minor": s.IgnoredCredits, "ignored_debits_minor": s.IgnoredDebits, "unmatched_credits_minor": s.UnmatchedCredits, "unmatched_debits_minor": s.UnmatchedDebits,
 		"closing_balance_minor": closing, "closing_balance_on": closingOn, "reconciled": s.Lines > 0 && s.Unmatched == 0}, nil
+}
+
+// ---------- mapping editor ----------
+
+// csvPreview shows what an uploaded CSV looks like to the importer without writing anything: the first raw rows, the header row
+// found, the columns auto-detect picks, the columns that would be used (a given mapping, else the account's saved one, else
+// detected), the first parsed lines, and why detection failed when it did. It is the "map columns" screen's one read.
+func csvPreview(c *command.Ctx, input json.RawMessage) (any, error) {
+	v, err := decode(input)
+	if err != nil {
+		return nil, err
+	}
+	if v.CSV == nil || strings.TrimSpace(*v.CSV) == "" {
+		return nil, command.ErrInvalid("csv is required")
+	}
+	given := v.Mapping
+	if given == nil && v.AccountID != "" {
+		a, err := loadAccount(c, v.AccountID)
+		if err != nil {
+			return nil, err
+		}
+		var saved mapping
+		if len(a.Mapping) > 0 && json.Unmarshal(a.Mapping, &saved) == nil {
+			given = &saved
+		}
+	}
+	recs, err := readRecords(*v.CSV)
+	if err != nil {
+		return nil, command.ErrInvalid(err.Error())
+	}
+	out := map[string]any{"rows": recs[:min(len(recs), 12)], "total_rows": len(recs)}
+	var detected mapping
+	for i := 0; i < len(recs) && i < 40; i++ {
+		if d := detect(recs[i]); d.Date != "" && (d.Debit != "" || d.Credit != "" || d.Amount != "") {
+			detected = d
+			break
+		}
+	}
+	out["detected"] = detected
+	res, perr := parseStatement(*v.CSV, given)
+	out["ok"] = perr == nil
+	if perr != nil {
+		out["reason"] = perr.Error()
+		// offer the first row with several filled cells as the header to pick columns from
+		for i := 0; i < len(recs) && i < 40; i++ {
+			n := 0
+			for _, x := range recs[i] {
+				if strings.TrimSpace(x) != "" {
+					n++
+				}
+			}
+			if n >= 2 {
+				out["headers"], out["header_row"] = recs[i], i+1
+				break
+			}
+		}
+		return out, nil
+	}
+	sample := []map[string]any{}
+	for _, l := range res.Lines[:min(len(res.Lines), 5)] {
+		sample = append(sample, map[string]any{"row": l.Row, "date": l.Date.Format("2006-01-02"), "amount_minor": l.Amount, "narration": l.Narration})
+	}
+	errs := res.Errors
+	if errs == nil {
+		errs = []string{}
+	}
+	out["headers"], out["header_row"], out["used"], out["source"] = recs[res.Header-1], res.Header, res.Used, res.Source
+	out["lines"], out["skipped"], out["errors"], out["sample"] = len(res.Lines), res.Skipped, errs, sample
+	return out, nil
 }

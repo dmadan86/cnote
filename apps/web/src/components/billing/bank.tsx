@@ -1,5 +1,5 @@
 'use client'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useShell } from '@/components/shell'
 import { btn, btnPrimary, ErrorText, Field, inputCls, Modal, Pill } from '@/components/ui'
 import { useCmd } from '@/lib/hooks'
@@ -28,14 +28,42 @@ type Line = {
   amount_minor: number
   narration: string
   reference: string | null
-  status: 'unmatched' | 'matched'
+  status: 'unmatched' | 'matched' | 'ignored'
   match_label: string | null
+  ignore_reason: string | null
   suggestions: Suggestion[]
+  combos: Suggestion[][]
+}
+type Mapping = {
+  date?: string
+  narration?: string
+  amount?: string
+  debit?: string
+  credit?: string
+  type?: string
+  balance?: string
+  reference?: string
+  date_format?: string
+}
+type Preview = {
+  ok: boolean
+  reason?: string
+  rows: string[][]
+  headers?: string[]
+  header_row?: number
+  detected: Mapping
+  used?: Mapping
+  source?: string
+  lines?: number
+  skipped?: number
+  errors?: string[]
+  sample?: { row: number; date: string; amount_minor: number; narration: string }[]
 }
 type Summary = {
   lines: number
   matched: number
   unmatched: number
+  ignored: number
   credits_minor: number
   debits_minor: number
   unmatched_credits_minor: number
@@ -170,9 +198,74 @@ function RecordModal({ line, onClose, onDone }: { line: Line; onClose: () => voi
   )
 }
 
+const REASONS = ['Bank charge, not recorded', 'Internal transfer between own accounts']
+
+function IgnoreModal({ line, onClose, onDone }: { line: Line; onClose: () => void; onDone: () => void }) {
+  const { ws } = useShell()
+  const [err, setErr] = useState<string>()
+  return (
+    <Modal open title="Ignore this line" onClose={onClose}>
+      <form
+        className="space-y-3"
+        onSubmit={async (e) => {
+          e.preventDefault()
+          const f = new FormData(e.currentTarget)
+          const pick = String(f.get('reason'))
+          try {
+            await run(ws, 'bank.ignore', {
+              line_id: line.id,
+              reason: pick === 'other' ? String(f.get('other') ?? '') : pick,
+            })
+            onDone()
+            onClose()
+          } catch (x) {
+            setErr((x as Error).message)
+          }
+        }}
+      >
+        <p className="text-[13px]">
+          {dmy(line.date)} · <Amount minor={line.amount_minor} />
+          <br />
+          <span className="text-muted">{line.narration}</span>
+        </p>
+        <Field label="Reason">
+          {(id) => (
+            <select id={id} name="reason" className={inputCls} defaultValue={REASONS[0]}>
+              {REASONS.map((r) => (
+                <option key={r} value={r}>
+                  {r}
+                </option>
+              ))}
+              <option value="other">Other (write below)</option>
+            </select>
+          )}
+        </Field>
+        <Field label="Other reason">
+          {(id) => <input id={id} name="other" maxLength={200} className={inputCls} />}
+        </Field>
+        <p className="text-[12px] text-muted">
+          The line counts as reconciled and nothing is posted to the books. To keep a bank charge in the
+          books, use Record as expense instead. You can put an ignored line back.
+        </p>
+        <ErrorText error={err} />
+        <div className="flex justify-end gap-2">
+          <button type="button" className={btn} onClick={onClose}>
+            Cancel
+          </button>
+          <button type="submit" className={btnPrimary}>
+            Ignore line
+          </button>
+        </div>
+      </form>
+    </Modal>
+  )
+}
+
 function LineCard({ l, onChange }: { l: Line; onChange: () => void }) {
   const { ws } = useShell()
   const [rec, setRec] = useState(false)
+  const [ign, setIgn] = useState(false)
+  const [picked, setPicked] = useState<Record<string, boolean>>({})
   const [err, setErr] = useState<string>()
   const act = async (name: string, input: object) => {
     setErr(undefined)
@@ -184,6 +277,10 @@ function LineCard({ l, onChange }: { l: Line; onChange: () => void }) {
     }
   }
   const s = l.suggestions[0]
+  const combo = l.combos?.[0]
+  const chosen = combo?.filter((p) => picked[p.id] !== false) ?? []
+  const total = chosen.reduce((t, p) => t + p.amount_minor, 0)
+  const gap = Math.abs(l.amount_minor) - total
   return (
     <li className="space-y-2 rounded-md border border-line p-3">
       <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-1">
@@ -193,7 +290,20 @@ function LineCard({ l, onChange }: { l: Line; onChange: () => void }) {
         </div>
         <Amount minor={l.amount_minor} />
       </div>
-      {l.status === 'matched' ? (
+      {l.status === 'ignored' ? (
+        <div className="flex flex-wrap items-center justify-between gap-2 text-[13px]">
+          <span>
+            Ignored: <strong>{l.ignore_reason}</strong>
+          </span>
+          <button
+            type="button"
+            className={`${btn} min-h-[44px] sm:min-h-0`}
+            onClick={() => act('bank.unignore', { line_id: l.id })}
+          >
+            Put back
+          </button>
+        </div>
+      ) : l.status === 'matched' ? (
         <div className="flex flex-wrap items-center justify-between gap-2 text-[13px]">
           <span>
             Matched to <strong>{l.match_label ?? 'a recorded payment'}</strong>
@@ -227,14 +337,272 @@ function LineCard({ l, onChange }: { l: Line; onChange: () => void }) {
               </button>
             </div>
           )}
-          <button type="button" className={`${btn} min-h-[44px] sm:min-h-0`} onClick={() => setRec(true)}>
-            {l.amount_minor < 0 ? 'Record as expense' : 'Record as receipt'}
-          </button>
+          {combo && (
+            <fieldset className="space-y-1 rounded-md bg-hover p-2 text-[13px]">
+              <legend className="px-1 text-muted">
+                Possible match: {combo.length} payments together equal this line
+              </legend>
+              {combo.map((p) => (
+                <label key={p.id} className="flex min-h-[44px] items-center gap-2 sm:min-h-0">
+                  <input
+                    type="checkbox"
+                    checked={picked[p.id] !== false}
+                    onChange={(e) => setPicked({ ...picked, [p.id]: e.target.checked })}
+                  />
+                  <span className="min-w-0 flex-1 break-words">
+                    {p.label} · {dmy(p.date)}
+                  </span>
+                  <span className="whitespace-nowrap">{money(p.amount_minor)}</span>
+                </label>
+              ))}
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span role="status">
+                  Selected {money(total)}
+                  {gap !== 0 && `, ${money(Math.abs(gap))} ${gap > 0 ? 'short' : 'over'}`}
+                </span>
+                <button
+                  type="button"
+                  className={`${btnPrimary} min-h-[44px] sm:min-h-0`}
+                  disabled={gap !== 0 || chosen.length < 2}
+                  onClick={() =>
+                    act('bank.match', {
+                      line_id: l.id,
+                      matches: chosen.map((p) => ({ kind: p.kind, id: p.id })),
+                    })
+                  }
+                >
+                  Match {chosen.length} selected payments
+                </button>
+              </div>
+            </fieldset>
+          )}
+          <div className="flex flex-wrap gap-2">
+            <button type="button" className={`${btn} min-h-[44px] sm:min-h-0`} onClick={() => setRec(true)}>
+              {l.amount_minor < 0 ? 'Record as expense' : 'Record as receipt'}
+            </button>
+            <button type="button" className={`${btn} min-h-[44px] sm:min-h-0`} onClick={() => setIgn(true)}>
+              Ignore
+            </button>
+          </div>
         </div>
       )}
       <ErrorText error={err} />
+      {ign && <IgnoreModal line={l} onClose={() => setIgn(false)} onDone={onChange} />}
       {rec && <RecordModal line={l} onClose={() => setRec(false)} onDone={onChange} />}
     </li>
+  )
+}
+
+type Mode = 'signed' | 'split' | 'marker'
+const FIELDS: [keyof Mapping, string][] = [
+  ['narration', 'Narration'],
+  ['balance', 'Balance'],
+  ['reference', 'Reference'],
+]
+const modeOf = (m: Mapping): Mode => (m.debit || m.credit ? 'split' : m.type ? 'marker' : 'signed')
+
+function MappingEditor({
+  account,
+  csv,
+  onClose,
+  onDone,
+}: {
+  account: Account
+  csv: string
+  onClose: () => void
+  onDone: (r: ImportResult) => void
+}) {
+  const { ws } = useShell()
+  const [first, setFirst] = useState<Preview>()
+  const [map, setMap] = useState<Mapping>({})
+  const [mode, setMode] = useState<Mode>('signed')
+  const [prev, setPrev] = useState<Preview>()
+  const [err, setErr] = useState<string>()
+  useEffect(() => {
+    run<Preview>(ws, 'bank.csv_preview', { csv, account_id: account.id })
+      .then((p) => {
+        setFirst(p)
+        const m = { ...p.detected, ...(p.used ?? {}) }
+        setMap(m)
+        setMode(modeOf(m))
+      })
+      .catch((x) => setErr((x as Error).message))
+  }, [ws, csv, account.id])
+  useEffect(() => {
+    if (!first) return
+    const t = setTimeout(
+      () =>
+        run<Preview>(ws, 'bank.csv_preview', { csv, mapping: map })
+          .then(setPrev)
+          .catch((x) => setErr((x as Error).message)),
+      250,
+    )
+    return () => clearTimeout(t)
+  }, [ws, csv, map, first])
+  const headers = first?.headers ?? []
+  const pick = (k: keyof Mapping, label: string, required = false) => (
+    <Field label={required ? `${label} (required)` : label}>
+      {(id) => (
+        <select
+          id={id}
+          className={inputCls}
+          value={map[k] ?? ''}
+          onChange={(e) => setMap({ ...map, [k]: e.target.value })}
+        >
+          <option value="">{required ? 'Choose a column' : 'Not provided'}</option>
+          {headers.map((h, i) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: header cells can repeat
+            <option key={i} value={h}>
+              {h || `Column ${i + 1}`}
+            </option>
+          ))}
+        </select>
+      )}
+    </Field>
+  )
+  const setModeKeep = (m: Mode) => {
+    setMode(m)
+    setMap({ ...map, amount: '', debit: '', credit: '', type: '' })
+  }
+  return (
+    <Modal open title="Map statement columns" onClose={onClose}>
+      <div className="space-y-3">
+        {first && !first.ok && (
+          <div role="alert" className="rounded-md border border-amber-400 bg-amber-50 p-2.5 text-[13px]">
+            Automatic detection failed: {first.reason}
+          </div>
+        )}
+        {first && first.ok && (
+          <p className="text-[13px] text-muted">
+            Columns were read{' '}
+            {first.source === 'given' ? "with this account's saved mapping" : 'automatically'}. Change them if
+            the preview below looks wrong.
+          </p>
+        )}
+        <div className="overflow-x-auto rounded-md border border-line">
+          <table className="w-full text-[12px]">
+            <caption className="sr-only">First rows of the file</caption>
+            <tbody>
+              {first?.rows.map((r, i) => (
+                // biome-ignore lint/suspicious/noArrayIndexKey: raw rows
+                <tr key={i} className={first.header_row === i + 1 ? 'bg-hover font-semibold' : ''}>
+                  <th scope="row" className="px-2 py-1 text-left font-normal text-muted">
+                    {i + 1}
+                  </th>
+                  {r.map((c, j) => (
+                    // biome-ignore lint/suspicious/noArrayIndexKey: raw cells
+                    <td key={j} className="whitespace-nowrap px-2 py-1">
+                      {c}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {first?.header_row && (
+          <p className="text-[12px] text-muted">Header row: {first.header_row} (highlighted).</p>
+        )}
+        <div className="grid gap-2 sm:grid-cols-2">
+          {pick('date', 'Date', true)}
+          <Field label="Date order">
+            {(id) => (
+              <select
+                id={id}
+                className={inputCls}
+                value={map.date_format || 'dmy'}
+                onChange={(e) => setMap({ ...map, date_format: e.target.value })}
+              >
+                <option value="dmy">Day first: 03/04/2026 is 3 Apr 2026</option>
+                <option value="mdy">Month first: 03/04/2026 is 4 Mar 2026</option>
+                <option value="ymd">Year first: 2026/04/03 is 3 Apr 2026</option>
+              </select>
+            )}
+          </Field>
+          <Field label="Amounts come as">
+            {(id) => (
+              <select
+                id={id}
+                className={inputCls}
+                value={mode}
+                onChange={(e) => setModeKeep(e.target.value as Mode)}
+              >
+                <option value="signed">One signed amount column</option>
+                <option value="split">Separate debit and credit columns</option>
+                <option value="marker">One amount column plus a Dr/Cr marker</option>
+              </select>
+            )}
+          </Field>
+          {mode === 'split' ? (
+            <>
+              {pick('debit', 'Debit (money out)', true)}
+              {pick('credit', 'Credit (money in)', true)}
+            </>
+          ) : (
+            <>
+              {pick('amount', 'Amount', true)}
+              {mode === 'marker' && pick('type', 'Dr/Cr marker', true)}
+            </>
+          )}
+          {FIELDS.map(([k, label]) => pick(k, label))}
+        </div>
+        <div aria-live="polite" className="space-y-1 text-[13px]">
+          {prev && !prev.ok && <p className="text-red-600">{prev.reason}</p>}
+          {prev?.ok && (
+            <>
+              <p>
+                {prev.lines} lines would be read, {prev.skipped} rows skipped.
+              </p>
+              <ul className="space-y-1">
+                {prev.sample?.map((x) => (
+                  <li
+                    key={x.row}
+                    className="flex flex-wrap justify-between gap-2 rounded-md border border-line p-2"
+                  >
+                    <span className="min-w-0 break-words">
+                      {dmy(x.date)} · {x.narration || '(no narration)'}
+                    </span>
+                    <Amount minor={x.amount_minor} />
+                  </li>
+                ))}
+              </ul>
+              {prev.errors?.map((e) => (
+                <p key={e} className="text-red-600">
+                  {e}
+                </p>
+              ))}
+            </>
+          )}
+        </div>
+        <ErrorText error={err} />
+        <div className="flex justify-end gap-2">
+          <button type="button" className={btn} onClick={onClose}>
+            Cancel
+          </button>
+          <button
+            type="button"
+            className={btnPrimary}
+            disabled={!prev?.ok}
+            onClick={async () => {
+              setErr(undefined)
+              try {
+                onDone(
+                  await run<ImportResult>(ws, 'bank.import', { account_id: account.id, csv, mapping: map }),
+                )
+                onClose()
+              } catch (x) {
+                setErr((x as Error).message)
+              }
+            }}
+          >
+            Save mapping and import
+          </button>
+        </div>
+        <p className="text-[12px] text-muted">
+          The mapping is saved for {account.name} and used for its next imports.
+        </p>
+      </div>
+    </Modal>
   )
 }
 
@@ -242,6 +610,8 @@ function ImportBox({ account, onDone }: { account: Account; onDone: () => void }
   const { ws } = useShell()
   const [res, setRes] = useState<ImportResult>()
   const [err, setErr] = useState<string>()
+  const [csv, setCsv] = useState<string>()
+  const [edit, setEdit] = useState(false)
   return (
     <div className="space-y-2">
       <Field label="Import a statement (CSV)">
@@ -256,13 +626,16 @@ function ImportBox({ account, onDone }: { account: Account; onDone: () => void }
               e.target.value = ''
               if (!file) return
               setErr(undefined)
+              const text = await file.text()
+              setCsv(text)
               try {
-                setRes(
-                  await run<ImportResult>(ws, 'bank.import', {
-                    account_id: account.id,
-                    csv: await file.text(),
-                  }),
-                )
+                const p = await run<Preview>(ws, 'bank.csv_preview', { csv: text, account_id: account.id })
+                if (!p.ok) {
+                  setRes(undefined)
+                  setEdit(true)
+                  return
+                }
+                setRes(await run<ImportResult>(ws, 'bank.import', { account_id: account.id, csv: text }))
                 onDone()
               } catch (x) {
                 setRes(undefined)
@@ -273,8 +646,8 @@ function ImportBox({ account, onDone }: { account: Account; onDone: () => void }
         )}
       </Field>
       <p className="text-[12px] text-muted">
-        Columns are detected from the header and remembered for this account. Dates are read as DD/MM/YYYY.
-        Importing the same lines again is safe.
+        Columns are detected from the header and remembered for this account. Dates are read day first unless
+        you map them otherwise. Importing the same lines again is safe.
       </p>
       <ErrorText error={err} />
       {res && (
@@ -289,13 +662,29 @@ function ImportBox({ account, onDone }: { account: Account; onDone: () => void }
           )}
         </div>
       )}
+      {csv && (
+        <button type="button" className={`${btn} min-h-[44px] sm:min-h-0`} onClick={() => setEdit(true)}>
+          Map columns
+        </button>
+      )}
+      {edit && csv && (
+        <MappingEditor
+          account={account}
+          csv={csv}
+          onClose={() => setEdit(false)}
+          onDone={(r) => {
+            setRes(r)
+            onDone()
+          }}
+        />
+      )}
     </div>
   )
 }
 
 function Reconcile({ account, reload }: { account: Account; reload: () => void }) {
   const { ws } = useShell()
-  const [tab, setTab] = useState<'unmatched' | 'matched'>('unmatched')
+  const [tab, setTab] = useState<'unmatched' | 'matched' | 'ignored'>('unmatched')
   const lines = useCmd<Line[]>(ws, 'bank.line_list', { account_id: account.id, status: tab })
   const sum = useCmd<Summary>(ws, 'bank.summary', { account_id: account.id })
   const changed = () => {
@@ -321,7 +710,7 @@ function Reconcile({ account, reload }: { account: Account; reload: () => void }
         </div>
       )}
       <div role="tablist" aria-label="Statement lines" className="flex gap-1">
-        {(['unmatched', 'matched'] as const).map((t) => (
+        {(['unmatched', 'matched', 'ignored'] as const).map((t) => (
           <button
             key={t}
             type="button"
@@ -330,7 +719,11 @@ function Reconcile({ account, reload }: { account: Account; reload: () => void }
             className={`${tab === t ? btnPrimary : btn} min-h-[44px] sm:min-h-0`}
             onClick={() => setTab(t)}
           >
-            {t === 'unmatched' ? 'Unmatched' : 'Matched'}
+            {t === 'unmatched'
+              ? 'Unmatched'
+              : t === 'matched'
+                ? 'Matched'
+                : `Ignored${s ? ` (${s.ignored})` : ''}`}
           </button>
         ))}
       </div>
@@ -341,7 +734,9 @@ function Reconcile({ account, reload }: { account: Account; reload: () => void }
             ? 'Upload a statement to start.'
             : tab === 'unmatched'
               ? 'All statement lines are matched.'
-              : 'Nothing matched yet.'}
+              : tab === 'ignored'
+                ? 'No ignored lines.'
+                : 'Nothing matched yet.'}
         </p>
       )}
       <ul className="space-y-2" aria-label={`${tab} statement lines`}>
