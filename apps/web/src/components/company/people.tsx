@@ -1,6 +1,7 @@
 'use client'
 import Link from 'next/link'
 import { useState } from 'react'
+import { PeopleTabs } from '@/components/hr/shared'
 import { useShell } from '@/components/shell'
 import { Avatar, btn, btnPrimary, ErrorText, Field, inputCls, Modal, Pill } from '@/components/ui'
 import { cmd } from '@/lib/api'
@@ -47,6 +48,7 @@ export function PeopleDirectory() {
   return (
     <div className="mx-auto max-w-4xl space-y-8 px-6 py-8">
       <h1 className="text-xl font-semibold">People</h1>
+      <PeopleTabs current="directory" />
       <section aria-label="Directory" className="space-y-3">
         <div className="flex flex-wrap items-end gap-3">
           <div className="min-w-48 flex-1">

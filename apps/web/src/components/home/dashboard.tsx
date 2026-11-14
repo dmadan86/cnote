@@ -3,6 +3,7 @@ import { AlertTriangle } from 'lucide-react'
 import Link from 'next/link'
 import { useState } from 'react'
 import { money } from '@/components/billing/fmt'
+import { CheckInCard } from '@/components/hr/checkin'
 import { useShell } from '@/components/shell'
 import { useCmd } from '@/lib/hooks'
 
@@ -16,6 +17,7 @@ type Summary = {
     follow_ups?: { count: number; overdue: number }
     approvals?: { count: number; confirmations: number; quotes_awaiting: number; to_approve: number }
     bills_due?: { count: number; total_minor: number; overdue_count: number }
+    people_present?: { present: number; expected: number; on_leave: number; not_marked: number }
     urgent?: { count: number; overdue_tasks: number; overdue_invoices: number }
   }
   attention: {
@@ -163,6 +165,15 @@ export function HomeDashboard() {
         alert={t.follow_ups.overdue ? `${t.follow_ups.overdue} overdue` : undefined}
       />
     ),
+    t.people_present && (
+      <TileLink
+        key="people"
+        href={`${base}/people/attendance`}
+        label="People present"
+        value={`${t.people_present.present} of ${t.people_present.expected}`}
+        detail={`${t.people_present.on_leave} on leave, ${t.people_present.not_marked} not marked yet`}
+      />
+    ),
     t.urgent && (
       <TileLink
         key="urg"
@@ -176,6 +187,7 @@ export function HomeDashboard() {
 
   return (
     <div className="space-y-6">
+      <CheckInCard />
       {tiles.length > 0 && (
         <section aria-label="Today at a glance">
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">{tiles}</div>

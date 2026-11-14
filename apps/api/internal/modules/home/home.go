@@ -13,6 +13,7 @@ import (
 	"github.com/cnote/api/internal/access"
 	"github.com/cnote/api/internal/command"
 	"github.com/cnote/api/internal/modules/billing"
+	"github.com/cnote/api/internal/modules/hr"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -305,6 +306,15 @@ func summary(c *command.Ctx, input json.RawMessage) (any, error) {
 	}
 	if haveApprovals {
 		tiles["approvals"] = map[string]any{"count": confirmations + quotes + decisions, "confirmations": confirmations, "quotes_awaiting": quotes, "to_approve": decisions}
+	}
+
+	// ---- people present today (IST): the owner's view only, everyone counted ----
+	if role >= command.Admin {
+		n, err := hr.PeoplePresent(c)
+		if err != nil {
+			return nil, err
+		}
+		tiles["people_present"] = map[string]any{"present": n.Present, "expected": n.Expected, "on_leave": n.OnLeave, "not_marked": n.NotMarked}
 	}
 
 	// ---- urgent: overdue items + overdue invoices ----
