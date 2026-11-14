@@ -156,7 +156,7 @@ func TestApprovalRuleValidationAndOtherCommands(t *testing.T) {
 	b.errIs("approval.rule_set", map[string]any{"command": "quote.send", "approver_user_id": outsider.userID}, 400, "invalid")
 	b.errAs(guest, "approval.rule_list", map[string]any{}, 403, "forbidden")
 	b.errAs(guest, "approval.list", map[string]any{}, 403, "forbidden")
-	eq(t, len(b.okAs(member, "approval.rule_list", map[string]any{})["commands"].([]any)), 6)
+	eq(t, len(b.okAs(member, "approval.rule_list", map[string]any{})["commands"].([]any)), 8)
 	r := b.rule(map[string]any{"min_amount_minor": 7, "fallback_user_id": member.userID, "escalate_after_hours": 24})
 	eq(t, r["approver_role"], "admin")
 	r2 := b.rule(map[string]any{"min_amount_minor": 9, "enabled": false}) // one rule per command: updated in place
