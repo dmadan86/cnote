@@ -849,7 +849,8 @@ func payablesAgeing(c *command.Ctx, input json.RawMessage) (any, error) {
 	rows, err := c.Tx.Query(c.Context,
 		`select b.note_id::text, b.vendor_bill_number, b.vendor_id::text, vn.title, b.bill_date::text, b.due_date::text,
 		   b.total_minor - b.paid_minor
-		 from billing.purchase_bills b join core.notes n on n.id = b.note_id left join core.notes vn on vn.id = b.vendor_id
+		 from billing.purchase_bills b join core.notes n on n.id = b.note_id left join core.notes vn on vn.id = b.vendor_id and vn.deleted_at is null
+		   and core.note_access(vn.id, $3::uuid, $4, $2::text[]::uuid[]) <> 'none'
 		 where b.status in ('recorded','partly_paid') and b.total_minor - b.paid_minor > 0 and b.bill_date <= $1::date
 		   and n.space_id = any($2::text[]::uuid[]) and core.note_access(n.id, $3::uuid, $4, $2::text[]::uuid[]) <> 'none'
 		 order by b.bill_date, b.note_id`, asOf, spaces, uid, admin)
