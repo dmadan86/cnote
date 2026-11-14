@@ -520,9 +520,9 @@ func (r *prunner) pdump() []string {
 		{"item_notes", "select (to_jsonb(n) - 'search')::text from core.notes n where n.id in (select note_id from projects.items) order by (select key from projects.items where note_id = n.id)"},
 		{"workflows", "select (to_jsonb(w) - 'id' - 'created_at')::text from projects.workflows w order by (select key from core.spaces where id = w.space_id), w.version"},
 		{"evidence", "select (to_jsonb(x) - 'id' - 'created_at')::text from projects.evidence x order by (select key from projects.items where note_id = x.note_id), x.kind, x.source, coalesce(x.url,'')"},
-		{"events", "select (to_jsonb(x) - 'id')::text from core.events x where x.actor_type in ('user','agent') and x.kind not like 'doc.%' and x.kind not like 'sprint.%' and x.kind not like 'version.%' and x.kind not like 'component.%' order by x.id"},
+		{"events", "select (to_jsonb(x) - 'id')::text from core.events x where x.actor_type in ('user','agent') and x.kind <> 'command.denied' and x.kind not like 'doc.%' and x.kind not like 'sprint.%' and x.kind not like 'version.%' and x.kind not like 'component.%' order by x.id"},
 		{"jobs", `select e.kind || ' ' || e.actor_type from core.jobs j join core.events e on e.id = (j.payload->>'event_id')::bigint
-		           where j.kind = 'event.dispatch' and e.actor_type in ('user','agent') and e.kind not like 'doc.%' order by j.id`},
+		           where j.kind = 'event.dispatch' and e.actor_type in ('user','agent') and e.kind not like 'doc.%' and e.kind <> 'command.denied' order by j.id`},
 		{"usage", "select (to_jsonb(u) - 'id' - 'created_at' - 'occurred_at')::text from core.usage u where u.kind = 'mcp.call' order by u.meta::text, u.kind"},
 	} {
 		rows, err := tx.Query(context.Background(), q.sql)

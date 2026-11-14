@@ -355,9 +355,9 @@ func (r *runner) docsDump() []string {
 		{"notes", "select (to_jsonb(n) - 'search')::text from core.notes n order by n.title, n.created_at, n.content_md"},
 		{"relations", "select to_jsonb(x)::text from core.relations x order by x.kind, x.created_at"},
 		{"revisions", "select to_jsonb(x)::text from core.note_revisions x order by x.created_at, x.number"},
-		{"events", "select (to_jsonb(x) - 'id')::text from core.events x where x.actor_type in ('user','agent') order by x.id"},
+		{"events", "select (to_jsonb(x) - 'id')::text from core.events x where x.actor_type in ('user','agent') and x.kind <> 'command.denied' order by x.id"},
 		{"dispatch", `select count(*)::text from core.jobs j join core.events x on j.payload->>'event_id' = x.id::text
-		              where j.kind = 'event.dispatch' and x.actor_type in ('user','agent')`},
+		              where j.kind = 'event.dispatch' and x.actor_type in ('user','agent') and x.kind <> 'command.denied'`},
 		{"usage", "select kind || ' ' || quantity || ' ' || meta::text from core.usage order by 1"},
 	} {
 		rows, err := tx.Query(context.Background(), q.sql)

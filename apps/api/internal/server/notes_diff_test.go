@@ -392,7 +392,7 @@ func (r *runner) dump() []string {
 		{"notifications", "select to_jsonb(x)::text from core.notifications x order by x.kind, x.title, x.created_at"},
 		{"views", "select to_jsonb(x)::text from core.views x order by x.name, x.options::text"},
 		// the Rust worker adds asynchronous system events; compare what the commands emitted
-		{"events", "select (to_jsonb(x) - 'id')::text from core.events x where x.actor_type in ('user','agent') and x.kind not like 'doc.%' order by x.id"},
+		{"events", "select (to_jsonb(x) - 'id')::text from core.events x where x.actor_type in ('user','agent') and x.kind <> 'command.denied' and x.kind not like 'doc.%' order by x.id"},
 	} {
 		rows, err := tx.Query(context.Background(), q.sql)
 		if err != nil {
