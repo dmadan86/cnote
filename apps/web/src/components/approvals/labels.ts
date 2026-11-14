@@ -33,10 +33,12 @@ export const ACTION: Record<string, string> = {
   'receipt.refund': 'Refund advance',
   'expense.approve': 'Approve expense claim',
   'expense.reimburse': 'Reimburse expense claim',
+  'payroll.approve': 'Approve payroll run',
 }
 
 /** Where the document lives, by the command that was held. */
 export const docPath = (ws: string, a: Pick<Approval, 'command' | 'note_id'>) => {
+  if (a.command.startsWith('payroll.')) return `/w/${ws}/people/payroll`
   if (!a.note_id) return `/w/${ws}/approvals`
   const base = `/w/${ws}/billing`
   if (a.command.startsWith('quote.')) return `${base}/quotes/${a.note_id}`

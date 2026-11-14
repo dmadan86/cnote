@@ -27,6 +27,7 @@ var supported = []struct{ name, label string }{
 	{"receipt.refund", "Refund an advance"},
 	{"expense.approve", "Approve an expense claim"},
 	{"expense.reimburse", "Reimburse an expense claim"},
+	{"payroll.approve", "Approve a payroll run (amount = total net pay)"},
 }
 
 // amountFor is the Amount of a supported command; check = run the handler's page access check first.
@@ -44,6 +45,8 @@ func amountFor(name string, check bool) command.AmountFunc {
 		return paymentOf("billing.invoices", "total_minor", check)
 	case "receipt.refund":
 		return paymentOf("billing.receipts", "amount_minor", check)
+	case "payroll.approve":
+		return payrollNet
 	case "expense.approve", "expense.reimburse":
 		return paymentOf("billing.expenses", "amount_minor", check)
 	}
@@ -68,6 +71,20 @@ func idOf(input json.RawMessage, key string) (string, map[string]json.RawMessage
 		return "", nil, command.ErrInvalid(key + " must be a uuid")
 	}
 	return strings.ToLower(id), m, nil
+}
+
+// payrollNet: a payroll run is not a note, so it has no page to open; the amount is its total net pay. Finance access
+// was already checked by the registry.
+func payrollNet(c *command.Ctx, input json.RawMessage) (string, int64, error) {
+	id, _, err := idOf(input, "id")
+	if err != nil {
+		return "", 0, err
+	}
+	var amount int64
+	if err := c.Tx.QueryRow(c.Context, "select net_minor from payroll.runs where id = $1::uuid", id).Scan(&amount); err != nil {
+		return "", 0, command.DB(err)
+	}
+	return "", amount, nil
 }
 
 // Table and expressions are constants in this file, never caller input.

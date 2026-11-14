@@ -54,22 +54,26 @@ func (r *Registry) approvalGate(c *Ctx, cmd Command, input json.RawMessage) ([]b
 	}
 	var id string
 	err = c.Tx.QueryRow(c.Context, `select id::text from core.confirmations where kind = 'approval' and status = 'pending'
-		and command = $1 and note_id = $2::uuid and requested_by = $3 and input = $4::jsonb`, cmd.Name, noteID, *p.UserID, input).Scan(&id)
+		and command = $1 and note_id is not distinct from nullif($2,'')::uuid and requested_by = $3 and input = $4::jsonb`, cmd.Name, noteID, *p.UserID, input).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = c.Tx.QueryRow(c.Context,
 			`insert into core.confirmations (workspace_id, command, input, requested_by, kind, note_id, amount_minor,
 			   approver_user_id, fallback_user_id, escalate_at, steps)
-			 values ($1::uuid,$2,$3,$4,'approval',$5::uuid,$6,$7::uuid,$8::uuid,
+			 values ($1::uuid,$2,$3,$4,'approval',nullif($5,'')::uuid,$6,$7::uuid,$8::uuid,
 			   case when $9::int is null then null else now() + $9::int * interval '1 hour' end, $10::jsonb)
 			 returning id::text`,
 			p.WorkspaceID, cmd.Name, input, *p.UserID, noteID, amount, steps[0].FirstUser(), fallback, hours, steps).Scan(&id)
 		if err != nil {
 			return nil, false, DB(err)
 		}
-		if _, err := c.Emit("approval.requested", &noteID, map[string]any{"approval_id": id, "command": cmd.Name, "amount_minor": amount}); err != nil {
+		var np *string // a document without a note (a payroll run) has no page to attach to
+		if noteID != "" {
+			np = &noteID
+		}
+		if _, err := c.Emit("approval.requested", np, map[string]any{"approval_id": id, "command": cmd.Name, "amount_minor": amount}); err != nil {
 			return nil, false, err
 		}
-		if err := steps[0].Notify(c, &noteID, *p.UserID); err != nil {
+		if err := steps[0].Notify(c, np, *p.UserID); err != nil {
 			return nil, false, err
 		}
 	} else if err != nil {
