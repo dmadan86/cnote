@@ -1,4 +1,4 @@
-// Package notes ports space.list, note.get and note.history from crates/cnote-core/src/notes.rs.
+// Package notes ports the core note commands (space.*, note.*, relation.*, comment.*, search.notes, view.*) from crates/cnote-core/src/notes.rs.
 // Rust serializes handler output through serde_json::Value, so response keys come out sorted; the
 // command layer reproduces that (command.serialize). Embedded structs inline like #[serde(flatten)].
 package notes
@@ -17,11 +17,11 @@ import (
 )
 
 func Commands() []command.Command {
-	return []command.Command{
+	return append([]command.Command{
 		command.NewCommand("space.list", command.GroupRead, spaceList),
 		command.NewCommand("note.get", command.GroupRead, noteGet),
 		command.NewCommand("note.history", command.GroupRead, noteHistory),
-	}
+	}, writeCommands()...)
 }
 
 var uuidRe = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
@@ -123,20 +123,25 @@ const noteCols = `id::text, space_id::text, parent_id::text, title, types, conte
 	verified_at, freshness, source_system, source_id, source_url, created_by::text, created_at, updated_at,
 	version, restriction, collab_epoch`
 
-func loadNote(c *command.Ctx, id string) (Note, error) {
+func scanNote(row pgx.Row) (Note, error) {
 	var n Note
 	var verifiedAt *time.Time
 	var createdAt, updatedAt time.Time
-	err := c.Tx.QueryRow(c.Context, "select "+noteCols+" from core.notes where id = $1::uuid and deleted_at is null", id).Scan(
+	err := row.Scan(
 		&n.ID, &n.SpaceID, &n.ParentID, &n.Title, &n.Types, &n.ContentMD, &n.OwnerID, &n.VerifyBy,
 		&verifiedAt, &n.Freshness, &n.SourceSystem, &n.SourceID, &n.SourceURL, &n.CreatedBy, &createdAt, &updatedAt,
 		&n.Version, &n.Restriction, &n.CollabEpoch)
-	if err == pgx.ErrNoRows {
-		return n, command.ErrNotFound("note")
-	}
 	n.VerifiedAt, n.CreatedAt, n.UpdatedAt = command.TsPtr(verifiedAt), command.Ts(createdAt), command.Ts(updatedAt)
 	if n.Types == nil {
 		n.Types = []string{}
+	}
+	return n, err
+}
+
+func loadNote(c *command.Ctx, id string) (Note, error) {
+	n, err := scanNote(c.Tx.QueryRow(c.Context, "select "+noteCols+" from core.notes where id = $1::uuid and deleted_at is null", id))
+	if err == pgx.ErrNoRows {
+		return n, command.ErrNotFound("note")
 	}
 	return n, err
 }

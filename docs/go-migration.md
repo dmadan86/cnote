@@ -143,3 +143,25 @@ Small, read-heavy, few events first; money, outbound and background-coupled last
   `core.events` and `core.jobs` written by Go.
 - The Go server needs `DATABASE_URL`; `RUST_API_URL` must be reachable or non-native traffic returns 502.
 - pgx v5.8.0 is the newest release that builds with Go 1.24; later pgx releases require Go 1.25.
+
+## Module 1 (core notes, rest): ported
+
+`space.create`, `note.create`, `note.update`, `note.list`, `note.delete`, `relation.add`, `relation.remove`,
+`comment.add`, `comment.list`, `comment.resolve`, `search.notes`, `view.create`, `view.list` now run in Go
+(`internal/modules/notes`, with `space.list`, `note.get`, `note.history`).
+
+- Input decoding (`decode.go`) mimics serde: wrong types, `null` for non-Option fields, non-canonical UUIDs,
+  lone surrogates, non-`YYYY-MM-DD` dates, non-integer numbers and float/huge numbers inside `view.create`
+  `options` fall back to Rust, so error text stays identical.
+- `notify_mentions` and `checkpoint` (page revisions) are ported privately inside the package; the
+  notification read commands stay with their own module. Mention order follows first appearance (Rust iterates a
+  HashSet, so its order is arbitrary).
+- `search.notes` rank is a Postgres `real`; Rust widens it to f64 through `serde_json::Value`, so the Go side
+  prints the f64 widening (`Rank`). View `options` are re-printed the way serde prints f64 (`normValue`);
+  `command.Norm` keeps numbers as written, which differs for fractions with trailing zeros and integers beyond u64.
+- Rows with equal `search.notes` rank or equal view/space names have no defined order (same in Rust), so the
+  twin-fixture test compares them order-insensitively and the same-fixture raw-byte comparison checks real order.
+- Tests: `internal/server/notes_write_test.go` ports the Rust `command_layer.rs` and `page_permissions.rs`
+  assertions; `internal/server/notes_diff_test.go` runs one script (~690 steps) against twin fixtures through Rust
+  and Go and compares normalized responses, resulting rows and events, then raw-compares all read commands.
+  The differential test takes ~70s because it paces itself under the fair-use rate limit of the shared Rust server.
