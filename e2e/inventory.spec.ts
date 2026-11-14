@@ -72,7 +72,12 @@ test('Trader keeps stock: item, opening stock, bill receives, invoice issues, lo
   ).id
   await call('bill.record', { id: bill })
   const buyer = (
-    await call('contact.create', { space_id: space, name: 'Buyer', kind: 'company', gstin: gstin('29', 'AABCT1332L') })
+    await call('contact.create', {
+      space_id: space,
+      name: 'Buyer',
+      kind: 'company',
+      gstin: gstin('29', 'AABCT1332L'),
+    })
   ).id
   const inv = (
     await call('invoice.create_draft', {
@@ -99,7 +104,11 @@ test('Trader keeps stock: item, opening stock, bill receives, invoice issues, lo
 
   // a line editor offers the item
   const draft = (
-    await call('invoice.create_draft', { space_id: space, contact_id: buyer, lines: [{ description: 'x', unit_price_minor: 1 }] })
+    await call('invoice.create_draft', {
+      space_id: space,
+      contact_id: buyer,
+      lines: [{ description: 'x', unit_price_minor: 1 }],
+    })
   ).id
   await page.goto(`/w/${ws}/billing/${draft}`)
   await page.getByLabel('Line 1 stock item').selectOption(item)
