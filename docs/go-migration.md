@@ -569,3 +569,78 @@ Dr 1310 GST paid on advances / Cr output GST; apply Dr 2300 / Cr receivables and
 share; refund reverses the unapplied part. Accounts are seeded lazily and can be changed in workspace settings
 (`advance_account`, `advance_gst_account`). `report.gstr1` adds `advances_11a` / `advances_adjusted_11b` only in months
 that have advances. `receipt.refund` can be held by an approval rule. Receipts can be shared with `share.create`.
+
+## Module notes: worker (port/worker)
+
+The Rust background worker (`crates/cnote-server/src/worker.rs` plus every module's `event_handlers`, `job_handlers`
+and `sweeps`) now has a Go twin in `apps/api/internal/worker`. Start it with `WITH_WORKER=1` (or `--with-worker`) on
+`cmd/api`, like `cnote serve --with-worker`, or standalone with `cmd/worker` (`cnote worker`). Env as for the API:
+`DATABASE_URL` (role `cnote_app`), `DB_POOL_MAX`, plus `SMTP_URL`/`EMAIL_FROM`/`PUBLIC_WEB_URL` for mention emails,
+`CNOTE_MASTER_KEY` (hook secrets) and `AI_ALLOW_PRIVATE_ENDPOINTS` (private hook targets, off by default) with the
+same meaning as in Rust.
+
+### Running next to the Rust worker (cutover = stop Rust's worker)
+
+- Claiming is the same SQL as Rust (`core.claim_jobs`: `UPDATE ... WHERE id IN (SELECT ... FOR UPDATE SKIP LOCKED)`), so
+  a job runs in exactly one worker. A claimed job is finished like Rust: `done`, or back to `queued` with
+  `run_at = now() + 2^attempts seconds` and `last_error`, or `failed` at `max_attempts`.
+- The Go worker claims only the kinds it can run (`event.dispatch`, `hook.deliver`, `import.run`). The two AI kinds,
+  `ai.index_note` and `docs.propose_edit`, are never claimed by Go; Rust (which claims everything) runs them. The Go
+  `event.dispatch` still enqueues them exactly like Rust, so the Rust worker keeps working. **With Rust's worker
+  stopped these two kinds stay queued until the AI port lands.**
+- Sweeps (first run at start, then every period, like tokio's interval): `docs.freshness_sweep` 24h, `finance.irn_window`
+  24h, `projects.automations` 60s, `hooks.schedule` 60s. `hooks.schedule` and the automation sweep are safe to run in both
+  workers at once (`for update skip locked`; the same `pg_try_advisory_xact_lock(hashtextextended('sweep:<id>'))`
+  and `pg_advisory_xact_lock(hashtextextended('<id>'))` keys as Rust). The freshness and IRN sweeps have no lock in
+  Rust either; a second run after the first commit finds nothing to do, so overlap is only a theoretical double flag.
+- The Go-only sweeps (`recurring`, `approvals`) keep running from `cmd/api` as before.
+
+### What moved
+
+| Rust | Go (`internal/worker` unless noted) |
+| --- | --- |
+| `worker.rs` loop, `Principal::system`, attribution of events to the human behind them | `worker.go` |
+| core `mention.created` email (lettre) | `mail.go` (`net/smtp`; `smtp://` clear text, `?tls=required\|opportunistic`, `smtps://`) |
+| docs `note.` bindings sync, event `""` freshness (stale flag, `docs.propose_edit` enqueue), daily sweep | `bindings.go`, `freshness.go` |
+| finance `finance.irn_window` | `freshness.go` (`IRNWarnWorkspace`) |
+| projects automation `on_event` and `projects.automations` sweep | `automation.go` (runs actions through `Ctx.Call`, the full command gate) |
+| ai `on_note_event` (enqueue `ai.index_note`) | `wire.go` |
+| ai hooks: `on_event`, `hook.deliver`, `hooks.schedule` (HTTP signed POST, MCP tool call) | `internal/hooks`, with `internal/netguard` (SSRF) and `internal/secretbox` (AES-GCM, byte compatible with Rust) |
+| importers `import.run` | `internal/importers` |
+
+Differences a client or operator can see:
+- Rust's `\b`, `\w`, `\s` and `to_lowercase` are Unicode aware; `worker/rustcompat.go` reproduces them for the
+  bindings parser (word boundaries, Unicode whitespace, U+0130 and final sigma).
+- The hook SSRF guard also re-checks the address it actually connects to (Rust only checks DNS before connecting), so a
+  DNS rebinding answer is refused. Messages are the Rust ones.
+- Automation actions that name a command Go does not serve fail in the Go gate with that command's error (Go serves all
+  commands the registry knows; commands Go answers with `ErrFallback` surface that as the failure text).
+- The Go `automation.create` command still falls back to Rust for `command` actions (planning module, unchanged).
+
+### Left to Rust (they call an AI provider)
+
+`docs.propose_edit` (job), `ai.index_note` (job), and the `ai.*` / `search.hybrid` / `doc.ask` / `doc.capture` commands.
+Also still in Rust and untouched: `import.start|status|list` and `hook.*` commands, workspace hooks (`seed_templates`,
+`seed_chart`, `default_space`).
+
+### Tests (`internal/worker`, `internal/hooks`, `internal/importers`)
+
+A Rust worker shares the database and claims every committed queued job, so the Go side of every test runs in one
+rolled-back transaction (the test plays the worker: it runs the jobs the transaction enqueued). `TestDifferential*`
+run the same scenario on a Rust workspace (the real Rust worker reacts) and a Go twin and compare events, relations,
+bindings, flags, jobs, automation runs, comments and usage with ids and timestamps normalised. Ports of the Rust
+tests: automations (`projects.rs`), freshness lapses and graveyard (`living_pages.rs`), IRN window sweep
+(`finance.rs`), hook delivery (`hooks.rs`), importer tests (`import.rs`).
+
+### Worker recovery (leases, atomic done mark, at-least-once outbound)
+
+- Lease: the claim sets `core.jobs.updated_at`; a heartbeat refreshes it every lease/3 (lease 10 min) while a job runs.
+  Sweep `jobs.reclaim` (60s) requeues running jobs of the Go kinds whose lease expired, or marks them `failed` when
+  `attempts >= max_attempts` (the claim counts each attempt, so a job that kills its worker repeatedly is capped). It
+  also rescues jobs a dead Rust worker left running. No schema change: Rust ignores it and keeps working alongside.
+- A successful job commits its DB effects and `status = 'done'` in ONE transaction, so a crash cannot repeat an effect
+  that committed. Failures roll the effect back and are recorded in a second transaction (retry with 2^attempts backoff).
+- Outbound effects (hook POST, mention email) cannot be atomic with the database: they are at-least-once. A crash after
+  the request leaves the job running; after the lease it is re-run and re-sent with the same key: header
+  `x-cnote-delivery-id: job-<core.jobs.id>` on hooks, `Message-ID: <cnote-mention-<event id>@cnote>` on email.
+  Receivers can dedupe on these. Tests: `internal/worker/recovery_test.go`.

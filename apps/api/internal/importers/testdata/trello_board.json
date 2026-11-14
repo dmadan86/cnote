@@ -1,0 +1,25 @@
+{
+  "id": "board1",
+  "name": "Launch plan",
+  "lists": [
+    {"id": "l1", "name": "Backlog"},
+    {"id": "l2", "name": "In Progress"},
+    {"id": "l3", "name": "Done"}
+  ],
+  "cards": [
+    {"id": "c1", "name": "Write press kit", "desc": "Draft the kit.", "idList": "l2", "labels": [{"name": "marketing"}],
+     "due": "2024-05-01T00:00:00.000Z", "url": "https://trello.com/c/abc1/1-write-press-kit", "closed": false},
+    {"id": "c2", "name": "Book venue", "desc": "", "idList": "l3", "labels": [], "url": "https://trello.com/c/abc2/2-book-venue", "closed": false},
+    {"id": "c3", "name": "Old idea", "idList": "l1", "closed": true}
+  ],
+  "checklists": [
+    {"id": "k1", "idCard": "c1", "name": "Assets", "checkItems": [
+      {"name": "Logo", "state": "complete"}, {"name": "Screenshots", "state": "incomplete"}]}
+  ],
+  "actions": [
+    {"id": "a1", "type": "commentCard", "date": "2024-04-02T10:00:00.000Z", "memberCreator": {"fullName": "Eve Sample"},
+     "data": {"text": "Use the new logo.", "card": {"id": "c1"}}},
+    {"id": "a2", "type": "updateCard", "date": "2024-04-03T10:00:00.000Z", "memberCreator": {"fullName": "Eve Sample"},
+     "data": {"card": {"id": "c1"}, "listBefore": {"name": "Backlog"}, "listAfter": {"name": "In Progress"}}}
+  ]
+}

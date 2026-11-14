@@ -4,6 +4,7 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
 	"log/slog"
 	"net/http"
 	"os"
@@ -19,6 +20,7 @@ import (
 	"github.com/cnote/api/internal/modules/recurring"
 	"github.com/cnote/api/internal/proxy"
 	"github.com/cnote/api/internal/server"
+	"github.com/cnote/api/internal/worker"
 )
 
 func env(k, def string) string {
@@ -29,6 +31,9 @@ func env(k, def string) string {
 }
 
 func main() {
+	// Like `cnote serve --with-worker` in Rust (flag, or env WITH_WORKER): run the job worker in this process.
+	withWorker := flag.Bool("with-worker", worker.Boolish(os.Getenv("WITH_WORKER")), "also run the background worker (event dispatch, jobs, sweeps)")
+	flag.Parse()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -61,6 +66,9 @@ func main() {
 		os.Exit(1)
 	}
 	approvals.Start(ctx, pool, time.Duration(approvalSecs)*time.Second, billing.TodayIST)
+	if *withWorker {
+		go worker.New(pool, registry).Run(ctx)
+	}
 	front := server.New(pool, registry, upstream)
 	if u := os.Getenv("COLLAB_URL"); u != "" { // the TypeScript collab service; unset keeps /collab on Rust
 		if front.Collab, err = proxy.New(u); err != nil {
