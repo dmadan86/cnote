@@ -525,3 +525,12 @@ audit trail; `core.data_requests` logs exports and erasures (ids and counts, nev
 20 per actor per minute). Erase anonymises PII; a contact with any issued invoice, recorded bill or receipt keeps name,
 GSTIN, state and address (printed on those documents). Ledger, `core.note_revisions` and `core.events` are never edited.
 Retention defaults (8 years) are data in `settings.audit_retention_years`; statutory periods are to be verified with counsel.
+
+## Go-only commands: advance receipts (WP4)
+`receipt.create|apply|refund|get|list` (migration `1030_receipts.sql`, module `modules/receipts`) are Go-only and absent
+from the Rust `/mcp` list. A receipt or refund voucher is a typed note `['receipt_voucher']` plus a `billing.receipts` row,
+immutable except its running totals. Postings (CA review): receive Dr bank / Cr 2300 customer advances, services also
+Dr 1310 GST paid on advances / Cr output GST; apply Dr 2300 / Cr receivables and Dr output GST / Cr 1310 for the applied
+share; refund reverses the unapplied part. Accounts are seeded lazily and can be changed in workspace settings
+(`advance_account`, `advance_gst_account`). `report.gstr1` adds `advances_11a` / `advances_adjusted_11b` only in months
+that have advances. `receipt.refund` can be held by an approval rule. Receipts can be shared with `share.create`.

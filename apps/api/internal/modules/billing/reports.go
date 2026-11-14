@@ -412,8 +412,20 @@ func gstr1(c *command.Ctx, input json.RawMessage) (any, error) {
 	if gstin == nil {
 		gstin = json.RawMessage("null")
 	}
-	return map[string]any{"gstin": gstin, "fp": fmt.Sprintf("%02d%d", int(from.Month()), from.Year()),
-		"b2b": wrap(b2b, "inv"), "b2cl": cl, "b2cs": cs, "cdnr": wrap(cdnr, "nt")}, nil
+	out := map[string]any{"gstin": gstin, "fp": fmt.Sprintf("%02d%d", int(from.Month()), from.Year()),
+		"b2b": wrap(b2b, "inv"), "b2cl": cl, "b2cs": cs, "cdnr": wrap(cdnr, "nt")}
+	// Tables 11A/11B appear only in months with advances, so workspaces without receipts keep the Rust shape.
+	at, txpd, err := advanceTables(c, from, to, spaces, uid, admin, supplierState)
+	if err != nil {
+		return nil, err
+	}
+	if len(at) > 0 {
+		out["advances_11a"] = at
+	}
+	if len(txpd) > 0 {
+		out["advances_adjusted_11b"] = txpd
+	}
+	return out, nil
 }
 
 // ---------- Tally ----------

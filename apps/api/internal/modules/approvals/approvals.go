@@ -24,6 +24,7 @@ var supported = []struct{ name, label string }{
 	{"bill.record", "Record a bill"},
 	{"bill.pay", "Pay a bill"},
 	{"invoice.write_off", "Write off an invoice"},
+	{"receipt.refund", "Refund an advance"},
 }
 
 // amountFor is the Amount of a supported command; check = run the handler's page access check first.
@@ -36,9 +37,11 @@ func amountFor(name string, check bool) command.AmountFunc {
 	case "bill.record":
 		return totalOf("billing.purchase_bills", check)
 	case "bill.pay":
-		return paymentOf("billing.purchase_bills", check)
+		return paymentOf("billing.purchase_bills", "total_minor", check)
 	case "invoice.write_off":
-		return paymentOf("billing.invoices", check)
+		return paymentOf("billing.invoices", "total_minor", check)
+	case "receipt.refund":
+		return paymentOf("billing.receipts", "amount_minor", check)
 	}
 	return nil
 }
@@ -85,7 +88,7 @@ func totalOf(table string, check bool) command.AmountFunc {
 
 // paymentOf gates a payment or write-off on the document's total, not on the part asked for in this call:
 // otherwise splitting a large bill into small payments would slip under the rule's threshold.
-func paymentOf(table string, check bool) command.AmountFunc {
+func paymentOf(table, totalCol string, check bool) command.AmountFunc {
 	return func(c *command.Ctx, input json.RawMessage) (string, int64, error) {
 		id, m, err := idOf(input, "id")
 		if err != nil {
@@ -103,7 +106,7 @@ func paymentOf(table string, check bool) command.AmountFunc {
 			}
 		}
 		var total int64
-		if err := c.Tx.QueryRow(c.Context, "select total_minor from "+table+" where note_id = $1::uuid", id).Scan(&total); err != nil {
+		if err := c.Tx.QueryRow(c.Context, "select "+totalCol+" from "+table+" where note_id = $1::uuid", id).Scan(&total); err != nil {
 			return "", 0, command.DB(err)
 		}
 		return id, total, nil

@@ -16,7 +16,7 @@ import (
 // notes (the page body), cost, the workspace's other data, member and contact ids never appear. The golden test
 // pins this key set.
 type Document struct {
-	Kind          string      `json:"kind"` // quotation | invoice
+	Kind          string      `json:"kind"` // quotation | invoice | receipt
 	Number        *string     `json:"number"`
 	Status        string      `json:"status"`
 	Currency      string      `json:"currency"`
@@ -76,7 +76,8 @@ type paymentOpt struct {
 func loadPublic(ctx context.Context, tx pgx.Tx, l link) (Document, error) {
 	var kind string
 	if err := tx.QueryRow(ctx, `select case when exists(select 1 from billing.quotations where note_id = $1::uuid) then 'quotation'
-		when exists(select 1 from billing.invoices where note_id = $1::uuid and kind = 'invoice') then 'invoice' else '' end`, l.note).Scan(&kind); err != nil {
+		when exists(select 1 from billing.invoices where note_id = $1::uuid and kind = 'invoice') then 'invoice'
+		when exists(select 1 from billing.receipts where note_id = $1::uuid and kind = 'receipt') then 'receipt' else '' end`, l.note).Scan(&kind); err != nil {
 		return Document{}, err
 	}
 	var d Document
@@ -86,6 +87,8 @@ func loadPublic(ctx context.Context, tx pgx.Tx, l link) (Document, error) {
 		d, err = loadQuote(ctx, tx, l.note)
 	case "invoice":
 		d, err = loadInvoice(ctx, tx, l.note)
+	case "receipt":
+		d, err = loadReceipt(ctx, tx, l.note)
 	default:
 		return d, pgx.ErrNoRows
 	}
@@ -214,4 +217,28 @@ func loadInvoice(ctx context.Context, tx pgx.Tx, id string) (Document, error) {
 	d.Paid, d.AmountDue = &paid, &due
 	d.Lines, err = lines(ctx, tx, "billing.invoice_lines", "invoice_id", id)
 	return d, err
+}
+
+// loadReceipt: the Rule 50 voucher as one line (advance received, taxable value and tax split).
+func loadReceipt(ctx context.Context, tx pgx.Tx, id string) (Document, error) {
+	d := Document{Kind: "receipt", Currency: "INR"}
+	var desc, contact *string
+	var l line
+	err := tx.QueryRow(ctx, `select r.number, r.status, r.received_at::text, r.place_of_supply, r.supplier_gstin, r.buyer_gstin, cn.title,
+		r.description, r.gst_rate_bp, r.taxable_minor, r.cgst_minor, r.sgst_minor, r.igst_minor, r.amount_minor
+		from billing.receipts r left join core.notes cn on cn.id = r.contact_id where r.note_id = $1::uuid and r.kind = 'receipt'`, id).
+		Scan(&d.Number, &d.Status, &d.Date, &d.PlaceOfSupply, &d.Seller.GSTIN, &d.Buyer.GSTIN, &contact, &desc, &l.GSTRateBP,
+			&d.Subtotal, &d.CGST, &d.SGST, &d.IGST, &d.Total)
+	if err != nil {
+		return d, err
+	}
+	if contact != nil {
+		d.Buyer.Name = *contact
+	}
+	l.Description, l.Quantity, l.UnitPrice, l.Taxable, l.CGST, l.SGST, l.IGST = "Advance received", "1", d.Subtotal, d.Subtotal, d.CGST, d.SGST, d.IGST
+	if desc != nil && *desc != "" {
+		l.Description = *desc
+	}
+	d.Lines = []line{l}
+	return d, nil
 }

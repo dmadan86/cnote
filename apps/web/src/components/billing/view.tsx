@@ -8,6 +8,7 @@ import { useCmd } from '@/lib/hooks'
 import { Confirm, run } from './bits'
 import { type InvoiceDetail, money, parseMinor, STATES, toRupees } from './fmt'
 import { StatusPill } from './invoice-list'
+import { ApplyAdvancePanel } from './receipts'
 import { ShareButton, UpiCard } from './share-panel'
 
 type Item = { id: string; key: string; title: string }
@@ -281,6 +282,14 @@ export function IssuedView({ inv, reload }: { inv: InvoiceDetail; reload: () => 
         <div className="no-print space-y-4">
           <IrnPanel inv={inv} strict={strict} reload={reload} />
           {open && <UpiCard invoiceId={inv.id} outstanding={inv.outstanding_minor} />}
+          {open && inv.contact_id && (
+            <ApplyAdvancePanel
+              invoiceId={inv.id}
+              contactId={inv.contact_id}
+              outstanding={inv.outstanding_minor}
+              reload={reload}
+            />
+          )}
           <section aria-label="Payments" className="rounded-lg border border-line p-4">
             <h2 className="mb-2 text-[14px] font-semibold">Payments</h2>
             {inv.payments.length === 0 && <p className="text-[13px] text-muted">No payments yet.</p>}

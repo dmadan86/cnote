@@ -100,6 +100,15 @@ var mcpMeta = map[string]meta{
 	"bill.cancel": {"Cancel a draft or recorded purchase bill (reverses its posting).", idOnly},
 	"vendor.list": {"List vendors (contacts marked as vendor).", schema(nil, props{"limit": num})},
 
+	"receipt.create": {"Record an advance received from a customer and issue its receipt voucher (GST on services is due now; goods carry no GST). Moves money.", schema([]string{"contact_id", "amount_minor", "supply_type"}, props{
+		"contact_id": id, "quotation_id": id, "space_id": id, "amount_minor": props{"type": "integer", "description": "Gross amount received in paise, tax included"},
+		"supply_type": props{"type": "string", "enum": []string{"services", "goods"}}, "gst_rate_bp": props{"type": "integer", "description": "Basis points, default 1800"},
+		"place_of_supply": str, "method": str, "reference": str, "received_at": date, "description": str})},
+	"receipt.apply":  {"Apply part or all of an unapplied advance to an open invoice of the same customer. Moves money.", schema([]string{"id", "invoice_id", "amount_minor"}, props{"id": id, "invoice_id": id, "amount_minor": props{"type": "integer", "description": "Paise"}})},
+	"receipt.refund": {"Refund the unapplied part of an advance and issue a refund voucher. Moves money; admins only.", schema([]string{"id"}, props{"id": id, "amount_minor": props{"type": "integer", "description": "Paise; default all unapplied"}, "method": str, "reference": str})},
+	"receipt.get":    {"Get one receipt or refund voucher with its applications and refunds.", idOnly},
+	"receipt.list":   {"List receipt vouchers; status 'open' = advances still unapplied.", schema(nil, props{"contact_id": id, "status": str, "kind": props{"type": "string", "enum": []string{"receipt", "refund"}}, "limit": num})},
+
 	"recurring.create": {"Create a recurring invoice schedule for a contact.", schema([]string{"space_id", "contact_id", "frequency", "start_date", "lines"}, props{
 		"space_id": id, "contact_id": id, "frequency": props{"type": "string", "enum": []string{"monthly", "quarterly", "yearly"}}, "interval": num,
 		"start_date": date, "end_date": date, "auto_issue": flag, "lines": lines})},
@@ -111,7 +120,7 @@ var mcpMeta = map[string]meta{
 	"recurring.end":     {"End a recurring invoice schedule for good.", idOnly},
 	"recurring.run_now": {"Generate the next invoice of a schedule now.", idOnly},
 
-	"report.gstr1":           {"GSTR-1 summary for a month.", schema([]string{"period"}, props{"period": props{"type": "string", "description": "YYYY-MM"}})},
+	"report.gstr1":           {"GSTR-1 summary for a month (with advances_11a and advances_adjusted_11b when the month has advances).", schema([]string{"period"}, props{"period": props{"type": "string", "description": "YYYY-MM"}})},
 	"report.itc_summary":     {"Input tax credit from purchase bills between two dates.", schema([]string{"from", "to"}, props{"from": date, "to": date})},
 	"report.payables_ageing": {"Ageing buckets of unpaid purchase bills.", schema(nil, props{"as_of": date})},
 	"home.summary":           {"Owner home: what needs attention today (tasks, invoices, bills, quotes, deals, confirmations).", schema(nil, props{})},

@@ -27,7 +27,7 @@ export function ShareButton({
   overdue = false,
 }: {
   noteId: string
-  kind: 'quotation' | 'invoice'
+  kind: 'quotation' | 'invoice' | 'receipt'
   overdue?: boolean
 }) {
   const [open, setOpen] = useState(false)
@@ -48,7 +48,7 @@ function ShareDialog({
   onClose,
 }: {
   noteId: string
-  kind: 'quotation' | 'invoice'
+  kind: 'quotation' | 'invoice' | 'receipt'
   overdue: boolean
   onClose: () => void
 }) {
@@ -97,17 +97,12 @@ function ShareDialog({
       links.reload()
     })
   return (
-    <Modal
-      open
-      title={kind === 'quotation' ? 'Share quotation' : 'Share invoice'}
-      onClose={onClose}
-      className="max-w-lg"
-    >
+    <Modal open title={`Share ${kind}`} onClose={onClose} className="max-w-lg">
       <div className="max-h-[75vh] space-y-4 overflow-y-auto">
         <p className="text-[13px] text-muted">
           Anyone with the link can view this {kind}
-          {kind === 'quotation' ? ' and accept or decline it' : ' and pay by UPI'}. No login needed. Revoke a
-          link at any time.
+          {kind === 'quotation' ? ' and accept or decline it' : kind === 'invoice' ? ' and pay by UPI' : ''}.
+          No login needed. Revoke a link at any time.
         </p>
         <div className="flex items-end gap-2">
           <Field label="Link expires after (days)">

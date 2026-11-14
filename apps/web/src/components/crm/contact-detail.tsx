@@ -5,6 +5,7 @@ import { useState } from 'react'
 import { newDraft } from '@/components/billing/bits'
 import { type Contact, type Deal, type Invoice, money, stateName } from '@/components/billing/fmt'
 import { StatusPill } from '@/components/billing/invoice-list'
+import { AdvancesCard } from '@/components/billing/receipts'
 import { useShell } from '@/components/shell'
 import { UseTemplateButton } from '@/components/templates/use-template'
 import { btn, btnPrimary, ErrorText, Pill } from '@/components/ui'
@@ -300,6 +301,7 @@ export function ContactDetail({ id }: { id: string }) {
             ))}
           </Section>
         )}
+        <AdvancesCard contactId={id} contactName={k.name} />
         {L?.invoices && (
           <Section title="Invoices" empty="No invoices yet." n={invoices.length}>
             {invoices.map((i) => (
