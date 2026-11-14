@@ -39,7 +39,19 @@ export const auth = {
   me: () => api<Me>('/api/auth/me'),
   signup: (b: { name: string; email: string; password: string; workspace_name: string }) =>
     api<{ user_id: string; workspace_id: string | null }>('/api/auth/signup', { body: b }),
-  login: (b: { email: string; password: string }) => api<{ user_id: string }>('/api/auth/login', { body: b }),
+  login: (b: { email: string; password: string }) =>
+    api<{ user_id?: string; mfa_required?: boolean; mfa_token?: string; mfa_setup_required?: boolean }>(
+      '/api/auth/login',
+      { body: b },
+    ),
+  mfaVerify: (b: { mfa_token: string; code: string }) =>
+    api<{ user_id: string; mfa_setup_required?: boolean }>('/api/auth/mfa/verify', { body: b }),
+  mfaStatus: () => api<{ enabled: boolean; recovery_codes_left: number }>('/api/auth/mfa'),
+  mfaSetup: () =>
+    api<{ secret: string; otpauth_uri: string }>('/api/auth/mfa/setup', { method: 'POST', body: {} }),
+  mfaConfirm: (code: string) =>
+    api<{ recovery_codes: string[] }>('/api/auth/mfa/confirm', { body: { code } }),
+  mfaDisable: (b: { password: string; code: string }) => api('/api/auth/mfa/disable', { body: b }),
   logout: () => api('/api/auth/logout', { method: 'POST' }),
   createWorkspace: (name: string) => api<{ id: string }>('/api/workspaces', { body: { name } }),
 }

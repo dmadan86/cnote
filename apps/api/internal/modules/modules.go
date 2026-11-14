@@ -35,6 +35,7 @@ import (
 	"github.com/cnote/api/internal/modules/receipts"
 	"github.com/cnote/api/internal/modules/recurring"
 	"github.com/cnote/api/internal/modules/revisions"
+	"github.com/cnote/api/internal/modules/security"
 	"github.com/cnote/api/internal/modules/sharing"
 	"github.com/cnote/api/internal/modules/timelog"
 )
@@ -65,6 +66,7 @@ func Commands() []command.Command {
 	cmds = append(cmds, timelog.Commands()...)
 	cmds = append(cmds, hr.Commands()...)
 	cmds = append(cmds, chat.Commands()...)
+	cmds = append(cmds, security.Commands()...)
 	cmds = append(cmds, files.Commands()...)
 	cmds = append(cmds, bank.Commands()...)
 	cmds = append(cmds, inventory.Commands()...)

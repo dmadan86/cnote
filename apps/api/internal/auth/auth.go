@@ -82,31 +82,49 @@ func (a *Auth) PrincipalFor(ctx context.Context, h http.Header, workspaceID stri
 		return command.Principal{}, command.NewError(command.Unauthenticated, "sign in required")
 	}
 	var userID string
+	var sess sessInfo
 	err := a.Pool.QueryRow(ctx,
-		`select u.id::text from core.sessions s join core.users u on u.id = s.user_id
-		 where s.id = $1 and s.expires_at > now()`, sha256Hex(token)).Scan(&userID)
+		`select u.id::text, s.amr, coalesce(s.sso_workspace_id::text, '') from core.sessions s join core.users u on u.id = s.user_id
+		 where s.id = $1 and s.expires_at > now()`, sha256Hex(token)).Scan(&userID, &sess.amr, &sess.ssoWS)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return command.Principal{}, command.NewError(command.Unauthenticated, "session expired")
 	}
 	if err != nil {
 		return command.Principal{}, command.DB(err)
 	}
-	return a.userPrincipal(ctx, userID, workspaceID)
+	return a.userPrincipal(ctx, userID, workspaceID, &sess)
 }
 
-func (a *Auth) userPrincipal(ctx context.Context, userID, workspaceID string) (command.Principal, error) {
+// sessInfo is how a session was proven, for the workspace's security policy.
+type sessInfo struct{ amr, ssoWS string }
+
+// MFAMessage is the 403 text for an admin session that does not meet a workspace's MFA requirement (the web app
+// matches on it to send the person to Account security).
+const MFAMessage = "this workspace requires multi-factor authentication for admins: turn it on in Account security and sign in again"
+
+func (a *Auth) userPrincipal(ctx context.Context, userID, workspaceID string, s *sessInfo) (command.Principal, error) {
 	tx, err := db.BeginTenant(ctx, a.Pool, workspaceID)
 	if err != nil {
 		return command.Principal{}, command.DB(err)
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	var role string
-	err = tx.QueryRow(ctx, "select role from core.memberships where user_id = $1::uuid and deactivated_at is null", userID).Scan(&role)
+	var requireMFA bool
+	err = tx.QueryRow(ctx, `select m.role, coalesce((select require_mfa_admins from core.workspace_security where workspace_id = m.workspace_id), false)
+		from core.memberships m where m.user_id = $1::uuid and m.deactivated_at is null`, userID).Scan(&role, &requireMFA)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return command.Principal{}, command.ErrForbidden("not a member of this workspace")
 	}
 	if err != nil {
 		return command.Principal{}, command.DB(err)
+	}
+	if s != nil {
+		if s.ssoWS != "" && s.ssoWS != workspaceID {
+			return command.Principal{}, command.ErrForbidden("this single sign-on session is limited to the workspace that signed you in")
+		}
+		if requireMFA && (role == "admin" || role == "owner") && s.amr == "pwd" {
+			return command.Principal{}, command.ErrForbidden(MFAMessage)
+		}
 	}
 	return command.Principal{Kind: command.KindUser, UserID: &userID, WorkspaceID: workspaceID, Role: command.ParseRole(role)}, nil
 }
@@ -129,7 +147,7 @@ func (a *Auth) principalFromAPIKey(ctx context.Context, key string) (command.Pri
 	if err != nil {
 		return command.Principal{}, command.DB(err)
 	}
-	owner, err := a.userPrincipal(ctx, user, ws)
+	owner, err := a.userPrincipal(ctx, user, ws, nil)
 	if err != nil {
 		return command.Principal{}, nil // owner left the workspace: key is dead (Rust: Ok(None))
 	}
@@ -169,7 +187,7 @@ func (a *Auth) MCPPrincipal(ctx context.Context, h http.Header, resource string)
 	if err != nil {
 		return p, false, command.DB(err)
 	}
-	owner, err := a.userPrincipal(ctx, user, ws)
+	owner, err := a.userPrincipal(ctx, user, ws, nil)
 	if err != nil {
 		return p, false, nil // user left the workspace
 	}

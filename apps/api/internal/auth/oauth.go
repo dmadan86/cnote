@@ -51,7 +51,13 @@ func BearerToken(h http.Header) (string, bool) {
 
 // UserPrincipal is the person's principal in a workspace; Forbidden when they are not (or no longer) a member.
 func (a *Auth) UserPrincipal(ctx context.Context, userID, workspaceID string) (command.Principal, error) {
-	return a.userPrincipal(ctx, userID, workspaceID)
+	return a.userPrincipal(ctx, userID, workspaceID, nil)
+}
+
+// UserPrincipalFor is UserPrincipal for a signed-in session: it also applies the workspace's MFA rule and the SSO pin,
+// so OAuth consent cannot hand an agent more than the person's own session could use.
+func (a *Auth) UserPrincipalFor(ctx context.Context, u SessionUser, workspaceID string) (command.Principal, error) {
+	return a.userPrincipal(ctx, u.ID, workspaceID, &sessInfo{amr: u.AMR, ssoWS: u.SSOWorkspace})
 }
 
 // PrincipalForRequest is PrincipalFor plus native OAuth access tokens (`cno_`), which need the request Host to know

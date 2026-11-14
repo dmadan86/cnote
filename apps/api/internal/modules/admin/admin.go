@@ -17,6 +17,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/cnote/api/internal/command"
+	"github.com/cnote/api/internal/modules/security"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -237,6 +238,9 @@ func memberAdd(c *command.Ctx, b json.RawMessage) (any, error) {
 	}
 	if command.ParseRole(role) > me {
 		return nil, command.ErrForbidden("cannot grant a role above your own")
+	}
+	if e = security.CheckPromotion(c, uid, role); e != nil {
+		return nil, e
 	}
 	_, e = c.Tx.Exec(c.Context, "insert into core.memberships (workspace_id,user_id,role) values ($1::uuid,$2::uuid,$3) on conflict (workspace_id,user_id) do update set role=excluded.role", c.WorkspaceID(), uid, role)
 	if e != nil {

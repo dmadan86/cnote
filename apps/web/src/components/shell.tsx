@@ -565,6 +565,9 @@ export function ShellView({ ws, children }: { ws: string; children: React.ReactN
                     <Link href={`${base}/settings`} onClick={close} role="menuitem" className={menuItem}>
                       Settings
                     </Link>
+                    <Link href="/account/security" onClick={close} role="menuitem" className={menuItem}>
+                      Account security
+                    </Link>
                     <button
                       type="button"
                       role="menuitem"

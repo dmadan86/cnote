@@ -14,6 +14,7 @@ import (
 
 	"github.com/cnote/api/internal/command"
 	"github.com/cnote/api/internal/modules/billing"
+	"github.com/cnote/api/internal/modules/security"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -510,6 +511,11 @@ func memberUpdate(c *command.Ctx, b json.RawMessage) (any, error) {
 		}
 		if command.ParseRole(role) > c.Principal.Role {
 			return nil, command.ErrForbidden("cannot grant a role above your own")
+		}
+		if t.role != command.ParseRole(role) { // a re-save of the same role is not a promotion
+			if err := security.CheckPromotion(c, uid, role); err != nil {
+				return nil, err
+			}
 		}
 		add("role", role)
 	}

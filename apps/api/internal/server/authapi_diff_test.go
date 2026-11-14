@@ -1,6 +1,7 @@
 package server_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"regexp"
 	"sort"
@@ -26,6 +27,8 @@ func shape(r hres) string {
 }
 
 func TestDifferentialAuthSurface(t *testing.T) {
+	t.Setenv("AUTH_ACCOUNT_FREE", "1000") // this test guesses wrong passwords on one account on purpose; throttling has its own tests
+	t.Setenv("AUTH_IP_FREE", "1000")
 	e := newEnv(t)
 	email, pw := "diff-"+rnd()+"@example.test", rnd()+rnd()
 	acct := hit(t, e.rust, "POST", "/api/auth/signup", jsonHdr, jb(map[string]any{"email": email, "name": "Dee", "password": pw, "workspace_name": "Dee WS"}))
@@ -111,6 +114,12 @@ func TestDifferentialAuthSurface(t *testing.T) {
 		rc, gc := uniq(c, "r"), uniq(c, "g")
 		rr := hit(t, e.rust, c.method, c.path, c.hdr, rc.body)
 		gr := hit(t, e.gosv.URL, c.method, c.path, gc.hdr, gc.body)
+		// WP18: login and signup no longer replay odd bodies to Rust (its login would skip throttling and MFA); a body the
+		// Go parser does not take is a plain 400 or 415.
+		if (c.path == "/api/auth/login" || c.path == "/api/auth/signup") && c.method == "POST" && (gr.status == 415 ||
+			gr.status == 400 && (bytes.Contains(gr.body, []byte("request body must be a JSON object")) || bytes.Contains(gr.body, []byte("must be a string")))) {
+			continue
+		}
 		if a, b := shape(rr), shape(gr); a != b && c.path != "/api/commands" {
 			t.Errorf("%s\n  rust %.300s\n  go   %.300s", n, a, b)
 		}
