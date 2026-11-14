@@ -12,6 +12,7 @@ export default function BillingLayout({ children }: { children: React.ReactNode 
         items={[
           [`/w/${ws}/billing`, 'Invoices'],
           [`/w/${ws}/billing/quotes`, 'Quotes'],
+          [`/w/${ws}/billing/bills`, 'Bills'],
           [`/w/${ws}/billing/reports`, 'Reports'],
           [`/w/${ws}/billing/settings`, 'Settings'],
         ]}

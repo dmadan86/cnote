@@ -112,6 +112,7 @@ type input struct {
 	id, space, title    string
 	strs                map[string]*string
 	amount, prob, limit *int64
+	vendor              *bool // Go-only: is_vendor on create/update, vendor filter on list (Rust ignores both)
 }
 
 func decode(raw json.RawMessage, cmd string) (input, error) {
@@ -211,6 +212,19 @@ func decode(raw json.RawMessage, cmd string) (input, error) {
 			return i, e
 		}
 	}
+	if strings.HasPrefix(cmd, "contact.") {
+		k := "is_vendor"
+		if cmd == "contact.list" {
+			k = "vendor"
+		}
+		if v, ok := o.get(k); ok {
+			var b bool
+			if json.Unmarshal(v, &b) != nil {
+				return i, command.ErrFallback
+			}
+			i.vendor = &b
+		}
+	}
 	if strings.HasSuffix(cmd, "list") {
 		i.limit, e = o.optInt("limit", 64)
 	}
@@ -265,7 +279,7 @@ func execute(c *command.Ctx, cmd string, i input) (any, error) {
 		if err != nil {
 			return nil, err
 		}
-		_, err = c.Tx.Exec(c.Context, `insert into crm.contacts(note_id,workspace_id,kind,email,phone,company,gstin,state_code,billing_address) values($1::uuid,$2::uuid,$3,$4,$5,$6,$7,$8,$9)`, n.ID, c.WorkspaceID(), kind, s["email"], s["phone"], s["company"], g, st, s["billing_address"])
+		_, err = c.Tx.Exec(c.Context, `insert into crm.contacts(note_id,workspace_id,kind,email,phone,company,gstin,state_code,billing_address,is_vendor) values($1::uuid,$2::uuid,$3,$4,$5,$6,$7,$8,$9,coalesce($10,false))`, n.ID, c.WorkspaceID(), kind, s["email"], s["phone"], s["company"], g, st, s["billing_address"], i.vendor)
 		if err != nil {
 			return nil, err
 		}
@@ -301,7 +315,7 @@ func execute(c *command.Ctx, cmd string, i input) (any, error) {
 				return nil, err
 			}
 		}
-		_, err = c.Tx.Exec(c.Context, `update crm.contacts set email=coalesce($2,email),phone=coalesce($3,phone),company=coalesce($4,company),gstin=$5,state_code=$6,billing_address=coalesce($7,billing_address) where note_id=$1::uuid`, i.id, s["email"], s["phone"], s["company"], g, st, s["billing_address"])
+		_, err = c.Tx.Exec(c.Context, `update crm.contacts set email=coalesce($2,email),phone=coalesce($3,phone),company=coalesce($4,company),gstin=$5,state_code=$6,billing_address=coalesce($7,billing_address),is_vendor=coalesce($8,is_vendor) where note_id=$1::uuid`, i.id, s["email"], s["phone"], s["company"], g, st, s["billing_address"], i.vendor)
 		if err != nil {
 			return nil, err
 		}
@@ -429,7 +443,7 @@ func list(c *command.Ctx, cmd string, i input) (any, error) {
 		if q != nil && strings.TrimSpace(*q) == "" {
 			q = nil
 		}
-		rows, err := c.Tx.Query(c.Context, contactSQL+` where n.deleted_at is null and n.space_id=any($1::text[]::uuid[]) and ($2::uuid is null or n.space_id=$2::uuid) and core.note_access(n.id,$5::uuid,$6,$1::text[]::uuid[]) <> 'none' and ($3::text is null or n.title ilike '%'||$3||'%' or c.email ilike '%'||$3||'%' or c.company ilike '%'||$3||'%') order by n.title limit $4`, spaces, s["space_id"], q, lim, uid, admin)
+		rows, err := c.Tx.Query(c.Context, contactSQL+` where n.deleted_at is null and n.space_id=any($1::text[]::uuid[]) and ($2::uuid is null or n.space_id=$2::uuid) and core.note_access(n.id,$5::uuid,$6,$1::text[]::uuid[]) <> 'none' and ($3::text is null or n.title ilike '%'||$3||'%' or c.email ilike '%'||$3||'%' or c.company ilike '%'||$3||'%') and ($7::boolean is null or c.is_vendor=$7) order by n.title limit $4`, spaces, s["space_id"], q, lim, uid, admin, i.vendor)
 		if err != nil {
 			return nil, err
 		}

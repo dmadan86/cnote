@@ -19,6 +19,9 @@ export function ContactForm({
 }) {
   const { ws, spaces } = useShell()
   const [err, setErr] = useState<string>()
+  const [vendor, setVendor] = useState<boolean>()
+  const vendors = useCmd<{ id: string }[]>(ws, 'vendor.list', {})
+  const isVendor = vendor ?? !!(contact && vendors.data?.some((v) => v.id === contact.id))
   const taxErr = err && /gstin|state/i.test(err)
   const text = (k: keyof Contact) => (contact?.[k] as string | null) ?? ''
   return (
@@ -30,8 +33,8 @@ export function ContactForm({
           const f = Object.fromEntries(new FormData(e.currentTarget)) as Record<string, string>
           try {
             const c = contact
-              ? await cmd<Contact>(ws, 'contact.update', { id: contact.id, ...f })
-              : await cmd<Contact>(ws, 'contact.create', { space_id: spaces[0].id, ...f })
+              ? await cmd<Contact>(ws, 'contact.update', { id: contact.id, ...f, is_vendor: vendor })
+              : await cmd<Contact>(ws, 'contact.create', { space_id: spaces[0].id, ...f, is_vendor: vendor })
             onSaved(c)
           } catch (x) {
             setErr((x as Error).message)
@@ -104,6 +107,10 @@ export function ContactForm({
             />
           )}
         </Field>
+        <label className="flex items-center gap-2 text-[13px]">
+          <input type="checkbox" checked={isVendor} onChange={(e) => setVendor(e.target.checked)} />
+          This contact is a vendor (supplier)
+        </label>
         <ErrorText error={err} />
         <div className="flex justify-end gap-2">
           <button type="button" className={btn} onClick={onClose}>
