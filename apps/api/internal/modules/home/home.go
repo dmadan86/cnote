@@ -90,6 +90,10 @@ func summary(c *command.Ctx, input json.RawMessage) (any, error) {
 	}
 	uid, admin := access.Viewer(c)
 	role := c.Principal.Role
+	fin, err := c.FinanceAllowed()
+	if err != nil {
+		return nil, err
+	}
 	today := billing.TodayIST().Format("2006-01-02")
 	base := []any{spaces, uid, admin, today} // $4 = today (IST)
 	tiles := map[string]any{}
@@ -178,8 +182,8 @@ func summary(c *command.Ctx, input json.RawMessage) (any, error) {
 		}
 	}
 
-	// ---- money: billing on and role >= member (the report.* gate); guests never see amounts ----
-	if on("billing") && role >= command.Member {
+	// ---- money: billing on and role >= member (the report.* gate) and finance access; guests never see amounts ----
+	if on("billing") && fin && role >= command.Member {
 		// receivables outstanding, as report.receivables_ageing counts them
 		const out = `(i.total_minor - i.paid_minor - i.credited_minor - i.written_off_minor)`
 		const iw = ` from billing.invoices i join core.notes n on n.id = i.note_id
@@ -304,7 +308,7 @@ func summary(c *command.Ctx, input json.RawMessage) (any, error) {
 	}
 
 	// ---- urgent: overdue items + overdue invoices ----
-	if haveTasks || on("billing") && role >= command.Member {
+	if haveTasks || on("billing") && fin && role >= command.Member {
 		tiles["urgent"] = map[string]any{"count": overdueTasks + overdueInvoices, "overdue_tasks": overdueTasks, "overdue_invoices": overdueInvoices}
 	}
 

@@ -54,6 +54,20 @@ type meta struct {
 var idOnly = schema([]string{"id"}, props{"id": id})
 
 var mcpMeta = map[string]meta{
+	"company.get": {"Read the company profile that prints on documents: legal name, PAN, GSTIN, address, UPI and bank details, financial-year start.", schema(nil, props{})},
+	"company.update": {"Update the company profile. Only the fields you send change; an empty string clears one. GSTIN, PAN, IFSC, PIN, phone and UPI ID are format-checked and the GSTIN must agree with the PAN and state. Admins only.", schema(nil, props{
+		"legal_name": str, "trade_name": str, "pan": str, "gstin": str, "state_code": str, "address": str, "pincode": str, "phone": str, "email": str,
+		"upi_vpa": str, "upi_payee_name": str, "bank_name": str, "bank_account": str, "bank_ifsc": str, "bank_details": str, "fy_start_month": props{"type": "integer", "description": "1-12, default 4 (April)"}})},
+	"department.list":   {"List departments with their head and active headcount.", schema(nil, props{})},
+	"department.create": {"Create a department (flat list). Admins only.", schema([]string{"name"}, props{"name": str, "head_user_id": id})},
+	"department.update": {"Rename a department or set its head (null clears). Admins only.", schema([]string{"id"}, props{"id": id, "name": str, "head_user_id": id})},
+	"department.delete": {"Delete a department; its members become unassigned. Needs human confirmation for agents.", idOnly},
+	"people.list":       {"The people directory: role, department, manager, designation, phone, joined/left dates, finance access, and who is deactivated.", schema(nil, props{})},
+	"member.update": {"Update a person's role, department, manager, designation, phone, joined/left dates or finance access (null clears a field). People only: agents and API keys are refused. Admins only.", schema([]string{"user_id"}, props{
+		"user_id": id, "role": props{"type": "string", "enum": []string{"admin", "member", "guest"}}, "department_id": id, "manager_user_id": id, "designation": str, "phone": str,
+		"joined_on": date, "left_on": date, "finance_access": flag})},
+	"member.deactivate": {"Deactivate a person who left: they can no longer sign in to this workspace and their API keys stop. Not the last owner. People only.", schema([]string{"user_id"}, props{"user_id": id})},
+	"member.reactivate": {"Let a deactivated person back in. Their old API keys stay revoked. People only.", schema([]string{"user_id"}, props{"user_id": id})},
 	"approval.rule_set": {"Set the approval rule for a command (quote.send, invoice.issue, bill.record, bill.pay, invoice.write_off): actions at or above the amount by non-owners wait for approval. Admins only.", schema([]string{"command"}, props{
 		"command": str, "min_amount_minor": props{"type": "integer", "description": "Paise"}, "approver_user_id": id, "approver_role": props{"type": "string", "enum": []string{"admin", "owner"}}, "fallback_user_id": id, "escalate_after_hours": num, "enabled": flag})},
 	"approval.rule_list": {"List the workspace's approval rules.", schema(nil, props{})},

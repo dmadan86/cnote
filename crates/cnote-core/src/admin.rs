@@ -24,7 +24,7 @@ pub struct Member {
 
 async fn member_list(ctx: &mut Ctx, _: Empty) -> CmdResult<Vec<Member>> {
     Ok(sqlx::query_as(
-        "select m.user_id, u.email, u.name, m.role from core.memberships m join core.users u on u.id = m.user_id order by u.name",
+        "select m.user_id, u.email, u.name, m.role from core.memberships m join core.users u on u.id = m.user_id where m.deactivated_at is null order by u.name",
     )
     .fetch_all(&mut *ctx.tx)
     .await?)

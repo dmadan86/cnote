@@ -5,6 +5,7 @@ import { ApprovalRules } from '@/components/approvals/rules'
 import { AuditLog } from '@/components/audit/log'
 import { Privacy } from '@/components/audit/privacy'
 import { CompanyProfile } from '@/components/business-type'
+import { CompanyTab } from '@/components/company/profile'
 import { HooksTab } from '@/components/hooks-settings'
 import { Secret } from '@/components/secret'
 import { useShell } from '@/components/shell'
@@ -15,6 +16,7 @@ import { GROUPS } from '@/lib/tool-groups'
 
 const TABS = [
   'Workspace',
+  'Company',
   'Members',
   'API keys',
   'Agents',
@@ -427,6 +429,7 @@ export default function Settings() {
       </div>
       <div role="tabpanel">
         {tab === 'Workspace' && <WorkspaceTab ws={ws} />}
+        {tab === 'Company' && <CompanyTab ws={ws} />}
         {tab === 'Members' && <MembersTab ws={ws} />}
         {tab === 'API keys' && <KeysTab ws={ws} />}
         {tab === 'Agents' && <AgentsTab ws={ws} />}

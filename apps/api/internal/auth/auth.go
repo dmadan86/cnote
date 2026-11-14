@@ -99,7 +99,7 @@ func (a *Auth) userPrincipal(ctx context.Context, userID, workspaceID string) (c
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	var role string
-	err = tx.QueryRow(ctx, "select role from core.memberships where user_id = $1::uuid", userID).Scan(&role)
+	err = tx.QueryRow(ctx, "select role from core.memberships where user_id = $1::uuid and deactivated_at is null", userID).Scan(&role)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return command.Principal{}, command.ErrForbidden("not a member of this workspace")
 	}

@@ -42,6 +42,20 @@ type Ctx struct {
 
 func (c *Ctx) WorkspaceID() string { return c.Principal.WorkspaceID }
 
+// FinanceAllowed is false for a non-admin person (or their keys and agents) whose finance_access flag is off.
+func (c *Ctx) FinanceAllowed() (bool, error) {
+	p := c.Principal
+	if p.Role >= Admin || p.UserID == nil {
+		return true, nil
+	}
+	ok := true
+	err := c.Tx.QueryRow(c.Context, "select finance_access from core.memberships where user_id = $1::uuid", *p.UserID).Scan(&ok)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return true, nil
+	}
+	return ok, DB(err)
+}
+
 // Handler receives the raw JSON input and returns a value that is marshaled as the response.
 // Return ErrFallback to delegate the request to Rust.
 type Handler func(c *Ctx, input json.RawMessage) (any, error)
@@ -53,6 +67,7 @@ type Command struct {
 	Confirm       bool
 	ReturnsSecret bool
 	Handler       Handler
+	Finance       bool       // money data: refused below Admin when the member's finance_access is off (core.memberships)
 	Amount        AmountFunc // set: a workspace approval rule may hold this command for a person's decision
 	// Description and Schema (JSON Schema of the input) are what agents see over MCP. Set for Go-only commands;
 	// commands Rust also has are described by Rust. See modules/mcpmeta.go.
@@ -121,6 +136,13 @@ func (r *Registry) run(c *Ctx, name string, input json.RawMessage, o ExecOptions
 	}
 	if p.Scopes != nil && !slices.ContainsFunc(p.Scopes, func(s string) bool { return s == "*" || s == string(cmd.Group) }) {
 		return nil, ErrForbidden(fmt.Sprintf("scope %s not granted", cmd.Group))
+	}
+	if cmd.Finance {
+		if ok, err := c.FinanceAllowed(); err != nil {
+			return nil, err
+		} else if !ok {
+			return nil, ErrForbidden("finance access is turned off for you; ask an admin")
+		}
 	}
 	if p.Kind != KindSystem {
 		who := p.UserID

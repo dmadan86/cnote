@@ -410,3 +410,41 @@ async fn security_regressions() {
         .unwrap();
     assert_eq!(seen["relations"].as_array().unwrap().len(), 0);
 }
+
+#[tokio::test]
+async fn deactivated_member_is_no_longer_a_principal() {
+    let (pool, reg) = setup().await;
+    let (_, owner) = tenant(&pool, &reg).await;
+    let email = format!("{}@test.local", Uuid::new_v4());
+    let user = auth::sign_up(&pool, &email, "Dev", &Uuid::new_v4().to_string())
+        .await
+        .unwrap();
+    let opts = ExecOptions::default();
+    reg.execute(
+        &pool,
+        "member.add",
+        json!({"email": email, "role": "member"}),
+        &owner,
+        &opts,
+    )
+    .await
+    .unwrap();
+    let ws = owner.workspace_id;
+    assert!(auth::user_principal(&pool, user, ws).await.is_ok());
+    let mut tx = cnote_db::begin_tenant(&pool, ws).await.unwrap();
+    sqlx::query("update core.memberships set deactivated_at = now() where user_id = $1")
+        .bind(user)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    assert!(auth::user_principal(&pool, user, ws).await.is_err());
+    let mut tx = cnote_db::begin_tenant(&pool, ws).await.unwrap();
+    sqlx::query("update core.memberships set deactivated_at = null where user_id = $1")
+        .bind(user)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    assert!(auth::user_principal(&pool, user, ws).await.is_ok());
+}
