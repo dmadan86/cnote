@@ -360,3 +360,39 @@ Focused differential validation compared 443 twin responses/database rows and 90
 with zero differences. Earlier exploratory runs without `.env` failed on the required database check;
 an added gate test initially assumed default agents could not manage CRM, and was corrected to
 explicitly disable that workspace tool group, matching both reference and Go behavior.
+
+## Marketplace port (port/marketplace)
+
+`internal/modules/marketplace` registers all twelve marketplace commands: `market.list`,
+`market.get`, `market.install`, `market.uninstall`, `market.installed`, `dev.apps`,
+`dev.app_save`, `dev.app_submit`, `dev.app_rotate_secret`, `dev.app_delete`,
+`market.review_queue`, and `market.review`. Admin mutations require a human principal.
+Platform review authorization reads `CNOTE_PLATFORM_ADMINS` on every call, accepting trimmed,
+case-insensitive email and `@domain` entries, including changes made in-process by tests.
+
+Installation creates the Rust-compatible external agent, scoped install row and ten-minute
+one-time code. Codes and client secrets use lowercase SHA-256 hex; random bytes use unpadded
+base64url with the Rust prefixes and lengths. `/api/marketplace/token` remains proxied to Rust,
+which exchanges these codes for scoped API keys. Tests exercise that exchange, failed credentials,
+code replay, authenticating the resulting key in Go, scope restrictions and uninstall revocation.
+Both `dev.app_save` and `dev.app_rotate_secret` set `ReturnsSecret`, so secret responses never enter
+idempotency storage. The module has private random-token and hashing helpers matching Rust auth.
+Marketplace transactions set the local timezone to UTC: Postgres `jsonb_build_object` and
+`to_jsonb` render timestamps using the session timezone, while the Rust sqlx sessions use UTC.
+
+`internal/server/marketplace_test.go` ports the assertions in Rust's marketplace integration tests
+and adds env changes, secret rotation/hashing/idempotency, positive same-fixture read comparisons,
+malformed input and caller matrices for all twelve commands, plus twin-fixture writes. The latter
+compare editable/status rows, install/agent/code properties, events, actors, payload relationships
+and dispatch jobs consumed by the Rust worker. Deterministic responses are compared as raw bytes;
+independently generated UUIDs, codes, secrets and timestamps are checked or normalized for twins.
+No requested command is left to Rust; invalid serde inputs use the existing fallback contract.
+The token HTTP endpoint and background workers remain in Rust by design. No AI providers are used.
+
+Validation (load the worktree `.env` first): `cd apps/api && go vet ./... &&
+test -z "$(gofmt -l .)" && go test -race -count=1 ./...`. All pass against real Postgres and the
+running Rust reference. No shared servers were restarted. Browser e2e was not run because the
+brief forbids restarting the shared ports; HTTP tests run Go in-process with `httptest`.
+Final race-suite result: 55 top-level tests / 357 including subtests passed, zero failures;
+4 packages passed and 9 had no tests. Marketplace's differential caller/input matrix compared
+240 response pairs, in addition to positive lifecycle reads and twin-fixture mutations.
