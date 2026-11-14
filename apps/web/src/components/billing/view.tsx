@@ -8,6 +8,7 @@ import { useCmd } from '@/lib/hooks'
 import { Confirm, run } from './bits'
 import { type InvoiceDetail, money, parseMinor, STATES, toRupees } from './fmt'
 import { StatusPill } from './invoice-list'
+import { ShareButton, UpiCard } from './share-panel'
 
 type Item = { id: string; key: string; title: string }
 const OPEN = ['issued', 'irn_generated', 'sent', 'partly_paid']
@@ -145,6 +146,13 @@ export function IssuedView({ inv, reload }: { inv: InvoiceDetail; reload: () => 
             Print / PDF
           </button>
           <UseTemplateButton sourceKind="invoice" sourceId={inv.id} />
+          {inv.kind === 'invoice' && inv.number && inv.status !== 'draft' && inv.status !== 'cancelled' && (
+            <ShareButton
+              noteId={inv.id}
+              kind="invoice"
+              overdue={open && !!inv.due_date && inv.due_date < new Date().toISOString().slice(0, 10)}
+            />
+          )}
           {open && (
             <>
               <button
@@ -272,6 +280,7 @@ export function IssuedView({ inv, reload }: { inv: InvoiceDetail; reload: () => 
 
         <div className="no-print space-y-4">
           <IrnPanel inv={inv} strict={strict} reload={reload} />
+          {open && <UpiCard invoiceId={inv.id} outstanding={inv.outstanding_minor} />}
           <section aria-label="Payments" className="rounded-lg border border-line p-4">
             <h2 className="mb-2 text-[14px] font-semibold">Payments</h2>
             {inv.payments.length === 0 && <p className="text-[13px] text-muted">No payments yet.</p>}

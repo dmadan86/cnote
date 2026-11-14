@@ -110,13 +110,16 @@ type row struct {
 	DecidedAt          *command.Ts `json:"decided_at"`
 	ConvertedInvoiceID *string     `json:"converted_invoice_id"`
 	ConvertedItemID    *string     `json:"converted_item_id"`
+	AcceptedVia        *string     `json:"accepted_via"`
+	AcceptedByName     *string     `json:"accepted_by_name"`
+	AcceptedNote       *string     `json:"accepted_note"`
 	SpaceID            string      `json:"space_id"`
 }
 
 const cols = `q.note_id::text, q.number, q.status, q.contact_id::text, q.currency::text, q.supplier_gstin, q.supplier_state,
 	q.buyer_gstin, q.place_of_supply, q.reverse_charge, q.quote_date::text, q.valid_until::text, q.subtotal_minor,
 	q.cgst_minor, q.sgst_minor, q.igst_minor, q.total_minor, q.sent_at, q.decided_at, q.converted_invoice_id::text,
-	q.converted_item_id::text, n.space_id::text`
+	q.converted_item_id::text, q.accepted_via, q.accepted_by_name, q.accepted_note, n.space_id::text`
 
 func scan(r pgx.Row) (row, error) {
 	var x row
@@ -124,7 +127,7 @@ func scan(r pgx.Row) (row, error) {
 	err := r.Scan(&x.ID, &x.Number, &x.Status, &x.ContactID, &x.Currency, &x.SupplierGSTIN, &x.SupplierState,
 		&x.BuyerGSTIN, &x.PlaceOfSupply, &x.ReverseCharge, &x.QuoteDate, &x.ValidUntil, &x.SubtotalMinor,
 		&x.CGSTMinor, &x.SGSTMinor, &x.IGSTMinor, &x.TotalMinor, &sent, &decided, &x.ConvertedInvoiceID,
-		&x.ConvertedItemID, &x.SpaceID)
+		&x.ConvertedItemID, &x.AcceptedVia, &x.AcceptedByName, &x.AcceptedNote, &x.SpaceID)
 	x.SentAt, x.DecidedAt = command.TsPtr(sent), command.TsPtr(decided)
 	if x.Status == "sent" && x.ValidUntil != nil && *x.ValidUntil < billing.TodayIST().Format("2006-01-02") {
 		x.Status = "expired"
@@ -465,11 +468,14 @@ func decide(to string) command.Handler {
 		if err != nil {
 			return nil, err
 		}
-		if _, err := c.Tx.Exec(c.Context, "update billing.quotations set status = $2, decided_at = now() where note_id = $1::uuid", q.ID, to); err != nil {
+		// The public link handler (publiclinks) sets accepted_via = 'link' and the customer's name before calling this.
+		var via string
+		if err := c.Tx.QueryRow(c.Context,
+			"update billing.quotations set status = $2, decided_at = now(), accepted_via = coalesce(accepted_via, 'staff') where note_id = $1::uuid returning accepted_via", q.ID, to).Scan(&via); err != nil {
 			return nil, command.DB(err)
 		}
 		kind := map[string]string{"accepted": "quote.accepted", "rejected": "quote.rejected"}[to]
-		if _, err := c.Emit(kind, &q.ID, map[string]any{"number": q.Number, "total_minor": q.TotalMinor}); err != nil {
+		if _, err := c.Emit(kind, &q.ID, map[string]any{"number": q.Number, "total_minor": q.TotalMinor, "via": via}); err != nil {
 			return nil, err
 		}
 		return detailOf(c, q.ID)

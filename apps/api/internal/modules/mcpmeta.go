@@ -54,6 +54,13 @@ type meta struct {
 var idOnly = schema([]string{"id"}, props{"id": id})
 
 var mcpMeta = map[string]meta{
+	"share.create": {"Create a public link to a quotation or invoice for the customer (accept or pay). Returns the link once, plus a WhatsApp click-to-chat URL. Needs human confirmation for agents.", schema([]string{"note_id"}, props{
+		"note_id": id, "expires_in_days": props{"type": "integer", "description": "1-365, default 30"}, "origin": str, "phone": str, "message": str, "reminder": flag})},
+	"share.email": {"Email a fresh public link to a quotation or invoice. Needs human confirmation for agents.", schema([]string{"note_id", "to"}, props{
+		"note_id": id, "to": props{"type": "string", "description": "Recipient email"}, "expires_in_days": num, "origin": str, "message": str, "reminder": flag})},
+	"share.list":     {"List public links for a quotation or invoice with status and view counts.", schema([]string{"note_id"}, props{"note_id": id})},
+	"share.revoke":   {"Revoke a public link.", idOnly},
+	"invoice.upi_qr": {"UPI payment URI for an invoice's outstanding amount, for a QR code.", idOnly},
 	"activity.log": {"Log a call, visit, WhatsApp, email or note on a deal or contact; optionally set the next follow-up.", schema([]string{"note_id", "kind", "summary"}, props{
 		"note_id": id, "kind": props{"type": "string", "enum": []string{"call", "visit", "whatsapp", "email", "note"}}, "summary": str, "happened_at": props{"type": "string", "description": "RFC 3339; default now"},
 		"next_follow_up": date, "next_step": str})},

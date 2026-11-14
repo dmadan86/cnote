@@ -84,3 +84,17 @@ Codex consult applied: Inbox rows are phone cards with call and WhatsApp links a
 leaves the Inbox only when something is logged); follow-ups default to Today, a "No date" tab keeps unplanned deals
 visible, snooze shows the new date with Undo; the summary is optional and chips show real dates; Lost asks for a reason
 only after Lost is chosen and Cancel changes nothing; 44px targets and 16px inputs; honeypot out of tab order.
+
+## Customer share links, accept and pay (WP2)
+- Hosted invoice page: amount due as the hero, one primary pay action, details below; the owner side shows the
+  hosted page URL with copy and download beside it. [Stripe invoice detail](https://mobbin.com/screens/aa09d42b-c83f-4a4f-8cf1-8e8152f7bdef),
+  [Stripe review and send](https://mobbin.com/screens/5bfaf363-136c-4027-9cf3-fc2eea1aede6)
+- Client view with a "View online" QR on the printed document. [Square client view](https://mobbin.com/screens/ff3c2be2-17af-4d0d-981f-ba2b18731e34)
+- Accept / edit / decline with the agreed amount restated before the primary action. [Upwork proposal](https://mobbin.com/screens/5131f77b-ffff-48aa-a608-d252676b712c)
+- Share dialog with the link, a notice about who can open it, and an unpublish action. [Plane publish](https://mobbin.com/screens/f6e00ee6-635c-41d4-b762-1876fc7ec11f),
+  [Square share project link](https://mobbin.com/screens/b8c5b53c-ddfc-43ca-aacc-f14c00142daf)
+- Codex critique applied: acceptance is a two-step review with a required name (never on open or Enter); the UPI
+  QR is labelled "Scan to pay by UPI" and the GST e-invoice QR "not for payment"; payment never shows "Paid"
+  from the page; line items stack on phones; actions and forms are hidden in print; expired, revoked and unknown
+  links share one neutral "Link unavailable" state; the new link is shown once and older links list as
+  status, views and revoke; 44px touch targets and 16px inputs on the public page.

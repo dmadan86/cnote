@@ -20,6 +20,7 @@ import (
 
 	"github.com/cnote/api/internal/auth"
 	"github.com/cnote/api/internal/command"
+	"github.com/cnote/api/internal/modules/publiclinks"
 )
 
 type Server struct {
@@ -29,10 +30,12 @@ type Server struct {
 	Upstream http.Handler
 	// Collab, when set (COLLAB_URL), serves the /collab/ live-editing WebSocket instead of Upstream.
 	Collab http.Handler
+	// Public serves the unauthenticated share-link API under /api/public/ (token in the path, no session).
+	Public http.Handler
 }
 
 func New(pool *pgxpool.Pool, reg *command.Registry, upstream http.Handler) *Server {
-	return &Server{Pool: pool, Registry: reg, Auth: &auth.Auth{Pool: pool}, Upstream: upstream}
+	return &Server{Pool: pool, Registry: reg, Auth: &auth.Auth{Pool: pool}, Upstream: upstream, Public: publiclinks.NewHandler(pool, reg)}
 }
 
 var wsRe = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
@@ -50,6 +53,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.WriteString(w, "ok")
 	case strings.HasPrefix(r.URL.Path, inquiryPrefix):
 		s.inquiry(w, r)
+	case strings.HasPrefix(r.URL.Path, "/api/public/"):
+		s.Public.ServeHTTP(w, r)
 	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.EscapedPath(), "/api/w/"):
 		s.runCommand(w, r)
 	case r.Method == http.MethodPost && r.URL.Path == "/mcp":

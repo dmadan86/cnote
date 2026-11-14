@@ -31,6 +31,9 @@ export function BillingSettings() {
           ...(text('state_code') && { state_code: text('state_code') }),
           legal_name: text('legal_name'),
           address: text('address'),
+          upi_vpa: text('upi_vpa'),
+          upi_payee_name: text('upi_payee_name'),
+          bank_details: text('bank_details'),
           aato_above_10cr: f.get('aato') === 'on',
         }
         try {
@@ -76,6 +79,36 @@ export function BillingSettings() {
       <Field label="Address">
         {(id) => (
           <textarea id={id} name="address" rows={3} defaultValue={str('address')} className={inputCls} />
+        )}
+      </Field>
+      <h2 className="pt-2 text-[14px] font-semibold">Collect payments</h2>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="UPI ID (VPA)">
+          {(id) => (
+            <input
+              id={id}
+              name="upi_vpa"
+              placeholder="yourshop@bank"
+              defaultValue={str('upi_vpa')}
+              className={inputCls}
+            />
+          )}
+        </Field>
+        <Field label="UPI payee name">
+          {(id) => (
+            <input id={id} name="upi_payee_name" defaultValue={str('upi_payee_name')} className={inputCls} />
+          )}
+        </Field>
+      </div>
+      <Field label="Bank details shown on shared invoices">
+        {(id) => (
+          <textarea
+            id={id}
+            name="bank_details"
+            rows={2}
+            defaultValue={str('bank_details')}
+            className={inputCls}
+          />
         )}
       </Field>
       <label className="flex items-start gap-2 text-[13px]">
