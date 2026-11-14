@@ -36,9 +36,17 @@ type Ctx struct {
 	Context   context.Context
 	Tx        pgx.Tx
 	Principal Principal
+	reg       *Registry
 }
 
 func (c *Ctx) WorkspaceID() string { return c.Principal.WorkspaceID }
+
+// Call runs another command inside this transaction with the full gate (role, scope, rate limit, usage),
+// like Rust ctx.call. The result is discarded.
+func (c *Ctx) Call(name string, input json.RawMessage) error {
+	_, err := c.reg.run(c, name, input, ExecOptions{})
+	return err
+}
 
 // Handler receives the raw JSON input and returns a value that is marshaled as the response.
 // Return ErrFallback to delegate the request to Rust.
@@ -88,7 +96,7 @@ func (r *Registry) Execute(ctx context.Context, pool *pgxpool.Pool, name string,
 		return nil, DB(err)
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
-	c := &Ctx{Context: ctx, Tx: tx, Principal: p}
+	c := &Ctx{Context: ctx, Tx: tx, Principal: p, reg: r}
 	out, err := r.run(c, name, input, o)
 	if err != nil {
 		return nil, err

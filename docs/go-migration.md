@@ -240,3 +240,29 @@ keeps them as integers matching Rust's `serde_json::json!({...})` output.
 (bad UUID, missing UUID from `notification.read`) run byte-for-byte against both servers with the
 same fixture. Mutating calls (`notification.read` mark-all and mark-by-id) use twin fixtures: one
 dedicated workspace per server so each starts from `updated=1` and responses are still byte-identical.
+
+## Module notes: docs (port/docs)
+
+Ported (`apps/api/internal/modules/docs`): `doc.verify`, `doc.set_owner`, `doc.flags`, `doc.proposals`,
+`doc.proposal_decide`, `doc.archived`, `doc.restore`, `doc.freshness_score`, `capture.list`, `capture.answer`,
+`template.save`, `template.list`, `template.fields`, `template.render`, `template.refresh`, `template.delete`.
+Left in Rust: `doc.ask` and `doc.capture` (AI provider), the `seed_templates` workspace hook, the binding/freshness
+event handlers, the `docs.propose_edit` job and the freshness sweep.
+
+- `doc.restore` restores an archived living page (stale again, verify-by +14 days, `date_lapsed` flag); it is unrelated
+  to `note.restore` (collab revisions). `doc.archived` was not in the task list but is the same module and trivial, so
+  it is ported too.
+- `doc.proposal_decide` approves through a nested `note.update` (Rust `ctx.call`). `command.Ctx.Call` runs another
+  command through the whole gate (role, scope, rate limit, agent groups, usage), exactly like Rust, so a machine caller
+  records usage for both commands and a rate-limit token for both. Epoch/version are not passed (as in Rust), so the
+  edit never conflicts with collab epoch. Proposed text containing U+FFFD makes the nested decoder fall back, which
+  replays the whole request to Rust.
+- Exports added to `internal/modules/notes/export.go` (smallest change instead of copying): `ParseObj`/`Obj` getters,
+  `InsertNote` (Rust `insert_note`), `F64` (serde f64 printing; scores print `1.0`, `0.5`).
+- `template.render` of boards substitutes inside the JSON of the ```tldraw fence and re-prints it like
+  `serde_json::Value` (sorted keys). Numbers serde prints in exponent form (or rejects) fall back to Rust.
+  Placeholder regex uses an explicit Unicode White_Space class because RE2 `\s` is ASCII only.
+- Tests: `internal/server/docs_test.go` (ports of `living_pages.rs` and `templates.rs`; rows the worker would write
+  are seeded with SQL, `doc.ask`/`doc.capture` are proxied to Rust), `internal/modules/docs/docs_test.go` (ports of the
+  `templates.rs` unit tests), `internal/server/docs_diff_test.go` (`TestDifferentialDocs`: twin fixtures, ~630 steps
+  compared on normalized responses, docs/notes/events/jobs/usage rows, then 480 raw read comparisons).
