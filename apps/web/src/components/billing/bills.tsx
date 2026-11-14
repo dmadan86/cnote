@@ -12,6 +12,7 @@ import { Confirm, run } from './bits'
 import { Totals } from './editor'
 import { FilterBanner } from './filter'
 import { type Line, money, parseMinor, toRupees } from './fmt'
+import { StockSelect } from './stock'
 
 type Vendor = { id: string; name: string; outstanding_minor: number }
 type Bill = {
@@ -218,7 +219,15 @@ export function BillList() {
   )
 }
 
-type Row = { k: number; description: string; hsn: string; qty: string; price: string; rate: number }
+type Row = {
+  k: number
+  description: string
+  hsn: string
+  qty: string
+  price: string
+  rate: number
+  stock: string
+}
 let seq = 0
 const RATES = [0, 5, 12, 18, 28]
 
@@ -233,6 +242,7 @@ function DraftForm({ b, reload }: { b: BillDetail; reload: () => void }) {
       qty: String(Number(l.quantity)),
       price: toRupees(l.unit_price_minor),
       rate: l.gst_rate_bp / 100,
+      stock: l.stock_item_id ?? '',
     })),
   )
   const [vendorId, setVendorId] = useState(b.vendor_id)
@@ -259,6 +269,7 @@ function DraftForm({ b, reload }: { b: BillDetail; reload: () => void }) {
       quantity: Number(r.qty),
       unit_price_minor: parseMinor(r.price || '0'),
       gst_rate_bp: r.rate * 100,
+      stock_item_id: r.stock || undefined,
     }))
     if (lines.some((l) => !l.description.trim() || !(l.quantity > 0) || l.unit_price_minor === null))
       throw new Error('Complete every line (description, quantity, price).')
@@ -340,6 +351,24 @@ function DraftForm({ b, reload }: { b: BillDetail; reload: () => void }) {
                     onChange={(e) => patch(r.k, { description: e.target.value })}
                     className={cell}
                   />
+                  <StockSelect
+                    label={`Line ${i + 1} stock item`}
+                    value={r.stock}
+                    className={`${cell} mt-1 text-muted`}
+                    onPick={(it) =>
+                      patch(
+                        r.k,
+                        it
+                          ? {
+                              stock: it.id,
+                              description: it.name,
+                              hsn: it.hsn_sac ?? '',
+                              rate: it.gst_rate_bp / 100,
+                            }
+                          : { stock: '' },
+                      )
+                    }
+                  />
                 </td>
                 <td>
                   <input
@@ -411,7 +440,10 @@ function DraftForm({ b, reload }: { b: BillDetail; reload: () => void }) {
           type="button"
           className={btn}
           onClick={() => {
-            setRows((rs) => [...rs, { k: ++seq, description: '', hsn: '', qty: '1', price: '', rate: 18 }])
+            setRows((rs) => [
+              ...rs,
+              { k: ++seq, description: '', hsn: '', qty: '1', price: '', rate: 18, stock: '' },
+            ])
             setSaved(false)
           }}
         >

@@ -112,6 +112,7 @@ export type Line = {
   gst_rate_bp: number
   taxable_minor: number
   item_note_id: string | null
+  stock_item_id?: string
 }
 
 export type InvoiceDetail = Invoice & {

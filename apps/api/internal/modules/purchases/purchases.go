@@ -18,6 +18,7 @@ import (
 	"github.com/cnote/api/internal/access"
 	"github.com/cnote/api/internal/command"
 	"github.com/cnote/api/internal/modules/billing"
+	"github.com/cnote/api/internal/modules/inventory"
 	"github.com/cnote/api/internal/modules/notes"
 )
 
@@ -209,6 +210,7 @@ type lineOut struct {
 	SGSTMinor    int64   `json:"sgst_minor"`
 	IGSTMinor    int64   `json:"igst_minor"`
 	AccountCode  *string `json:"account_code"`
+	StockItemID  *string `json:"stock_item_id,omitempty"`
 }
 
 type paymentOut struct {
@@ -248,7 +250,7 @@ func detailOf(c *command.Ctx, id string) (detail, error) {
 	}
 	rows, err := c.Tx.Query(c.Context,
 		`select id::text, position, description, hsn_sac, quantity::text, unit_price_minor, gst_rate_bp, taxable_minor,
-		   cgst_minor, sgst_minor, igst_minor, account_code
+		   cgst_minor, sgst_minor, igst_minor, account_code, stock_item_id::text
 		 from billing.purchase_bill_lines where bill_id = $1::uuid order by position`, id)
 	if err != nil {
 		return d, command.DB(err)
@@ -256,7 +258,7 @@ func detailOf(c *command.Ctx, id string) (detail, error) {
 	for rows.Next() {
 		var l lineOut
 		if err := rows.Scan(&l.ID, &l.Position, &l.Description, &l.HsnSac, &l.Quantity, &l.UnitPrice, &l.GSTRateBP,
-			&l.TaxableMinor, &l.CGSTMinor, &l.SGSTMinor, &l.IGSTMinor, &l.AccountCode); err != nil {
+			&l.TaxableMinor, &l.CGSTMinor, &l.SGSTMinor, &l.IGSTMinor, &l.AccountCode, &l.StockItemID); err != nil {
 			rows.Close()
 			return d, command.DB(err)
 		}
@@ -702,6 +704,9 @@ func record(c *command.Ctx, input json.RawMessage) (any, error) {
 	if err := billing.Post(c, "purchase_bill", b.ID, "Bill "+b.VendorBillNumber+" from "+ven.name, legs); err != nil {
 		return nil, err
 	}
+	if err := inventory.PostLines(c, "receipt", "purchase_bill", b.ID, linesTable, linesCol); err != nil {
+		return nil, err
+	}
 	if _, err := c.Tx.Exec(c.Context,
 		`update billing.purchase_bills set status = 'recorded', recorded_at = now(), supplier_gstin = $2, supplier_state = $3,
 		   place_of_supply = $4, subtotal_minor = $5, cgst_minor = $6, sgst_minor = $7, igst_minor = $8, total_minor = $9
@@ -809,6 +814,9 @@ func cancel(c *command.Ctx, input json.RawMessage) (any, error) {
 		return nil, command.ErrConflict("bill has payments and cannot be cancelled")
 	}
 	if b.Status == "recorded" {
+		if err := inventory.Reverse(c, "purchase_bill", b.ID); err != nil {
+			return nil, err
+		}
 		rows, err := c.Tx.Query(c.Context,
 			`select l.account_code, l.debit_minor, l.credit_minor from billing.journal_lines l
 			 join billing.journal_entries e on e.id = l.entry_id

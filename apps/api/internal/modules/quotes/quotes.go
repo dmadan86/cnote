@@ -165,6 +165,7 @@ type lineOut struct {
 	SGSTMinor    int64   `json:"sgst_minor"`
 	IGSTMinor    int64   `json:"igst_minor"`
 	ItemNoteID   *string `json:"item_note_id"`
+	StockItemID  *string `json:"stock_item_id,omitempty"`
 }
 
 type detail struct {
@@ -176,7 +177,7 @@ type detail struct {
 func linesOf(c *command.Ctx, id string) ([]lineOut, error) {
 	rows, err := c.Tx.Query(c.Context,
 		`select id::text, position, description, hsn_sac, quantity::text, unit_price_minor, gst_rate_bp, taxable_minor,
-		   cgst_minor, sgst_minor, igst_minor, item_note_id::text
+		   cgst_minor, sgst_minor, igst_minor, item_note_id::text, stock_item_id::text
 		 from billing.quotation_lines where quotation_id = $1::uuid order by position`, id)
 	if err != nil {
 		return nil, command.DB(err)
@@ -186,7 +187,7 @@ func linesOf(c *command.Ctx, id string) ([]lineOut, error) {
 	for rows.Next() {
 		var l lineOut
 		if err := rows.Scan(&l.ID, &l.Position, &l.Description, &l.HsnSac, &l.Quantity, &l.UnitPrice, &l.GSTRateBP,
-			&l.TaxableMinor, &l.CGSTMinor, &l.SGSTMinor, &l.IGSTMinor, &l.ItemNoteID); err != nil {
+			&l.TaxableMinor, &l.CGSTMinor, &l.SGSTMinor, &l.IGSTMinor, &l.ItemNoteID, &l.StockItemID); err != nil {
 			return nil, command.DB(err)
 		}
 		out = append(out, l)
@@ -505,7 +506,7 @@ func convertToInvoice(c *command.Ctx, input json.RawMessage) (any, error) {
 		return nil, command.ErrConflict("quotation already converted to an invoice")
 	}
 	rows, err := c.Tx.Query(c.Context,
-		`select description, hsn_sac, quantity::text, unit_price_minor, gst_rate_bp, item_note_id::text
+		`select description, hsn_sac, quantity::text, unit_price_minor, gst_rate_bp, item_note_id::text, stock_item_id::text
 		 from billing.quotation_lines where quotation_id = $1::uuid order by position`, q.ID)
 	if err != nil {
 		return nil, command.DB(err)
@@ -513,10 +514,10 @@ func convertToInvoice(c *command.Ctx, input json.RawMessage) (any, error) {
 	lines := []map[string]any{}
 	for rows.Next() {
 		var desc, qty string
-		var hsn, item *string
+		var hsn, item, stock *string
 		var price int64
 		var rate int32
-		if err := rows.Scan(&desc, &hsn, &qty, &price, &rate, &item); err != nil {
+		if err := rows.Scan(&desc, &hsn, &qty, &price, &rate, &item, &stock); err != nil {
 			rows.Close()
 			return nil, command.DB(err)
 		}
@@ -526,6 +527,9 @@ func convertToInvoice(c *command.Ctx, input json.RawMessage) (any, error) {
 		}
 		if item != nil {
 			l["item_note_id"] = *item
+		}
+		if stock != nil {
+			l["stock_item_id"] = *stock
 		}
 		lines = append(lines, l)
 	}

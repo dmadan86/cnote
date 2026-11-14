@@ -15,6 +15,7 @@ import (
 	"github.com/cnote/api/internal/command"
 	"github.com/cnote/api/internal/modules/billing"
 	"github.com/cnote/api/internal/modules/hr"
+	"github.com/cnote/api/internal/modules/inventory"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -337,6 +338,17 @@ func summary(c *command.Ctx, input json.RawMessage) (any, error) {
 			return nil, err
 		}
 		tiles["people_present"] = map[string]any{"present": n.Present, "expected": n.Expected, "on_leave": n.OnLeave, "not_marked": n.NotMarked}
+	}
+
+	// ---- low stock: items at or under their reorder level (only for workspaces that keep items) ----
+	if on("billing") && role >= command.Member {
+		n, total, sample, err := inventory.LowStock(c)
+		if err != nil {
+			return nil, err
+		}
+		if total > 0 {
+			tiles["low_stock"] = map[string]any{"count": n, "items": total, "sample": sample}
+		}
 	}
 
 	// ---- urgent: overdue items + overdue invoices ----
