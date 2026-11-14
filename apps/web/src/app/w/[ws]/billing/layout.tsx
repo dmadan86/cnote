@@ -14,6 +14,7 @@ export default function BillingLayout({ children }: { children: React.ReactNode 
           [`/w/${ws}/billing/quotes`, 'Quotes'],
           [`/w/${ws}/billing/bills`, 'Bills'],
           [`/w/${ws}/billing/expenses`, 'Expenses'],
+          [`/w/${ws}/billing/bank`, 'Bank'],
           [`/w/${ws}/billing/recurring`, 'Recurring'],
           [`/w/${ws}/billing/reports`, 'Reports'],
           [`/w/${ws}/billing/settings`, 'Settings'],
