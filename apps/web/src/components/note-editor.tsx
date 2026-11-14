@@ -187,18 +187,20 @@ function Surface({
     },
     onUpdate: ({ editor }) => {
       clearTimeout(timer.current)
-      pending.current = () => editor.getMarkdown()
+      const mine = () => editor.getMarkdown()
+      pending.current = mine
       timer.current = setTimeout(async () => {
         const md = editor.getMarkdown()
         if (md === last.current) {
-          pending.current = null
+          if (pending.current === mine) pending.current = null
           return setStatus('saved')
         }
         setStatus('saving')
         try {
           // expected_epoch: after a restore the server refuses this tab's stale copy.
           await cmd(ws, 'note.update', { id, content_md: md, expected_epoch: epoch })
-          pending.current = null
+          // Keep an edit typed while this save was in flight: navigating away must still flush it.
+          if (pending.current === mine) pending.current = null
           last.current = md
           setStatus('saved')
           onSaved()

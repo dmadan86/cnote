@@ -13,7 +13,9 @@ test('typing then navigating away immediately still saves', async ({ page }) => 
   await page.keyboard.type(`Typed ${word}`)
   // Leave inside the 700ms debounce window. The page sends the pending save on the way out; the reload below must
   // wait for the server to acknowledge it, or it can read the page before the save commits.
-  const saved = page.waitForResponse((r) => r.url().includes('note.update') && r.ok())
+  const saved = page.waitForResponse(
+    (r) => r.url().includes('note.update') && r.ok() && (r.request().postData() ?? '').includes(word),
+  )
   await page.getByRole('link', { name: space }).first().click()
   await expect(page).toHaveURL(/\/s\//)
   await saved
