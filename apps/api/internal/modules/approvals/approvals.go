@@ -25,6 +25,8 @@ var supported = []struct{ name, label string }{
 	{"bill.pay", "Pay a bill"},
 	{"invoice.write_off", "Write off an invoice"},
 	{"receipt.refund", "Refund an advance"},
+	{"expense.approve", "Approve an expense claim"},
+	{"expense.reimburse", "Reimburse an expense claim"},
 }
 
 // amountFor is the Amount of a supported command; check = run the handler's page access check first.
@@ -42,6 +44,8 @@ func amountFor(name string, check bool) command.AmountFunc {
 		return paymentOf("billing.invoices", "total_minor", check)
 	case "receipt.refund":
 		return paymentOf("billing.receipts", "amount_minor", check)
+	case "expense.approve", "expense.reimburse":
+		return paymentOf("billing.expenses", "amount_minor", check)
 	}
 	return nil
 }

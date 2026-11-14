@@ -44,6 +44,7 @@ var SubjectCatalog = map[string]string{
 	"billing.recurring_invoices.note_id":           "export (as the schedule)",
 	"billing.recurring_invoice_lines.item_note_id": "catalogue items, not people",
 	"billing.purchase_bills.note_id":               "export (as the bill)",
+	"billing.expenses.note_id":                     "staff expense claims and company spending; names no contact",
 	"billing.purchase_bill_lines.item_note_id":     "catalogue items, not people",
 }
 

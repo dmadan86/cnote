@@ -28,11 +28,18 @@ type Bill = {
   total_minor: number
   paid_minor: number
   outstanding_minor: number
+  itc_at_risk: boolean
 }
 type BillDetail = Bill & {
   vendor_name: string | null
   lines: Line[]
-  payments: { id: string; amount_minor: number; method: string; reference: string | null }[]
+  payments: {
+    id: string
+    amount_minor: number
+    method: string
+    reference: string | null
+    tds_minor: number
+  }[]
 }
 
 const LABEL: Record<string, string> = {
@@ -50,6 +57,11 @@ const TONE: Record<string, 'ok' | 'warn' | 'bad' | 'neutral'> = {
 }
 const BillPill = ({ status }: { status: string }) => (
   <Pill tone={TONE[status]}>{LABEL[status] ?? status}</Pill>
+)
+const ItcRisk = () => (
+  <span title="Unpaid for over 150 days. Input tax credit is lost if the bill stays unpaid 180 days after its date.">
+    <Pill tone="bad">ITC at risk</Pill>
+  </span>
 )
 
 function NewBill({ onClose }: { onClose: () => void }) {
@@ -187,7 +199,7 @@ export function BillList() {
                     )}
                   </td>
                   <td>
-                    <BillPill status={b.status} />
+                    <BillPill status={b.status} /> {b.itc_at_risk && <ItcRisk />}
                   </td>
                   <td className="text-right tabular-nums">{money(b.total_minor)}</td>
                   <td
@@ -431,18 +443,51 @@ function DraftForm({ b, reload }: { b: BillDetail; reload: () => void }) {
   )
 }
 
+type Tds = {
+  tds_code: string
+  label?: string
+  rate_bp: number
+  base_minor: number
+  on_minor: number
+  tds_minor: number
+  net_minor: number
+  reason: string
+  warnings: string[]
+  no_pan: boolean
+  applicable: boolean
+}
+
 function PayDialog({ b, onClose, onDone }: { b: BillDetail; onClose: () => void; onDone: () => void }) {
   const { ws } = useShell()
   const [amount, setAmount] = useState(toRupees(b.outstanding_minor))
+  const [override, setOverride] = useState<string>()
+  const [pan, setPan] = useState('')
+  const [panErr, setPanErr] = useState<string>()
+  const minor = parseMinor(amount)
+  const preview = useCmd<Tds>(
+    ws,
+    'bill.tds_preview',
+    { id: b.id, amount_minor: minor ?? 1 },
+    !!minor && minor > 0,
+  )
+  const t = preview.data?.applicable ? preview.data : undefined
+  const overrideMinor = override === undefined ? undefined : parseMinor(override)
+  const withheld = overrideMinor ?? t?.tds_minor ?? 0
   return (
     <Confirm
       title="Record payment"
       action="Record payment"
       onClose={onClose}
       onDone={async () => {
-        const minor = parseMinor(amount)
         if (!minor || minor <= 0) throw new Error('Enter an amount.')
-        await run(ws, 'bill.pay', { id: b.id, amount_minor: minor })
+        if (override !== undefined && overrideMinor === null)
+          throw new Error('Enter the TDS amount in rupees.')
+        await run(ws, 'bill.pay', {
+          id: b.id,
+          amount_minor: minor,
+          ...(t ? { tds_code: t.tds_code } : {}),
+          ...(t && overrideMinor !== undefined ? { tds_minor: overrideMinor } : {}),
+        })
         onDone()
       }}
       body={`Record a payment already made for bill ${b.vendor_bill_number}${b.vendor_name ? ` from ${b.vendor_name}` : ''}. Outstanding ${money(b.outstanding_minor)}. It posts to the ledger: payable down, bank down.`}
@@ -452,10 +497,82 @@ function PayDialog({ b, onClose, onDone }: { b: BillDetail; onClose: () => void;
         <input
           value={amount}
           inputMode="decimal"
-          onChange={(e) => setAmount(e.target.value)}
+          onChange={(e) => {
+            setAmount(e.target.value)
+            setOverride(undefined)
+          }}
           className={inputCls}
         />
       </label>
+      {t && (
+        <section aria-label="TDS" className="space-y-2 rounded-md border border-line p-3 text-[13px]">
+          <p className="font-medium">TDS: {t.label ?? t.tds_code}</p>
+          <p className="text-muted">{t.reason}</p>
+          <dl className="grid grid-cols-[1fr_auto] gap-y-1 tabular-nums">
+            <dt>Value without GST x {t.rate_bp / 100}%</dt>
+            <dd>{money(t.on_minor)}</dd>
+            <dt>TDS withheld</dt>
+            <dd data-testid="tds-withheld">{money(withheld)}</dd>
+            <dt className="font-medium">Cash to pay the vendor</dt>
+            <dd className="font-medium" data-testid="tds-net">
+              {money((minor ?? 0) - withheld)}
+            </dd>
+          </dl>
+          {t.warnings.map((w) => (
+            <p key={w} role="status" className="rounded bg-warn-bg p-2 text-warn">
+              {w}
+            </p>
+          ))}
+          {t.no_pan && (
+            <div className="flex flex-wrap items-end gap-2">
+              <label className="block space-y-1">
+                <span className="text-[12px] font-medium text-muted">Vendor PAN</span>
+                <input
+                  value={pan}
+                  onChange={(e) => setPan(e.target.value)}
+                  className={`${inputCls} w-40 uppercase`}
+                />
+              </label>
+              <button
+                type="button"
+                className={btn}
+                onClick={async () => {
+                  try {
+                    await run(ws, 'vendor.set_tax', { id: b.vendor_id, pan })
+                    setPanErr(undefined)
+                    preview.reload()
+                  } catch (x) {
+                    setPanErr((x as Error).message)
+                  }
+                }}
+              >
+                Save PAN
+              </button>
+              <ErrorText error={panErr} />
+            </div>
+          )}
+          {override === undefined ? (
+            <button type="button" className="underline" onClick={() => setOverride(toRupees(t.tds_minor))}>
+              Change the TDS amount
+            </button>
+          ) : (
+            <label className="block space-y-1">
+              <span className="text-[12px] font-medium text-muted">TDS to withhold (INR)</span>
+              <input
+                value={override}
+                inputMode="decimal"
+                onChange={(e) => setOverride(e.target.value)}
+                className={inputCls}
+              />
+            </label>
+          )}
+        </section>
+      )}
+      {!t && minor !== null && preview.data && (
+        <p className="text-[12px] text-muted">
+          No TDS on this payment. Give the vendor a default TDS code (Vendors) to have it worked out for you.
+        </p>
+      )}
     </Confirm>
   )
 }
@@ -486,6 +603,7 @@ export function BillView({ params }: { params: Promise<{ id: string }> }) {
           {b.vendor_name ? ` from ${b.vendor_name}` : ''}
         </h2>
         <BillPill status={b.status} />
+        {b.itc_at_risk && <ItcRisk />}
       </div>
       <ErrorText error={err} />
       <ApprovalBanner ws={ws} noteId={b.id} />
@@ -538,6 +656,7 @@ export function BillView({ params }: { params: Promise<{ id: string }> }) {
                 <li key={p.id}>
                   Paid {money(p.amount_minor)} by {p.method}
                   {p.reference ? ` (${p.reference})` : ''}
+                  {p.tds_minor > 0 ? `, of which ${money(p.tds_minor)} withheld as TDS` : ''}
                 </li>
               ))}
             </ul>
