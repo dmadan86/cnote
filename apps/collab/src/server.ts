@@ -3,6 +3,7 @@
 // committed to core.note_updates before it is relayed, and a debounced snapshot into core.notes absorbs (and
 // deletes) the logged updates, so a crash loses nothing anyone has seen. Writes are fenced by
 // core.notes.collab_epoch: after a restore the old room can no longer write and its clients are closed with 4409.
+import { createHash, timingSafeEqual } from 'node:crypto'
 import { EventEmitter } from 'node:events'
 import http from 'node:http'
 import * as decoding from 'lib0/decoding'
@@ -13,7 +14,7 @@ import * as Y from 'yjs'
 import { mayWrite } from './access.ts'
 import { authenticate, type Principal } from './auth.ts'
 import { CmdError, tenant } from './db.ts'
-import { loadDoc } from './doc.ts'
+import { buildDoc, loadDoc } from './doc.ts'
 import * as md from './md.ts'
 
 export const CLOSE_STALE_EPOCH = 4409
@@ -63,6 +64,8 @@ export interface Options {
   debounceMs?: number
   /** How often an open connection re-checks its page access (Rust: 10s). */
   recheckMs?: number
+  /** Shared secret of POST /internal/render (the Go API's note.restore). Unset: the endpoint answers 404. */
+  internalSecret?: string
 }
 
 function frame(write: (e: encoding.Encoder) => void) {
@@ -478,8 +481,51 @@ export function createServer(opts: Options) {
     )
   }
 
+  const sha = (v: string) => createHash('sha256').update(v).digest()
+  /** Stateless: renders the Markdown of a note's live document from the rows the caller read (snapshot + log). */
+  function render(req: http.IncomingMessage, res: http.ServerResponse) {
+    const send = (status: number, body: string) => {
+      res.statusCode = status
+      res.setHeader('content-type', 'application/json')
+      res.end(body)
+    }
+    const given = req.headers['x-collab-secret']
+    if (
+      !opts.internalSecret ||
+      typeof given !== 'string' ||
+      !timingSafeEqual(sha(given), sha(opts.internalSecret))
+    )
+      return send(opts.internalSecret ? 401 : 404, '{"error":"unauthorized"}')
+    const chunks: Buffer[] = []
+    let size = 0
+    req.on('data', (c: Buffer) => {
+      size += c.length
+      if (size > 64 << 20) req.destroy()
+      else chunks.push(c)
+    })
+    req.on('end', () => {
+      try {
+        const b = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+        if (typeof b.note_id !== 'string' || !UUID.test(b.note_id) || typeof b.content_md !== 'string')
+          throw new Error('bad')
+        const bytes = (v: unknown) => new Uint8Array(Buffer.from(String(v), 'base64'))
+        const ydoc = b.content_ydoc ? bytes(b.content_ydoc) : null
+        const doc = buildDoc(
+          b.note_id.toLowerCase(),
+          b.content_md,
+          ydoc,
+          ((b.updates ?? []) as unknown[]).map(bytes),
+        )
+        send(200, JSON.stringify({ markdown: md.toMarkdown(doc) }))
+      } catch {
+        send(400, '{"error":"bad request"}')
+      }
+    })
+  }
+
   const server = http.createServer((req, res) => {
     if (req.url === '/healthz') return void res.end('ok')
+    if (req.method === 'POST' && req.url === '/internal/render') return render(req, res)
     res.statusCode = 426
     res.end('WebSocket upgrade required')
   })

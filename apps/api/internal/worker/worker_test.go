@@ -151,12 +151,12 @@ func TestDifferentialBindingsAndFreshness(t *testing.T) {
 	run(r)
 	run(g)
 	e.sameRows(r, g)
-	// the AI-owned follow-up jobs exist on the Go side too (the Rust worker runs them)
+	// the AI jobs ran on the Go side too and produced the same chunks and proposals (compared above)
 	var n int
 	if err := g.c.Tx.QueryRow(g.c.Context, "select count(*) from core.jobs where kind = 'ai.index_note' and id > $1", g.baseline).Scan(&n); err != nil || n < 3 {
 		t.Fatalf("ai.index_note jobs: %d %v", n, err)
 	}
-	if err := g.c.Tx.QueryRow(g.c.Context, "select count(*) from core.jobs where kind = 'docs.propose_edit' and status = 'queued' and id > $1", g.baseline).Scan(&n); err != nil || n < 2 {
+	if err := g.c.Tx.QueryRow(g.c.Context, "select count(*) from core.jobs where kind = 'docs.propose_edit' and status = 'done' and id > $1", g.baseline).Scan(&n); err != nil || n < 2 {
 		t.Fatalf("docs.propose_edit jobs: %d %v", n, err)
 	}
 }
@@ -497,8 +497,7 @@ func TestRunClaimedOutcomes(t *testing.T) {
 }
 
 // Claiming uses core.claim_jobs (FOR UPDATE SKIP LOCKED) and only the kinds this worker runs, so it can share the
-// queue with the Rust worker: a job claimed by one transaction is invisible to the other, and the AI kinds are
-// never taken.
+// queue with the Rust worker: a job claimed by one transaction is invisible to the other, and every kind is taken.
 func TestClaimSharesQueueWithRust(t *testing.T) {
 	e := newEnv(t)
 	w := e.signup("Tess")
@@ -523,12 +522,9 @@ func TestClaimSharesQueueWithRust(t *testing.T) {
 	has := map[int64]bool{}
 	for _, j := range got {
 		has[j.ID] = true
-		if j.Kind == "ai.index_note" || j.Kind == "docs.propose_edit" {
-			t.Fatalf("the Go worker must leave %s to Rust", j.Kind)
-		}
 	}
-	if !has[ev] || has[ai] || has[doc] {
-		t.Fatalf("claimed %v, want only the event.dispatch job %d", has, ev)
+	if !has[ev] || !has[ai] || !has[doc] {
+		t.Fatalf("claimed %v, want jobs %d %d %d", has, ev, ai, doc)
 	}
 	var st string
 	_ = tx1.QueryRow(ctx, "select status from core.jobs where id = $1", ev).Scan(&st)

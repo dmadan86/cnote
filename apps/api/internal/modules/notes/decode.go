@@ -41,7 +41,7 @@ func (o obj) str(k string, required bool) (*string, error) {
 		return nil, nil
 	}
 	var s string
-	if json.Unmarshal(v, &s) != nil || strings.ContainsRune(s, '�') {
+	if json.Unmarshal(v, &s) != nil {
 		return nil, command.ErrFallback
 	}
 	return &s, nil
@@ -138,16 +138,11 @@ func (o obj) types(k string) ([]string, error) {
 	if json.Unmarshal(v, &out) != nil || out == nil {
 		return nil, command.ErrFallback
 	}
-	for _, s := range out {
-		if strings.ContainsRune(s, '�') {
-			return nil, command.ErrFallback
-		}
-	}
 	return out, nil
 }
 
-// optValue is Option<serde_json::Value>. Rust re-serializes floats and big integers (1e2 -> 100.0), which
-// jsonb would not reproduce from the raw text, so anything but plain integers falls back.
+// optValue is Option<serde_json::Value>. Rust re-serializes floats and big integers (1e2 -> 100.0, -0 -> -0.0), which
+// jsonb would not reproduce from the raw text, so every such number is rewritten the way serde_json prints an f64.
 func (o obj) optValue(k string) (json.RawMessage, error) {
 	v, ok := o.get(k)
 	if !ok {
@@ -156,10 +151,17 @@ func (o obj) optValue(k string) (json.RawMessage, error) {
 	dec := json.NewDecoder(bytes.NewReader(v))
 	dec.UseNumber()
 	var any any
-	if dec.Decode(&any) != nil || !plainNumbers(any) {
+	if dec.Decode(&any) != nil {
 		return nil, command.ErrFallback
 	}
-	return v, nil
+	if plainNumbers(any) {
+		return v, nil
+	}
+	out, err := normValue(v)
+	if err != nil || bytes.Contains(out, []byte("Inf")) { // not a finite f64: serde refuses it
+		return nil, command.ErrFallback
+	}
+	return out, nil
 }
 
 func plainNumbers(v any) bool {
@@ -167,8 +169,6 @@ func plainNumbers(v any) bool {
 	case json.Number:
 		n, err := strconv.ParseInt(x.String(), 10, 64)
 		return err == nil && x.String() != "-0" && (n != 0 || x.String() == "0")
-	case string:
-		return !strings.ContainsRune(x, '�')
 	case []any:
 		for _, e := range x {
 			if !plainNumbers(e) {
@@ -176,8 +176,8 @@ func plainNumbers(v any) bool {
 			}
 		}
 	case map[string]any:
-		for k, e := range x {
-			if strings.ContainsRune(k, '�') || !plainNumbers(e) {
+		for _, e := range x {
+			if !plainNumbers(e) {
 				return false
 			}
 		}

@@ -87,17 +87,14 @@ func substitute(text string, v vals, missing map[string]bool) string {
 	return b.String()
 }
 
-// serdeValue rewrites decoded JSON the way serde_json::Value would print it. Numbers that serde prints in
-// exponent form (or that it would reject) return ok=false so Rust handles the request.
+// serdeValue rewrites decoded JSON the way serde_json::Value would print it (floats as notes.F64 prints them); a number
+// serde would reject returns ok=false.
 func serdeValue(x any, depth int, f func(string) string) (any, bool) {
 	if depth > 100 { // serde_json's recursion limit is 128
 		return nil, false
 	}
 	switch v := x.(type) {
 	case string:
-		if strings.ContainsRune(v, '�') {
-			return nil, false
-		}
 		return f(v), true
 	case json.Number:
 		t := v.String()
@@ -110,8 +107,8 @@ func serdeValue(x any, depth int, f func(string) string) (any, bool) {
 			}
 		}
 		fl, err := strconv.ParseFloat(t, 64)
-		if a := math.Abs(fl); err != nil || (fl != 0 && (a < 1e-5 || a >= 1e16)) {
-			return nil, false
+		if err != nil || math.IsInf(fl, 0) {
+			return nil, false // serde refuses a number that is not a finite f64
 		}
 		return notes.F64(fl), true
 	case []any:
@@ -124,9 +121,6 @@ func serdeValue(x any, depth int, f func(string) string) (any, bool) {
 	case map[string]any:
 		out := make(map[string]any, len(v))
 		for k, e := range v {
-			if strings.ContainsRune(k, '�') {
-				return nil, false
-			}
 			var ok bool
 			if out[k], ok = serdeValue(e, depth+1, f); !ok {
 				return nil, false

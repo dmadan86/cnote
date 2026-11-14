@@ -45,40 +45,34 @@ func errorRedirect(redirectURI string, state *string, iss, code, desc string) *s
 	return &s
 }
 
-// errNeedsRust: the redirect URI is one whose WHATWG serialization we do not reproduce.
-type needsRust struct{}
-
-func (h *Handler) validateAuthz(r *http.Request, base string, p authzParams) (*validated, *authzErr, *needsRust) {
+func (h *Handler) validateAuthz(r *http.Request, base string, p authzParams) (*validated, *authzErr) {
 	fail := func(code, desc string) *authzErr { return &authzErr{code: code, desc: desc} }
 	if p.clientID == "" || len(p.clientID) > 2048 {
-		return nil, fail("invalid_request", "client_id is required"), nil
+		return nil, fail("invalid_request", "client_id is required")
 	}
 	c, msg := h.resolveClient(r.Context(), p.clientID)
 	if msg != "" {
-		return nil, fail("invalid_request", msg), nil
+		return nil, fail("invalid_request", msg)
 	}
 	if !contains(c.redirectURIs, p.redirectURI) { // exact string match against the registered URIs
-		return nil, fail("invalid_request", "redirect_uri does not match a registered redirect URI"), nil
-	}
-	if u, ok := plainURI(p.redirectURI); !ok || !u.normalized() {
-		return nil, nil, &needsRust{}
+		return nil, fail("invalid_request", "redirect_uri does not match a registered redirect URI")
 	}
 	redirectable := func(code, desc string) *authzErr {
 		return &authzErr{code: code, desc: desc, redirectTo: errorRedirect(p.redirectURI, p.state, base, code, desc)}
 	}
 	switch {
 	case p.responseType != "code":
-		return nil, redirectable("unsupported_response_type", "response_type must be code"), nil
+		return nil, redirectable("unsupported_response_type", "response_type must be code")
 	case p.method != "S256":
-		return nil, redirectable("invalid_request", "PKCE with code_challenge_method S256 is required"), nil
+		return nil, redirectable("invalid_request", "PKCE with code_challenge_method S256 is required")
 	case len(p.challenge) != 43 || !b64urlRe.MatchString(p.challenge):
-		return nil, redirectable("invalid_request", "code_challenge must be a base64url SHA-256 digest"), nil
+		return nil, redirectable("invalid_request", "code_challenge must be a base64url SHA-256 digest")
 	case p.resource == "":
-		return nil, redirectable("invalid_target", "resource parameter is required"), nil
+		return nil, redirectable("invalid_target", "resource parameter is required")
 	}
 	resource, ok := canonicalResource(p.resource, base)
 	if !ok {
-		return nil, redirectable("invalid_target", "resource must be this server's MCP endpoint"), nil
+		return nil, redirectable("invalid_target", "resource must be this server's MCP endpoint")
 	}
 	scope := ""
 	if p.scope != nil {
@@ -87,7 +81,7 @@ func (h *Handler) validateAuthz(r *http.Request, base string, p authzParams) (*v
 			scope = string(r[:200])
 		}
 	}
-	return &validated{client: c, redirectURI: p.redirectURI, challenge: p.challenge, resource: resource, state: p.state, scope: scope}, nil, nil
+	return &validated{client: c, redirectURI: p.redirectURI, challenge: p.challenge, resource: resource, state: p.state, scope: scope}, nil
 }
 
 func authzJSON(w http.ResponseWriter, e *authzErr) {
@@ -125,14 +119,18 @@ func (h *Handler) authorizeContext(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	buf, ok = h.checkJSON(w, r, buf, authzSpec)
+	if !ok {
+		return
+	}
 	o, valid := jsonObject(buf)
-	f := &fields{o: o, ok: valid && isJSON(r)}
+	f := &fields{o: o, ok: valid}
 	var p authzParams
 	if f.ok {
 		p = parseAuthz(f)
 	}
 	if !f.ok {
-		h.proxy(w, r, buf)
+		h.rejectJSON(w, r, buf, authzSpec)
 		return
 	}
 	user, err := h.Auth.SessionUser(r.Context(), r.Header)
@@ -150,11 +148,7 @@ func (h *Handler) authorizeContext(w http.ResponseWriter, r *http.Request) {
 		apiErr(w, err)
 		return
 	}
-	v, e, rust := h.validateAuthz(r, base, p)
-	if rust != nil {
-		h.proxy(w, r, buf)
-		return
-	}
+	v, e := h.validateAuthz(r, base, p)
 	if e != nil {
 		authzJSON(w, e)
 		return
@@ -187,8 +181,12 @@ func (h *Handler) authorize(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	buf, ok = h.checkJSON(w, r, buf, authorizeSpec)
+	if !ok {
+		return
+	}
 	o, valid := jsonObject(buf)
-	f := &fields{o: o, ok: valid && isJSON(r)}
+	f := &fields{o: o, ok: valid}
 	var p authzParams
 	var wsID string
 	var approve bool
@@ -201,7 +199,7 @@ func (h *Handler) authorize(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if !f.ok {
-		h.proxy(w, r, buf)
+		h.rejectJSON(w, r, buf, authorizeSpec)
 		return
 	}
 	// Belt and braces next to JSON-only bodies: a cross-site page cannot trigger an approval.
@@ -223,11 +221,7 @@ func (h *Handler) authorize(w http.ResponseWriter, r *http.Request) {
 		apiErr(w, err)
 		return
 	}
-	v, e, rust := h.validateAuthz(r, base, p)
-	if rust != nil {
-		h.proxy(w, r, buf)
-		return
-	}
+	v, e := h.validateAuthz(r, base, p)
 	if e != nil {
 		authzJSON(w, e)
 		return

@@ -1,9 +1,9 @@
 package server
 
 // The non-command HTTP surface of crates/cnote-server/src/api.rs and marketplace.rs: auth, workspaces, the command
-// catalog, the marketplace token exchange and the GitHub webhook. Anything axum would reject before the handler
-// runs (non-JSON content type, malformed or mistyped body, odd UUIDs) is replayed to Rust, so Rust words those
-// errors itself; the happy paths and every authentication decision are native.
+// catalog, the marketplace token exchange and the GitHub webhook. What axum rejects before the handler runs
+// (non-JSON content type, malformed or mistyped body, odd UUIDs) is answered here with the same status and the
+// wording serde and axum use (serdejson, uuidparse).
 
 import (
 	"bytes"
@@ -19,6 +19,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"os"
 	"regexp"
 	"sort"
@@ -35,6 +36,8 @@ import (
 	"github.com/cnote/api/internal/modules/admin"
 	"github.com/cnote/api/internal/modules/marketplace"
 	"github.com/cnote/api/internal/modules/publiclinks"
+	"github.com/cnote/api/internal/serdejson"
+	"github.com/cnote/api/internal/uuidparse"
 )
 
 // sessionCookie is api.rs session_cookie, byte for byte (COOKIE_SECURE=1|true adds Secure).
@@ -71,8 +74,19 @@ func (s *Server) authSurface(w http.ResponseWriter, r *http.Request) bool {
 		s.catalog(w)
 	case r.Method == http.MethodPost && path == "/api/marketplace/token":
 		s.marketToken(w, r)
-	case r.Method == http.MethodPost && strings.HasPrefix(path, "/api/hooks/github/") && wsRe.MatchString(path[len("/api/hooks/github/"):]):
-		s.githubHook(w, r, path[len("/api/hooks/github/"):])
+	case r.Method == http.MethodPost && strings.HasPrefix(path, "/api/hooks/github/"):
+		rest := path[len("/api/hooks/github/"):]
+		raw, err := url.PathUnescape(rest)
+		if rest == "" || strings.Contains(rest, "/") || err != nil {
+			notFound(w)
+			break
+		}
+		ws, msg := uuidparse.Parse(raw)
+		if msg != "" {
+			plain(w, http.StatusBadRequest, "Invalid URL: Cannot parse `ws` with value `"+raw+"`: UUID parsing failed: "+msg)
+			break
+		}
+		s.githubHook(w, r, ws)
 	default:
 		return false
 	}
@@ -89,11 +103,6 @@ func (s *Server) writeErr(w http.ResponseWriter, r *http.Request, err error) {
 	writeJSON(w, ce.Code.Status(), body)
 }
 
-func (s *Server) replay(w http.ResponseWriter, r *http.Request, body []byte) {
-	r.Body = io.NopCloser(bytes.NewReader(body))
-	s.Upstream.ServeHTTP(w, r)
-}
-
 // surrogateOrNUL: escapes serde rejects (lone surrogates) or Postgres cannot store (NUL); let Rust answer.
 var surrogateOrNUL = regexp.MustCompile(`(?i)\\u(d[89a-f]..|0000)`)
 
@@ -106,8 +115,7 @@ func (s *Server) readBody(w http.ResponseWriter, r *http.Request, limit int64) (
 	}
 	buf, err := io.ReadAll(io.LimitReader(r.Body, limit+1))
 	if err != nil || int64(len(buf)) > limit {
-		r.Body = io.NopCloser(io.MultiReader(bytes.NewReader(buf), r.Body))
-		s.Upstream.ServeHTTP(w, r)
+		tooLarge(w)
 		return nil, false
 	}
 	return buf, true
@@ -116,7 +124,7 @@ func (s *Server) readBody(w http.ResponseWriter, r *http.Request, limit int64) (
 // jsonObject is the axum `Json<T>` extractor for a struct of string fields: a JSON content type and a body serde
 // would accept. Field names match exactly (serde, unlike encoding/json, is case sensitive), unknown fields are
 // ignored, duplicates are an error. On anything else the request goes to Rust and ok is false.
-func (s *Server) jsonObject(w http.ResponseWriter, r *http.Request, limit int64, strs map[string]*string, opts map[string]**string) ([]byte, bool) {
+func (s *Server) jsonObject(w http.ResponseWriter, r *http.Request, limit int64, spec serdejson.Spec, strs map[string]*string, opts map[string]**string) ([]byte, bool) {
 	if !isJSON(r) {
 		// axum's Json extractor refuses before reading the body; answering here keeps a big upload from
 		// reaching a server that hangs up on it
@@ -129,23 +137,25 @@ func (s *Server) jsonObject(w http.ResponseWriter, r *http.Request, limit int64,
 	if !ok {
 		return nil, false
 	}
+	if status, msg := serdejson.StructError(buf, spec); status != 0 {
+		plain(w, status, msg)
+		return nil, false
+	}
 	if obj, ok := parseObject(buf); ok {
-		good := true
 		for k, dst := range strs {
-			good = good && (obj[k] != nil && isString(obj[k]) && json.Unmarshal(obj[k], dst) == nil)
+			_ = json.Unmarshal(obj[k], dst)
 		}
 		for k, dst := range opts {
 			if v := obj[k]; v != nil && string(v) != "null" {
 				var x string
-				good = good && isString(v) && json.Unmarshal(v, &x) == nil
+				_ = json.Unmarshal(v, &x)
 				*dst = &x
 			}
 		}
-		if good {
-			return buf, true
-		}
+		return buf, true
 	}
-	s.replay(w, r, buf)
+	// a body serde accepts that cannot be stored (NUL escapes): Rust's database refuses it
+	s.writeErr(w, r, command.NewError(command.Internal, "database error"))
 	return nil, false
 }
 
@@ -167,9 +177,6 @@ func parseObject(buf []byte) (map[string]json.RawMessage, bool) {
 		key, isStr := k.(string)
 		var v json.RawMessage
 		if err != nil || !isStr || dec.Decode(&v) != nil {
-			return nil, false
-		}
-		if _, dup := obj[key]; dup {
 			return nil, false
 		}
 		obj[key] = v
@@ -217,7 +224,7 @@ func withSession(w http.ResponseWriter, r *http.Request, body map[string]any, to
 func (s *Server) signup(w http.ResponseWriter, r *http.Request) {
 	var email, name, password string
 	var ws *string
-	if !s.strictJSON(w, r, map[string]*string{"email": &email, "name": &name, "password": &password}, map[string]**string{"workspace_name": &ws}) {
+	if _, ok := s.jsonObject(w, r, maxBody, serdejson.Spec{Name: "SignUp", Fields: []serdejson.Field{{Name: "email"}, {Name: "name"}, {Name: "password"}, {Name: "workspace_name", Optional: true}}}, map[string]*string{"email": &email, "name": &name, "password": &password}, map[string]**string{"workspace_name": &ws}); !ok {
 		return
 	}
 	if err := s.Auth.CheckSignup(r.Context(), publiclinks.ClientIP(r)); err != nil {
@@ -245,7 +252,7 @@ func (s *Server) signup(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	var email, password string
-	if !s.strictJSON(w, r, map[string]*string{"email": &email, "password": &password}, nil) {
+	if _, ok := s.jsonObject(w, r, maxBody, serdejson.Spec{Name: "Login", Fields: []serdejson.Field{{Name: "email"}, {Name: "password"}}}, map[string]*string{"email": &email, "password": &password}, nil); !ok {
 		return
 	}
 	res, err := s.Auth.SignIn(r.Context(), email, password, publiclinks.ClientIP(r))
@@ -297,7 +304,7 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) createWorkspace(w http.ResponseWriter, r *http.Request) {
 	var name string
-	if _, ok := s.jsonObject(w, r, maxBody, map[string]*string{"name": &name}, nil); !ok {
+	if _, ok := s.jsonObject(w, r, maxBody, serdejson.Spec{Name: "NewWorkspace", Fields: []serdejson.Field{{Name: "name"}}}, map[string]*string{"name": &name}, nil); !ok {
 		return
 	}
 	u, err := s.Auth.SessionUser(r.Context(), r.Header)
@@ -365,7 +372,7 @@ func oauthClientIP(r *http.Request) string {
 // every failure).
 func (s *Server) marketToken(w http.ResponseWriter, r *http.Request) {
 	var id, secret, code string
-	raw, ok := s.jsonObject(w, r, 4<<10, map[string]*string{"client_id": &id, "client_secret": &secret, "code": &code}, nil)
+	_, ok := s.jsonObject(w, r, 4<<10, serdejson.Spec{Name: "TokenReq", Fields: []serdejson.Field{{Name: "client_id"}, {Name: "client_secret"}, {Name: "code"}}}, map[string]*string{"client_id": &id, "client_secret": &secret, "code": &code}, nil)
 	if !ok {
 		return
 	}
@@ -373,11 +380,12 @@ func (s *Server) marketToken(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusTooManyRequests)
 		return
 	}
-	if !wsRe.MatchString(id) {
-		// Rust parses other UUID spellings; let it decide (it also counts this request against its own bucket)
-		s.replay(w, r, raw)
+	canon, bad := uuidparse.Parse(id)
+	if bad != "" { // Rust: an unparsable client_id is just another invalid_grant
+		writeJSON(w, http.StatusBadRequest, []byte(`{"error":"invalid_grant"}`))
 		return
 	}
+	id = canon
 	out, ok, err := marketplace.ExchangeToken(r.Context(), s.Pool, id, secret, code)
 	switch {
 	case err != nil:
@@ -416,8 +424,12 @@ func (s *Server) githubHook(w http.ResponseWriter, r *http.Request, ws string) {
 	var payload any
 	dec := json.NewDecoder(bytes.NewReader(body))
 	dec.UseNumber()
-	if !utf8.Valid(body) || surrogateOrNUL.Match(body) || depth(body) > 100 || dec.Decode(&payload) != nil || dec.More() {
-		s.replay(w, r, body)
+	if e := serdejson.Check(body, false); e != nil {
+		s.writeErr(w, r, command.ErrInvalid("body is not JSON: "+e.Error()))
+		return
+	}
+	if surrogateOrNUL.Match(body) || dec.Decode(&payload) != nil || dec.More() {
+		s.writeErr(w, r, command.NewError(command.Internal, "database error")) // NUL escapes: Rust's jsonb insert fails
 		return
 	}
 	kind, keys, url := interpret(payload)

@@ -41,7 +41,7 @@ func (o obj) str(k string, required bool) (*string, error) {
 		return nil, nil
 	}
 	var s string
-	if json.Unmarshal(v, &s) != nil || strings.ContainsRune(s, '�') {
+	if json.Unmarshal(v, &s) != nil {
 		return nil, command.ErrFallback
 	}
 	return &s, nil

@@ -28,14 +28,14 @@ func TestReclaimExpiredLeases(t *testing.T) {
 	}
 	dead, exhausted, alive, ai := ins("event.dispatch", 2, "1 hour"), ins("hook.deliver", 5, "1 hour"), ins("event.dispatch", 1, "1 minute"), ins("ai.index_note", 1, "1 hour")
 	n, err := e.w.ReclaimWorkspace(g.c, 10*time.Minute)
-	if err != nil || n != 2 {
+	if err != nil || n != 3 {
 		t.Fatalf("reclaimed %d %v", n, err)
 	}
 	st := func(id int64) (s string) {
 		_ = g.c.Tx.QueryRow(g.c.Context, "select status from core.jobs where id = $1", id).Scan(&s)
 		return
 	}
-	if st(dead) != "queued" || st(exhausted) != "failed" || st(alive) != "running" || st(ai) != "running" {
+	if st(dead) != "queued" || st(exhausted) != "failed" || st(alive) != "running" || st(ai) != "queued" {
 		t.Fatal(st(dead), st(exhausted), st(alive), st(ai))
 	}
 	var le string

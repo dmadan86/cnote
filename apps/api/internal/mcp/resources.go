@@ -47,7 +47,7 @@ func (s *Server) listResources(w http.ResponseWriter, r *http.Request, p command
 }
 
 // parseURI is `cnote://ws/{ws}/note/{id}` or `.../view/{id}`. exotic=true: a UUID spelling Go cannot judge.
-func parseURI(uri string) (ws, kind, id string, ok, exotic bool) {
+func parseURI(uri string) (ws, kind, id string, ok bool) {
 	rest, has := strings.CutPrefix(uri, "cnote://ws/")
 	if !has {
 		return
@@ -56,26 +56,17 @@ func parseURI(uri string) (ws, kind, id string, ok, exotic bool) {
 	if len(parts) != 3 || (parts[1] != "note" && parts[1] != "view") {
 		return
 	}
-	for _, u := range []string{parts[0], parts[2]} {
-		if (len(u) == 38 && u[0] == '{') || (len(u) == 45 && strings.EqualFold(u[:9], "urn:uuid:")) {
-			return "", "", "", false, true
-		}
-	}
 	w, i := parseUUID(parts[0]), parseUUID(parts[2])
 	if w == nil || i == nil {
 		return
 	}
-	return *w, parts[1], *i, true, false
+	return *w, parts[1], *i, true
 }
 
-func (s *Server) readResource(w http.ResponseWriter, r *http.Request, p command.Principal, m message, proxy func()) {
+func (s *Server) readResource(w http.ResponseWriter, r *http.Request, p command.Principal, m message) {
 	var uri string
 	_ = json.Unmarshal(m.params["uri"], &uri)
-	ws, kind, id, ok, exotic := parseURI(uri)
-	if exotic {
-		proxy()
-		return
-	}
+	ws, kind, id, ok := parseURI(uri)
 	if !ok {
 		respondErr(w, m.id, codeInvalidParams, "bad resource uri "+uri)
 		return
@@ -95,8 +86,6 @@ func (s *Server) readResource(w http.ResponseWriter, r *http.Request, p command.
 		return err
 	})
 	switch {
-	case errors.Is(err, command.ErrFallback):
-		proxy()
 	case err != nil:
 		rpcErr(w, m.id, err)
 	default:

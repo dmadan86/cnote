@@ -82,6 +82,9 @@ func main() {
 			slog.Error("COLLAB_URL", "error", err)
 			os.Exit(1)
 		}
+		if os.Getenv("COLLAB_INTERNAL_SECRET") == "" { // note.restore renders the live document through the collab service
+			slog.Warn("COLLAB_INTERNAL_SECRET is not set: note.restore falls back to RUST_API_URL")
+		}
 	}
 	srv := &http.Server{
 		Addr:              ":" + env("PORT", "4100"),

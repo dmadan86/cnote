@@ -41,9 +41,10 @@ func (h *Handler) token(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	vals, valid := form(buf, "grant_type", "code", "redirect_uri", "client_id", "code_verifier", "refresh_token", "resource")
-	if !valid || !isForm(r) {
-		h.proxy(w, r, buf)
+	keys := []string{"grant_type", "code", "redirect_uri", "client_id", "code_verifier", "refresh_token", "resource"}
+	vals, dup := form(buf, keys...)
+	if dup != "" || !isForm(r) {
+		rejectForm(w, r, buf, keys...)
 		return
 	}
 	get := func(k string) *string {
@@ -297,9 +298,9 @@ func (h *Handler) revoke(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	vals, valid := form(buf, "token", "client_id")
-	if !valid || !isForm(r) {
-		h.proxy(w, r, buf)
+	vals, dup := form(buf, "token", "client_id")
+	if dup != "" || !isForm(r) {
+		rejectForm(w, r, buf, "token", "client_id")
 		return
 	}
 	if throttled(w, "oauth:revoke:"+clientIP(r), 30, 1) {

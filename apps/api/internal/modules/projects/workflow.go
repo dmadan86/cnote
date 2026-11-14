@@ -144,7 +144,7 @@ func asStr(raw json.RawMessage, req bool) (string, bool) {
 	if len(raw) == 0 || json.Unmarshal(raw, &s) != nil || bytes.TrimSpace(raw)[0] != '"' {
 		return "", false
 	}
-	return s, !(req && strings.ContainsRune(s, '�'))
+	return s, true
 }
 
 func (o jobj) str(k string, req bool) (string, bool) {
@@ -179,6 +179,19 @@ func asStrs(v json.RawMessage, req bool) ([]string, bool) {
 	return out, true
 }
 
+// serdeJSON is the value as serde_json::Value would hold and print it: plain integers stay, other numbers are
+// re-printed as f64 (1e2 -> 100.0); false for a number serde refuses.
+func serdeJSON(raw json.RawMessage) (json.RawMessage, bool) {
+	if plainJSON(raw) {
+		return raw, true
+	}
+	out, err := notes.NormValue(raw)
+	if err != nil || bytes.Contains(out, []byte("Inf")) {
+		return nil, false
+	}
+	return out, true
+}
+
 // plainJSON accepts JSON whose numbers survive a serde_json round trip unchanged (plain integers).
 func plainJSON(raw json.RawMessage) bool {
 	dec := json.NewDecoder(bytes.NewReader(raw))
@@ -200,7 +213,7 @@ func plainNumbers(v any) bool {
 		_, err := strconv.ParseInt(s, 10, 64)
 		return err == nil
 	case string:
-		return !strings.ContainsRune(x, '�')
+		return true
 	case []any:
 		for _, e := range x {
 			if !plainNumbers(e) {
@@ -208,8 +221,8 @@ func plainNumbers(v any) bool {
 			}
 		}
 	case map[string]any:
-		for k, e := range x {
-			if strings.ContainsRune(k, '�') || !plainNumbers(e) {
+		for _, e := range x {
+			if !plainNumbers(e) {
 				return false
 			}
 		}
@@ -363,8 +376,10 @@ func decodePostAction(raw json.RawMessage, req bool) (PostAction, bool) {
 		if !present || !ok {
 			return a, false
 		}
-		if req && !plainJSON(v) {
-			return a, false
+		if req {
+			if v, ok2 = serdeJSON(v); !ok2 {
+				return a, false
+			}
 		}
 		a.Value, ok2 = v, true
 		return a, ok2

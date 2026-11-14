@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/cnote/api/internal/serdecheck"
+	"github.com/cnote/api/internal/serdejson"
+	"github.com/cnote/api/internal/uuidparse"
 	"io"
 	"log/slog"
 	"net/http"
@@ -14,6 +17,7 @@ import (
 	"strings"
 	"sync"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -30,7 +34,7 @@ const (
 	confirmSuffix  = " Requires human approval in C Note: returns confirmation_required and a confirmation_id; after approval, call `invoke` with this command and that confirmation_id."
 )
 
-// Server is the MCP endpoint. Upstream is the Rust server: it answers what Go does not.
+// Server is the MCP endpoint.
 type Server struct {
 	Pool     *pgxpool.Pool
 	Registry *command.Registry
@@ -299,6 +303,13 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		unauthorized(w, r.Host, "invalid_token")
 		return
 	}
+	if r.Method != http.MethodPost { // rmcp's stateless service only has POST; auth came first, like Rust
+		w.Header().Set("Allow", "POST")
+		w.Header()["Content-Type"] = nil // no sniffed type: Rust sends none
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		_, _ = io.WriteString(w, "Method Not Allowed")
+		return
+	}
 	if j, e := accepts(r.Header); !j || !e {
 		text(w, http.StatusNotAcceptable, "Not Acceptable: Client must accept both application/json and text/event-stream")
 		return
@@ -309,32 +320,32 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	buf, err := io.ReadAll(io.LimitReader(r.Body, maxRequestBody+1))
-	proxy := func() {
-		r.Body = io.NopCloser(bytes.NewReader(buf))
-		s.Upstream.ServeHTTP(w, r)
-	}
 	if err != nil || len(buf) > maxRequestBody {
-		r.Body = io.NopCloser(io.MultiReader(bytes.NewReader(buf), r.Body))
-		s.Upstream.ServeHTTP(w, r)
+		text(w, http.StatusRequestEntityTooLarge, "Failed to buffer the request body: length limit exceeded")
 		return
 	}
 	m, ok := parseMessage(buf)
+	if !utf8.Valid(buf) {
+		ok = false // serde refuses invalid UTF-8; Go's decoder would repair it
+	}
 	if !ok {
-		proxy() // Rust owns every protocol corner case (bad JSON, 2026 lifecycle, batches, responses, odd params)
+		s.decline(w, r, buf) // protocol corner cases: bad JSON, unrecognized messages, responses, unknown methods
 		return
 	}
 	if vs := r.Header.Values("MCP-Protocol-Version"); len(vs) > 1 || (len(vs) == 1 && !slices.Contains(legacyVersions, vs[0])) {
-		proxy()
+		versionHeader(w, r, m.id, vs)
 		return
 	} else if len(vs) == 1 && m.method == "initialize" && vs[0] != m.initVersion {
-		proxy()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		jsonRPCStatus400(w, m.id, -32600, "Invalid Request: MCP-Protocol-Version header ("+vs[0]+") does not match initialize params.protocolVersion ("+m.initVersion+")")
 		return
 	}
 	if m.notification {
 		w.WriteHeader(http.StatusAccepted)
 		return
 	}
-	s.dispatch(w, r, p, m, proxy)
+	s.dispatch(w, r, p, m)
 }
 
 // ---------- request parsing ----------
@@ -360,11 +371,6 @@ func parseMessage(b []byte) (m message, ok bool) {
 	if !isString(o["jsonrpc"]) || json.Unmarshal(o["jsonrpc"], &ver) != nil || ver != "2.0" {
 		return m, false
 	}
-	for k := range o {
-		if k != "jsonrpc" && k != "id" && k != "method" && k != "params" {
-			return m, false
-		}
-	}
 	if !isString(o["method"]) || json.Unmarshal(o["method"], &m.method) != nil {
 		return m, false
 	}
@@ -373,8 +379,8 @@ func parseMessage(b []byte) (m message, ok bool) {
 		if json.Unmarshal(raw, &ps) != nil || ps == nil {
 			return m, false
 		}
-		if _, meta := ps["_meta"]; meta {
-			return m, false
+		if meta, has := ps["_meta"]; has && (!isObjectRaw(meta) || bytes.Contains(meta, []byte("io.modelcontextprotocol/"))) {
+			return m, false // the 2026 request-metadata lifecycle is not served (see decline)
 		}
 		m.params = ps
 	}
@@ -397,6 +403,9 @@ func parseMessage(b []byte) (m message, ok bool) {
 	case "tools/list", "resources/list", "resources/templates/list", "prompts/list":
 		for k, v := range m.params {
 			var c string
+			if k == "_meta" {
+				continue
+			}
 			if k != "cursor" || !isString(v) || json.Unmarshal(v, &c) != nil {
 				return m, false
 			}
@@ -415,6 +424,12 @@ func parseMessage(b []byte) (m message, ok bool) {
 			case "arguments":
 				var a map[string]json.RawMessage
 				if json.Unmarshal(v, &a) != nil { // null decodes to a nil map and is allowed
+					return m, false
+				}
+			case "_meta":
+			case "requestState":
+				var rs string
+				if !isString(v) || json.Unmarshal(v, &rs) != nil {
 					return m, false
 				}
 			default:
@@ -494,7 +509,7 @@ func jsonObject(b []byte) (map[string]json.RawMessage, bool) {
 
 // ---------- methods ----------
 
-func (s *Server) dispatch(w http.ResponseWriter, r *http.Request, p command.Principal, m message, proxy func()) {
+func (s *Server) dispatch(w http.ResponseWriter, r *http.Request, p command.Principal, m message) {
 	switch m.method {
 	case "ping":
 		respond(w, m.id, map[string]any{})
@@ -527,15 +542,24 @@ func (s *Server) dispatch(w http.ResponseWriter, r *http.Request, p command.Prin
 	case "resources/list":
 		s.listResources(w, r, p, m)
 	case "resources/read":
-		s.readResource(w, r, p, m, proxy)
+		s.readResource(w, r, p, m)
 	case "tools/call":
-		s.callTool(w, r, p, m, proxy)
+		s.callTool(w, r, p, m)
 	}
 }
 
-func (s *Server) callTool(w http.ResponseWriter, r *http.Request, p command.Principal, m message, proxy func()) {
+func (s *Server) callTool(w http.ResponseWriter, r *http.Request, p command.Principal, m message) {
 	var name string
 	_ = json.Unmarshal(m.params["name"], &name)
+	// the retry of an elicitation round trip: the command already ran once and created the confirmation
+	var state string
+	if json.Unmarshal(m.params["requestState"], &state) == nil {
+		if id := parseUUID(strings.TrimPrefix(state, "confirmation:")); id != nil && strings.HasPrefix(state, "confirmation:") {
+			out, _ := command.Marshal(map[string]any{"confirmation_required": true, "confirmation_id": *id})
+			respond(w, m.id, shape(out))
+			return
+		}
+	}
 	args := map[string]json.RawMessage{}
 	if raw, has := m.params["arguments"]; has {
 		var a map[string]json.RawMessage
@@ -570,7 +594,7 @@ func (s *Server) callTool(w http.ResponseWriter, r *http.Request, p command.Prin
 		if v, ok := stringOf(args["confirmation_id"]); ok {
 			confirm = parseUUID(v)
 		}
-		s.exec(w, r, p, m, e.Name, inner, idem, confirm, proxy)
+		s.exec(w, r, p, m, e.Name, inner, idem, confirm)
 	default:
 		for _, e := range s.catalog() {
 			if e.Core && toolName(e.Name) == name {
@@ -578,7 +602,7 @@ func (s *Server) callTool(w http.ResponseWriter, r *http.Request, p command.Prin
 				if v, has := m.params["arguments"]; has && string(v) != "null" {
 					raw = v
 				}
-				s.exec(w, r, p, m, e.Name, raw, nil, nil, proxy)
+				s.exec(w, r, p, m, e.Name, raw, nil, nil)
 				return
 			}
 		}
@@ -597,25 +621,20 @@ func stringOf(raw json.RawMessage) (string, bool) {
 var uuidRe = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 var uuidSimpleRe = regexp.MustCompile(`^[0-9a-fA-F]{32}$`)
 
-// parseUUID is Uuid::from_str for the spellings Go can tell apart (hyphenated or 32 hex digits); canonical lowercase.
+// parseUUID is Uuid::from_str: every spelling the uuid crate accepts, canonical lowercase; nil when it refuses.
 func parseUUID(s string) *string {
-	switch {
-	case uuidRe.MatchString(s):
-		s = strings.ToLower(s)
-	case uuidSimpleRe.MatchString(s):
-		s = strings.ToLower(s[0:8] + "-" + s[8:12] + "-" + s[12:16] + "-" + s[16:20] + "-" + s[20:])
-	default:
-		return nil
+	if c, bad := uuidparse.Parse(s); bad == "" {
+		return &c
 	}
-	return &s
+	return nil
 }
 
-// exec runs a command for a tool call and shapes the reply, including the human-approval flow. Commands only Rust
-// has are proxied; so is anything the Go handler declines (inputs whose Rust error text it does not reproduce).
+// exec runs a command for a tool call and shapes the reply, including the human-approval flow. An input the Go
+// handler declines is answered with serde's wording (serdecheck).
 func (s *Server) exec(w http.ResponseWriter, r *http.Request, p command.Principal, m message, name string, rawArgs json.RawMessage,
-	idem, confirm *string, proxy func()) {
+	idem, confirm *string) {
 	if !s.Registry.Has(name) {
-		proxy()
+		respondErr(w, m.id, codeInvalidParams, "unknown tool "+name)
 		return
 	}
 	// Meta-arguments are ours, not the command's. Like Rust, a top-level value wins and then leaves the inner
@@ -637,13 +656,14 @@ func (s *Server) exec(w http.ResponseWriter, r *http.Request, p command.Principa
 		}
 		args, _ = command.Marshal(obj)
 	}
+	args = serdecheck.NormalizeUUIDs(InputSchema(s.Registry, name), serdecheck.EmptySequence(name, args))
 	out, err := s.Registry.Execute(r.Context(), s.Pool, name, args, p, command.ExecOptions{IdempotencyKey: idem, ConfirmationID: confirm})
 	var ce *command.Error
 	switch {
 	case err == nil:
 		respond(w, m.id, shape(out))
-	case errors.Is(err, command.ErrFallback):
-		proxy()
+	case errors.Is(err, command.ErrFallback): // the handler declined an input serde would reject
+		respond(w, m.id, toolErr(command.ErrInvalid("invalid input: "+serdecheck.Describe(name, InputSchema(s.Registry, name), args))))
 	case errors.As(err, &ce):
 		respond(w, m.id, toolErr(ce))
 	default:
@@ -724,4 +744,103 @@ func (s *Server) discover(w http.ResponseWriter, id json.RawMessage, args map[st
 			"confirmation_required": h.e.Confirm, "input_schema": h.e.Schema})
 	}
 	respond(w, id, toolOK(norm(map[string]any{"commands": cmds})))
+}
+
+func isObjectRaw(b json.RawMessage) bool { return len(b) > 0 && b[0] == '{' }
+
+// versionHeader answers a request whose MCP-Protocol-Version is not one of the legacy lifecycles: an unknown value
+// is refused like rmcp does; 2026-07-28 (request-metadata lifecycle, elicitation round trips) is not served here.
+func versionHeader(w http.ResponseWriter, r *http.Request, id json.RawMessage, vs []string) {
+	v := strings.Join(vs, ", ")
+	if len(vs) == 1 && vs[0] == "2026-07-28" {
+		code, msg := -32020, "missing required Mcp-Method header"
+		if r.Header.Get("Mcp-Method") != "" {
+			code, msg = -32600, "the 2026-07-28 request-metadata lifecycle is not supported; use MCP-Protocol-Version 2025-11-25"
+		}
+		jsonRPCStatus400(w, id, code, msg)
+		return
+	}
+	text(w, http.StatusBadRequest, "Bad Request: Unsupported MCP-Protocol-Version: "+v)
+}
+
+// decline answers what the fast path does not recognize, the way rmcp's streamable-HTTP server (stateless mode)
+// does: unparsable bodies are a 415 "fail to deserialize" text, JSON-RPC responses a 400 error, notifications are
+// accepted and ignored, and every request whose method or params rmcp cannot type is "method not found" naming
+// the method. The 2026-07-28 request-metadata lifecycle (`_meta` protocolVersion) is not served.
+func (s *Server) decline(w http.ResponseWriter, r *http.Request, buf []byte) {
+	deser := func(msg string) { text(w, http.StatusUnsupportedMediaType, "fail to deserialize request body "+msg) }
+	if e := serdejson.Check(buf, false); e != nil {
+		deser(e.Error())
+		return
+	}
+	o, valid := jsonObject(buf)
+	if !valid {
+		deser("unrecognized JSON-RPC message") // arrays (batches), scalars, repeated keys
+		return
+	}
+	var ver string
+	if !isString(o["jsonrpc"]) || json.Unmarshal(o["jsonrpc"], &ver) != nil || ver != "2.0" {
+		deser("unrecognized JSON-RPC message")
+		return
+	}
+	method, hasMethod := o["method"]
+	if !hasMethod {
+		if _, res := o["result"]; res {
+			rpcStateless(w)
+			return
+		}
+		if _, er := o["error"]; er {
+			rpcStateless(w)
+			return
+		}
+		deser("unrecognized JSON-RPC message")
+		return
+	}
+	var name string
+	if !isString(method) || json.Unmarshal(method, &name) != nil {
+		deser("unrecognized JSON-RPC message")
+		return
+	}
+	var params map[string]json.RawMessage
+	if raw, has := o["params"]; has && string(raw) != "null" {
+		if json.Unmarshal(raw, &params) != nil || params == nil {
+			deser("unrecognized JSON-RPC message")
+			return
+		}
+	}
+	id, hasID := o["id"]
+	if !hasID {
+		w.WriteHeader(http.StatusAccepted)
+		return
+	}
+	if !(isString(id) || idRe.Match(id)) {
+		deser("unrecognized JSON-RPC message")
+		return
+	}
+	if meta, has := params["_meta"]; has && bytes.Contains(meta, []byte("io.modelcontextprotocol/protocolVersion")) {
+		if len(r.Header.Values("MCP-Protocol-Version")) == 0 {
+			jsonRPCStatus400(w, id, -32020, "request _meta protocolVersion requires MCP-Protocol-Version header")
+			return
+		}
+		versionHeader(w, r, id, r.Header.Values("MCP-Protocol-Version"))
+		return
+	}
+	respondErr(w, id, -32601, name)
+}
+
+func rpcStateless(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusBadRequest)
+	_, _ = io.WriteString(w, `{"jsonrpc":"2.0","error":{"code":-32600,"message":"stateless server does not accept JSON-RPC responses"}}`)
+}
+
+// jsonRPCStatus400 is a 400 JSON-RPC error with the member order rmcp writes (jsonrpc, id, error).
+func jsonRPCStatus400(w http.ResponseWriter, id json.RawMessage, code int, msg string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusBadRequest)
+	e, _ := json.Marshal(struct {
+		Code    int    `json:"code"`
+		Message string `json:"message"`
+	}{code, msg})
+	_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":` + string(id) + `,"error":` + string(e) + `}`))
 }

@@ -37,6 +37,26 @@ export async function loadDoc(
     [note, epoch],
   )
   const ids = log.rows.map((r) => String(r.id))
+  return {
+    doc: buildDoc(
+      note,
+      mdText,
+      ydoc,
+      log.rows.map((r) => r.update),
+    ),
+    epoch,
+    version,
+    ids,
+  }
+}
+
+/** The pure part of loadDoc: snapshot (or seed) plus the logged updates. Also used by the stateless render endpoint. */
+export function buildDoc(
+  note: string,
+  mdText: string,
+  ydoc: Uint8Array | null,
+  updates: Uint8Array[],
+): Y.Doc {
   let replay = !ydoc || ydoc.length === 0 // a seed is deterministic, so updates made on it apply again
   let doc: Y.Doc | null = null
   if (ydoc && ydoc.length > 0) {
@@ -60,11 +80,11 @@ export async function loadDoc(
     md.seed(doc, mdText)
   }
   if (replay) {
-    for (const r of log.rows) {
+    for (const u of updates) {
       try {
-        Y.applyUpdate(doc, r.update)
+        Y.applyUpdate(doc, u)
       } catch {}
     }
   }
-  return { doc, epoch, version, ids }
+  return doc
 }

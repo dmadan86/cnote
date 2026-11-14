@@ -3,8 +3,7 @@
 //
 // Coexistence with the Rust worker: both claim through core.claim_jobs (UPDATE ... WHERE id IN (SELECT ... FOR
 // UPDATE SKIP LOCKED)), so a job is run by exactly one of them. The Go worker only claims the kinds it can run
-// (see Kinds): jobs that call an AI provider (ai.index_note, docs.propose_edit) are left to Rust, which claims
-// every kind. Cutover is therefore: start this worker, stop Rust's.
+// (see Kinds), which is every kind Rust has. Cutover is therefore: start this worker, stop Rust's.
 package worker
 
 import (

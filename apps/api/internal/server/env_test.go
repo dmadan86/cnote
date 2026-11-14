@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -32,6 +33,24 @@ type env struct {
 	pool *pgxpool.Pool
 	rust string
 	gosv *httptest.Server
+	// proxied records every request path the Go server handed to Rust.
+	proxied *proxiedPaths
+}
+
+type proxiedPaths struct {
+	mu    sync.Mutex
+	paths []string
+}
+
+func (p *proxiedPaths) has(sub string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for _, x := range p.paths {
+		if strings.Contains(x, sub) {
+			return true
+		}
+	}
+	return false
 }
 
 func rnd() string {
@@ -71,9 +90,16 @@ func newEnv(t *testing.T, extra ...command.Command) *env {
 		t.Fatal(err)
 	}
 	reg := command.NewRegistry(append(modules.Commands(), extra...)...)
-	gosv := httptest.NewServer(server.New(pool, reg, up))
+	seen := &proxiedPaths{}
+	counted := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen.mu.Lock()
+		seen.paths = append(seen.paths, r.URL.Path)
+		seen.mu.Unlock()
+		up.ServeHTTP(w, r)
+	})
+	gosv := httptest.NewServer(server.New(pool, reg, counted))
 	t.Cleanup(gosv.Close)
-	return &env{t: t, pool: pool, rust: rust, gosv: gosv}
+	return &env{t: t, pool: pool, rust: rust, gosv: gosv, proxied: seen}
 }
 
 // who is a caller: a session cookie, or a bearer key.

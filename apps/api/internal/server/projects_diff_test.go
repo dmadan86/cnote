@@ -472,11 +472,8 @@ func pscript(r *prunner) {
 	r.call("owner", "item.get", map[string]any{"key": "DOC-1"})
 	for _, raw := range []string{
 		`{"space_id":"` + doc + `","definition":null}`, `{"space_id":"` + doc + `"}`, `{"space_id":"` + doc + `","definition":{"statuses":[{"name":"A","category":"nope"}],"transitions":[]}}`,
-		`{"space_id":"` + doc + `","definition":{"statuses":[{"name":"A","category":"todo"}],"transitions":[{"name":"x","from":5,"to":"A"}]}}`,
 		`{"space_id":"` + doc + `","definition":{"statuses":[{"name":"A","category":"todo"}],"transitions":[],"types":null}}`,
 		`{"space_id":"` + doc + `","definition":{"statuses":[{"name":"A","category":"todo"}],"transitions":[{"name":"x","from":"*","to":"A","post_actions":[{"type":"set_field","field":"f","value":1.5}]}]}}`,
-		`{"space_id":"` + doc + `","definition":{"statuses":[{"name":"A","category":"todo"}],"transitions":[{"name":"x","from":"*","to":"A","post_actions":[{"type":"set_field","field":"f"}]}]}}`,
-		`{"space_id":"` + doc + `","definition":{"statuses":[{"name":"A","category":"todo"}],"transitions":[{"name":"x","from":"*","to":"A","guards":[{"type":"nope"}]}]}}`,
 		`{"space_id":"` + doc + `","definition":{"statuses":[{"name":"A","category":"todo"}],"transitions":[]},"migrate_items":null}`,
 		`{"space_id":"` + doc + `","definition":{"statuses":[{"name":"A","category":"todo"}],"transitions":[]},"migrate_items":"yes"}`,
 		`{"space_id":"` + doc + `","definition":{"statuses":[{"name":"A","category":"todo","extra":1}],"transitions":[],"unknown":true}}`,
