@@ -20,7 +20,9 @@ import (
 
 	"github.com/cnote/api/internal/auth"
 	"github.com/cnote/api/internal/command"
+	"github.com/cnote/api/internal/mcp"
 	"github.com/cnote/api/internal/modules/publiclinks"
+	"github.com/cnote/api/internal/oauth"
 )
 
 type Server struct {
@@ -32,10 +34,17 @@ type Server struct {
 	Collab http.Handler
 	// Public serves the unauthenticated share-link API under /api/public/ (token in the path, no session).
 	Public http.Handler
+	// OAuth serves the MCP authorization server (metadata, registration, consent, token, revoke).
+	OAuth http.Handler
+	// MCP serves POST /mcp natively; what it does not understand it proxies to Upstream.
+	MCP http.Handler
 }
 
 func New(pool *pgxpool.Pool, reg *command.Registry, upstream http.Handler) *Server {
-	return &Server{Pool: pool, Registry: reg, Auth: &auth.Auth{Pool: pool}, Upstream: upstream, Public: publiclinks.NewHandler(pool, reg)}
+	a := &auth.Auth{Pool: pool}
+	return &Server{Pool: pool, Registry: reg, Auth: a, Upstream: upstream, Public: publiclinks.NewHandler(pool, reg),
+		OAuth: &oauth.Handler{Pool: pool, Auth: a, Upstream: upstream},
+		MCP:   &mcp.Server{Pool: pool, Registry: reg, Auth: a, Upstream: upstream}}
 }
 
 var wsRe = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
@@ -58,10 +67,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case strings.HasPrefix(r.URL.EscapedPath(), "/api/w/") && isFileRoute(r):
 		ws, id, _ := fileRoute(r)
 		s.files(w, r, ws, id)
+	case oauth.Handles(r):
+		s.OAuth.ServeHTTP(w, r)
 	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.EscapedPath(), "/api/w/"):
 		s.runCommand(w, r)
 	case r.Method == http.MethodPost && r.URL.Path == "/mcp":
-		s.mcp(w, r)
+		s.MCP.ServeHTTP(w, r)
 	case s.Collab != nil && strings.HasPrefix(r.URL.Path, "/collab/"):
 		slog.Debug("collab", "path", r.URL.Path)
 		s.Collab.ServeHTTP(w, r)
@@ -145,7 +156,7 @@ func (s *Server) runCommand(w http.ResponseWriter, r *http.Request) {
 		opts.ConfirmationID = &v[0]
 	}
 
-	p, err := s.Auth.PrincipalFor(r.Context(), r.Header, ws)
+	p, err := s.Auth.PrincipalForRequest(r.Context(), r.Header, r.Host, ws)
 	var out []byte
 	if err == nil {
 		out, err = s.Registry.Execute(r.Context(), s.Pool, name, input, p, opts)
