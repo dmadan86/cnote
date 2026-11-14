@@ -111,7 +111,7 @@ test('Import an HDFC-style statement, match a payment, record the rest, unmatch;
 
     // phone width, member with finance access: usable, no sideways scroll
     await member.goto(`/w/${ws}/billing/bank`)
-    await expect(member.getByLabel('Create your first bank account')).toBeVisible()
+    await expect(member.getByRole('combobox', { name: 'Bank account' })).toBeVisible() // loaded: the owner's account is listed
     const wide = await member.evaluate(() =>
       [...document.querySelectorAll('main *')]
         .filter((e) => !e.closest('nav') && e.getBoundingClientRect().right > window.innerWidth + 1)
