@@ -21,6 +21,7 @@ import (
 	"github.com/cnote/api/internal/auth"
 	"github.com/cnote/api/internal/command"
 	"github.com/cnote/api/internal/mcp"
+	"github.com/cnote/api/internal/modules/chat"
 	"github.com/cnote/api/internal/modules/publiclinks"
 	"github.com/cnote/api/internal/oauth"
 )
@@ -38,13 +39,15 @@ type Server struct {
 	OAuth http.Handler
 	// MCP serves POST /mcp natively; what it does not understand it proxies to Upstream.
 	MCP http.Handler
+	// Chat feeds GET /api/w/{ws}/chat/stream from Postgres NOTIFY.
+	Chat *chat.Hub
 }
 
 func New(pool *pgxpool.Pool, reg *command.Registry, upstream http.Handler) *Server {
 	a := &auth.Auth{Pool: pool}
 	return &Server{Pool: pool, Registry: reg, Auth: a, Upstream: upstream, Public: publiclinks.NewHandler(pool, reg),
 		OAuth: &oauth.Handler{Pool: pool, Auth: a, Upstream: upstream},
-		MCP:   &mcp.Server{Pool: pool, Registry: reg, Auth: a, Upstream: upstream}}
+		MCP:   &mcp.Server{Pool: pool, Registry: reg, Auth: a, Upstream: upstream}, Chat: chat.NewHub(pool)}
 }
 
 var wsRe = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
@@ -67,6 +70,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.inquiry(w, r)
 	case strings.HasPrefix(r.URL.Path, "/api/public/"):
 		s.Public.ServeHTTP(w, r)
+	case r.Method == http.MethodGet && chatStreamRe.MatchString(r.URL.EscapedPath()):
+		s.chatStream(w, r, chatStreamRe.FindStringSubmatch(r.URL.EscapedPath())[1])
 	case strings.HasPrefix(r.URL.EscapedPath(), "/api/w/") && isFileRoute(r):
 		ws, id, _ := fileRoute(r)
 		s.files(w, r, ws, id)

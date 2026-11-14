@@ -3,8 +3,9 @@ import { MessageSquare } from 'lucide-react'
 import Link from 'next/link'
 import { useEffect, useState } from 'react'
 import { cmd } from '@/lib/api'
+import { subscribeChat } from '@/lib/chat-stream'
 
-/** Sidebar link with the total unread count. shortcut: polled every 20s, not pushed; move to a socket if it must be instant. */
+/** Sidebar link with the total unread count, kept live by the chat stream (polling while it is down). */
 export function ChatNavLink({ ws, active }: { ws: string; active: boolean }) {
   const [unread, setUnread] = useState(0)
   useEffect(() => {
@@ -13,10 +14,16 @@ export function ChatNavLink({ ws, active }: { ws: string; active: boolean }) {
         .then((l) => setUnread(l.reduce((n, c) => n + c.unread, 0)))
         .catch(() => {})
     load()
-    const t = setInterval(load, 20_000)
+    let t: ReturnType<typeof setTimeout> | undefined
+    const stop = subscribeChat(ws, (e) => {
+      if (e.k === 'status' || e.k === 'reaction') return
+      clearTimeout(t)
+      t = setTimeout(load, 150)
+    })
     window.addEventListener('focus', load)
     return () => {
-      clearInterval(t)
+      clearTimeout(t)
+      stop()
       window.removeEventListener('focus', load)
     }
   }, [ws])
