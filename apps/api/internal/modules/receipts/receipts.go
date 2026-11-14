@@ -671,3 +671,6 @@ func list(c *command.Ctx, input json.RawMessage) (any, error) {
 	}
 	return out, command.DB(rows.Err())
 }
+
+// Create is receipt.create for another module (bank reconciliation) that already holds its own gate and confirmation.
+func Create(c *command.Ctx, input json.RawMessage) (any, error) { return create(c, input) }

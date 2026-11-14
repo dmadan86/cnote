@@ -750,3 +750,6 @@ func profitLoss(c *command.Ctx, input json.RawMessage) (any, error) {
 	return map[string]any{"from": *v.From, "to": *v.To, "income": income, "expenses": expense,
 		"total_income_minor": ti, "total_expenses_minor": te, "net_profit_minor": ti - te}, nil
 }
+
+// RecordDirect is expense.record_direct for another module (bank reconciliation) that already holds its own gate and confirmation.
+func RecordDirect(c *command.Ctx, input json.RawMessage) (any, error) { return recordDirect(c, input) }
