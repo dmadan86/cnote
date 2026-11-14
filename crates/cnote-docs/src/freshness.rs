@@ -126,11 +126,13 @@ pub fn propose_edit_job(ctx: &mut Ctx, payload: Value) -> BoxFuture<'_, CmdResul
         let Some((page, source, event_id)) = row else {
             return Ok(()); // resolved meanwhile, or already proposed (job retry)
         };
-        let (title, content, owner): (String, String, Option<Uuid>) =
-            sqlx::query_as("select title, content_md, owner_id from core.notes where id = $1")
-                .bind(page)
-                .fetch_one(&mut *ctx.tx)
-                .await?;
+        let (title, content, owner, base_version): (String, String, Option<Uuid>, i32) =
+            sqlx::query_as(
+                "select title, content_md, owner_id, version from core.notes where id = $1",
+            )
+            .bind(page)
+            .fetch_one(&mut *ctx.tx)
+            .await?;
         // Quote the source only if the page owner may read it (the proposal is shown to the owner).
         let readable = match owner {
             Some(o) => crate::bindings::readable_space_ids_for(ctx, o).await?,
@@ -189,14 +191,15 @@ pub fn propose_edit_job(ctx: &mut Ctx, payload: Value) -> BoxFuture<'_, CmdResul
             done.provider, done.model
         );
         let id: Uuid = sqlx::query_scalar(
-            "insert into docs.edit_proposals (workspace_id, note_id, flag_id, proposed_md, rationale)
-             values ($1,$2,$3,$4,$5) returning id",
+            "insert into docs.edit_proposals (workspace_id, note_id, flag_id, proposed_md, rationale, base_version)
+             values ($1,$2,$3,$4,$5,$6) returning id",
         )
         .bind(ctx.workspace_id())
         .bind(page)
         .bind(flag_id)
         .bind(done.text)
         .bind(&rationale)
+        .bind(base_version)
         .fetch_one(&mut *ctx.tx)
         .await?;
         ctx.emit(

@@ -6,7 +6,7 @@ use cnote_core::access::{assert_note_access, assert_space_access, readable_space
 use cnote_core::ai::{ChatMessage, CompletionRequest};
 use cnote_core::handler;
 use cnote_core::notes::{CreateNote, insert_note};
-use cnote_core::{CmdError, CmdResult, Command, Ctx, Role, ToolGroup};
+use cnote_core::{CmdError, CmdResult, Command, Ctx, PrincipalKind, Role, ToolGroup};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -256,8 +256,14 @@ pub struct Decide {
 
 async fn doc_proposal_decide(ctx: &mut Ctx, i: Decide) -> CmdResult<Value> {
     let me = user(ctx)?;
-    let (note_id, flag_id, md): (Uuid, Option<Uuid>, String) = sqlx::query_as(
-        "select note_id, flag_id, proposed_md from docs.edit_proposals where id = $1 and status = 'pending' for update",
+    // An agent acts for its owner but must never approve what AI drafted: that is the human review step.
+    if ctx.principal.kind == PrincipalKind::Agent {
+        return Err(CmdError::forbidden(
+            "a person must decide AI edit proposals",
+        ));
+    }
+    let (note_id, flag_id, md, base): (Uuid, Option<Uuid>, String, Option<i32>) = sqlx::query_as(
+        "select note_id, flag_id, proposed_md, base_version from docs.edit_proposals where id = $1 and status = 'pending' for update",
     )
     .bind(i.proposal_id)
     .fetch_optional(&mut *ctx.tx)
@@ -265,6 +271,15 @@ async fn doc_proposal_decide(ctx: &mut Ctx, i: Decide) -> CmdResult<Value> {
     .ok_or_else(|| CmdError::not_found("pending proposal"))?;
     page_owner(ctx, note_id, true).await?;
     if i.approve {
+        let now: i32 = sqlx::query_scalar("select version from core.notes where id = $1")
+            .bind(note_id)
+            .fetch_one(&mut *ctx.tx)
+            .await?;
+        if base.is_some_and(|b| b != now) {
+            return Err(CmdError::conflict(
+                "the page changed after this edit was proposed; reject it and wait for a fresh proposal",
+            ));
+        }
         ctx.call("note.update", json!({"id": note_id, "content_md": md}))
             .await?;
         if let Some(f) = flag_id {

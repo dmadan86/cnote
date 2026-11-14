@@ -347,11 +347,16 @@ func docProposalDecide(c *command.Ctx, input json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	// An agent acts for its owner but must never approve what AI drafted: that is the human review step.
+	if c.Principal.Kind == command.KindAgent {
+		return nil, command.ErrForbidden("a person must decide AI edit proposals")
+	}
 	var noteID, md string
 	var flagID *string
+	var base *int32
 	err = c.Tx.QueryRow(c.Context,
-		"select note_id::text, flag_id::text, proposed_md from docs.edit_proposals where id = $1::uuid and status = 'pending' for update", pid).
-		Scan(&noteID, &flagID, &md)
+		"select note_id::text, flag_id::text, proposed_md, base_version from docs.edit_proposals where id = $1::uuid and status = 'pending' for update", pid).
+		Scan(&noteID, &flagID, &md, &base)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, command.ErrNotFound("pending proposal")
 	}
@@ -362,6 +367,13 @@ func docProposalDecide(c *command.Ctx, input json.RawMessage) (any, error) {
 		return nil, err
 	}
 	if approve {
+		var now int32
+		if err := c.Tx.QueryRow(c.Context, "select version from core.notes where id = $1::uuid", noteID).Scan(&now); err != nil {
+			return nil, err
+		}
+		if base != nil && *base != now {
+			return nil, command.ErrConflict("the page changed after this edit was proposed; reject it and wait for a fresh proposal")
+		}
 		body, err := command.Marshal(map[string]any{"id": noteID, "content_md": md})
 		if err != nil {
 			return nil, err
