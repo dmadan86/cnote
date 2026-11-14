@@ -7,6 +7,7 @@ import (
 
 	"github.com/cnote/api/internal/command"
 	"github.com/cnote/api/internal/modules/admin"
+	"github.com/cnote/api/internal/modules/ai"
 	"github.com/cnote/api/internal/modules/approvals"
 	"github.com/cnote/api/internal/modules/audit"
 	"github.com/cnote/api/internal/modules/bank"
@@ -19,6 +20,7 @@ import (
 	"github.com/cnote/api/internal/modules/files"
 	"github.com/cnote/api/internal/modules/home"
 	"github.com/cnote/api/internal/modules/hr"
+	"github.com/cnote/api/internal/modules/importers"
 	"github.com/cnote/api/internal/modules/inventory"
 	"github.com/cnote/api/internal/modules/leads"
 	"github.com/cnote/api/internal/modules/marketplace"
@@ -32,6 +34,7 @@ import (
 	"github.com/cnote/api/internal/modules/quotes"
 	"github.com/cnote/api/internal/modules/receipts"
 	"github.com/cnote/api/internal/modules/recurring"
+	"github.com/cnote/api/internal/modules/revisions"
 	"github.com/cnote/api/internal/modules/sharing"
 	"github.com/cnote/api/internal/modules/timelog"
 )
@@ -65,6 +68,9 @@ func Commands() []command.Command {
 	cmds = append(cmds, files.Commands()...)
 	cmds = append(cmds, bank.Commands()...)
 	cmds = append(cmds, inventory.Commands()...)
+	cmds = append(cmds, ai.Commands()...)
+	cmds = append(cmds, importers.Commands()...)
+	cmds = append(cmds, revisions.Commands()...)
 	cmds = append(cmds, oauthapps.Commands()...)
 	return withMeta(markFinance(approvals.Wire(cmds)))
 }

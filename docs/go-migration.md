@@ -694,3 +694,38 @@ accounts in `internal/auth/accounts.go`). OAuth (`/oauth/*`, `/api/oauth/*`) and
   The bucket is in-process like Rust's, so a client can briefly use both servers' budgets.
 - GitHub webhook: the HMAC-SHA256 signature is checked in constant time before the body is parsed; evidence is recorded
   through the Go `evidence.record` as the system principal. A signed body that is not JSON is replayed to Rust.
+## AI, hooks, revisions reads, connected apps, imports (wave 3, `port/ai`)
+
+Native in Go now (same bytes as Rust, differential tests in `internal/server/ai_diff_test.go` and `ports_diff_test.go`):
+`search.hybrid`, `ai.summarize|extract_tasks|draft|set_provider|get_provider|clear_provider`, `doc.ask`, `doc.capture`,
+`hook.list|create|set_enabled|delete|test`, `note.revisions`, `note.revision`, `oauth_app.list|revoke`,
+`import.start|status|list`. Packages: `modules/ai` (providers, guard, crypto, redaction, hooks), `docs/ask.go`,
+`modules/revisions`, `modules/oauthapps`, `modules/importers`.
+
+- **Provider config is unchanged**: process provider from `ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL`, `OPENAI_API_KEY`,
+  `OPENAI_BASE_URL`, `OPENAI_EMBEDDING_MODEL`, `AI_MODEL` (none set = the deterministic local provider); workspace
+  providers in `ai.provider_config`. `doc.ask` and `doc.capture` use the process provider with no audit and no
+  metering, exactly like Rust; the `ai.*` commands and `search.hybrid` resolve the workspace provider, redact when
+  `settings.ai_redact_pii` is on, write `ai.audit`, and meter `ai.tokens_in|out` into `core.usage` only on the
+  platform provider (a workspace key is never metered).
+- **Private-endpoint guard** (`AI_ALLOW_PRIVATE_ENDPOINTS=1|true` lifts it, as in Rust): https only, no credentials, every
+  resolved address public; checked when a URL is saved and again before every call (403 at call time). Hooks use the
+  same guard worded for `url`. No redirects are followed.
+- **Keys**: AES-256-GCM, `nonce || ciphertext`, workspace id as AAD, key from `CNOTE_MASTER_KEY` (base64, 32 bytes).
+  Rust and Go read each other's rows (tested both ways). Keys and hook signing secrets are never returned except the
+  hook signing secret once at `hook.create` (`ReturnsSecret`, so never replayed from idempotency).
+- **Still in the Rust worker** (not commands): `ai.index_note` (embeds notes on `note.created|updated`), the `""` event
+  handler that queues `hook.deliver`, the `hook.deliver` job with its retries, the `hooks.schedule` sweep, and the
+  `import.run` job. Go enqueues the same `import.run` payload (`{"import_id"}`) and writes the same
+  `importers.jobs.input`; the twin test lets the Rust worker run Go-enqueued imports and compares the reports.
+- **`import.start`** counts records itself for trello, notion/confluence (JSON pages and a single Markdown page) and
+  csv. Anything it cannot count exactly like Rust returns `ErrFallback` and Rust answers: Jira (content or live
+  fetch), HTML pages, invalid JSON or CSV, a BOM or bare CR in CSV, unknown source, malformed `mapping`.
+- **`hook.test` MCP delivery** is a small streamable-HTTP client (initialize, initialized, `tools/call` with the same
+  `_meta.progressToken`). The `last_error` text for an MCP failure mimics rmcp for a rejected initialize and approximates
+  it for other failures.
+- **Revisions**: `note.revisions` and `note.revision` are native. `note.restore` stays in Rust: it renders the live Yjs
+  document to Markdown (yrs), which Go cannot do.
+- Known approximations: `Redact` uses Go's ASCII `\b`/`\d` (Rust's are Unicode); `HashEmbed` lowercases rune by rune
+  (no final-sigma rule); `search.hybrid` ties (chunks at equal vector distance) rank arbitrarily in Rust as well, so the
+  differential test compares those queries as sets and compares exact bytes elsewhere.
