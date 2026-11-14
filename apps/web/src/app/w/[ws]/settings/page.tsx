@@ -35,7 +35,12 @@ type TabName = (typeof TABS)[number]
 
 type Ws = {
   name: string
-  settings: { agent_tool_groups?: string[]; business_type?: string; company_size?: string }
+  settings: {
+    agent_tool_groups?: string[]
+    business_type?: string
+    company_size?: string
+    chat_agents?: boolean
+  }
 }
 type Key = {
   id: string
@@ -309,6 +314,29 @@ function GroupsTab({ ws }: { ws: string }) {
           </span>
         </label>
       ))}
+      <label className="flex cursor-pointer items-start gap-2 rounded px-2 py-1.5 hover:bg-hover">
+        <input
+          type="checkbox"
+          checked={data.settings.chat_agents === true}
+          className="mt-1"
+          onChange={async (e) => {
+            try {
+              await cmd(ws, 'workspace.update', { settings: { chat_agents: e.target.checked } })
+              setErr(undefined)
+              reload()
+            } catch (x) {
+              setErr((x as Error).message)
+            }
+          }}
+        />
+        <span>
+          <span className="font-medium">Agents in chat</span>
+          <span className="block text-[12px] text-muted">
+            Let agents be added to chat channels by their owner or an admin. They post as themselves, marked
+            as agents, and only see the channels they were added to, never direct messages. Off by default.
+          </span>
+        </span>
+      </label>
       <ErrorText error={err} />
     </fieldset>
   )
