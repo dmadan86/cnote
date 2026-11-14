@@ -10,10 +10,10 @@ import (
 	"github.com/cnote/api/internal/hooks"
 	"github.com/cnote/api/internal/importers"
 	"github.com/cnote/api/internal/jobs"
+	"github.com/cnote/api/internal/modules/ai"
 )
 
-// aiIndexOnNoteEvent is cnote-ai's on_note_event: queue an embedding refresh. The job itself (ai.index_note) calls
-// the embedding provider and stays with the Rust worker until the AI port lands.
+// aiIndexOnNoteEvent is cnote-ai's on_note_event: queue an embedding refresh (job ai.index_note).
 func aiIndexOnNoteEvent(c *command.Ctx, e jobs.Event) error {
 	if e.NoteID == nil {
 		return nil
@@ -23,9 +23,6 @@ func aiIndexOnNoteEvent(c *command.Ctx, e jobs.Event) error {
 
 // New builds the worker with every handler of the Rust modules, in Rust's registration order (core, docs,
 // finance, projects, ai, importers).
-//
-// Left to the Rust worker (they call an AI model provider): job kinds ai.index_note and docs.propose_edit. The Go
-// worker never claims them, so while Rust runs they are processed there; with Rust stopped they stay queued.
 func New(pool *pgxpool.Pool, reg *command.Registry) *Worker {
 	w := newWorker(pool, reg)
 	w.OnEvent("mention.created", mentionEmail)
@@ -35,6 +32,8 @@ func New(pool *pgxpool.Pool, reg *command.Registry) *Worker {
 	w.OnEvent("note.created", aiIndexOnNoteEvent)
 	w.OnEvent("note.updated", aiIndexOnNoteEvent)
 	w.OnEvent("", hooks.OnEvent)
+	w.OnJob("ai.index_note", ai.IndexJob)
+	w.OnJob("docs.propose_edit", proposeEditJob)
 	w.OnJob("hook.deliver", hooks.DeliverJob)
 	w.OnJob("import.run", importers.RunJob)
 	day := 24 * time.Hour
