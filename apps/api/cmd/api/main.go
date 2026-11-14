@@ -17,6 +17,7 @@ import (
 	"github.com/cnote/api/internal/modules"
 	"github.com/cnote/api/internal/modules/approvals"
 	"github.com/cnote/api/internal/modules/billing"
+	"github.com/cnote/api/internal/modules/files"
 	"github.com/cnote/api/internal/modules/recurring"
 	"github.com/cnote/api/internal/proxy"
 	"github.com/cnote/api/internal/server"
@@ -64,6 +65,12 @@ func main() {
 	if err != nil || approvalSecs < 0 {
 		slog.Error("invalid APPROVAL_SWEEP_SECS")
 		os.Exit(1)
+	}
+	if on, err := files.ConfigureFromEnv(); err != nil {
+		slog.Error("file storage", "error", err)
+		os.Exit(1)
+	} else if on {
+		slog.Info("file storage: S3")
 	}
 	approvals.Start(ctx, pool, time.Duration(approvalSecs)*time.Second, billing.TodayIST)
 	if *withWorker {

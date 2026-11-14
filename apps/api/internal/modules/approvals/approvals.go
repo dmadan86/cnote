@@ -414,8 +414,8 @@ type request struct {
 }
 
 // slotFor is the approver slot of the current step this person may fill, or false. Nobody decides their own request
-// or the same step twice; a named slot is theirs, admins and owners fill any open slot, and so does the fallback
-// approver after an escalation.
+// or the same step twice; a named slot (a member or a resolved department head) is theirs alone, admins fill it only
+// after escalation, admins fill open role slots, and so does the fallback approver after an escalation.
 func slotFor(p command.Principal, requester string, st command.ApprovalStep, taken map[int]string, approver *string, escalated bool) (int, bool) {
 	uid := *p.UserID
 	if requester == uid {
@@ -431,7 +431,7 @@ func slotFor(p command.Principal, requester string, st command.ApprovalStep, tak
 		if _, done := taken[i]; done {
 			continue
 		}
-		if open < 0 {
+		if open < 0 && (a.Kind != "user" || escalated) {
 			open = i
 		}
 		if a.Kind == "user" && a.UserID == uid || a.Kind == "role" && (a.Role == "admin" && p.Role >= command.Admin || a.Role == "owner" && p.Role >= command.Owner) {
