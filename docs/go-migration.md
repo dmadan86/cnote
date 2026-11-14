@@ -405,3 +405,43 @@ Final race-suite result: 55 top-level tests / 357 including subtests passed, zer
 input returns an `invalid` error from Go rather than `ErrFallback`. The Rust MCP endpoint (`/mcp`) does not list
 them yet, so MCP clients cannot call them until the tool list is generated from the Go registry. Quotations never
 post to the ledger; their numbers (`QT/<FY>/<n>`) come from their own `quote:<FY>` series in `billing.sequences`.
+
+## QA coverage (CN-QA-001)
+
+Go integration tests against real Postgres as the app role (`apps/api/internal/server`, `qa_*_test.go`; Rust on
+:4000 is the reference where a command is ported):
+
+- `qa_rls_test.go`: DB-001, DB-002, DB-012. Discovers every table with a `workspace_id` column (all schemas) and
+  checks RLS, empty view without a tenant GUC, no cross-tenant read/insert/update/delete, and that pooled
+  connections never keep a tenant (pool of 1 and a concurrent pool of 2). Only `core.oauth_codes`,
+  `core.oauth_grants` and `core.app_install_codes` are exempt (read before a tenant is known; allowlist in the test).
+- `qa_integrity_test.go`: DB-003, DB-004, DB-005, section 5.2 invariants. Commands refuse another tenant's ids;
+  direct SQL as the app role is refused by the composite FKs of `migrations/0980_qa_constraints.sql`; a catalog
+  check fails any new tenant-to-tenant FK that lacks `workspace_id`.
+- `qa_revisions_test.go`: RV-001, RV-006, RV-008, DB-007, DB-008, DB-011 (immutability, unique numbers, concurrent
+  edits/restores, restore authorisation).
+- `qa_authz_test.go`: section 8 matrix generated from the Go registry (127 commands x guest, member, admin, owner,
+  two API keys, agent key) and compared with Rust; SEC-007 guest share revocation; SEC-014 agent escalation.
+- `qa_api_test.go`: API-002, API-007, API-009, API-012, API-013.
+
+Findings fixed in this pass:
+
+- **Cross-workspace references.** Every FK was single-column, and Postgres checks FKs as the table owner, so RLS did
+  not stop a tenant pointing `parent_id`, a relation, a comment, a deal contact or an invoice line at another
+  tenant's id. `view.create` with a foreign `space_id` returned 200 in Go and Rust. Migration 0980 turns the 58
+  tenant-to-tenant FKs into `(workspace_id, col)` FKs (same names and delete actions; SET NULL uses the column
+  list form). A foreign id now fails as `invalid` (23503), the same answer as a random id. Rust gets the same
+  protection from the schema (its `view.create` now answers with its database error instead of storing the row).
+  Not covered yet: `billing.recurring_*` and `billing.purchase_*` (0960/0970), skipped explicitly in the catalog test.
+  The migration fails loudly if existing data already crosses workspaces.
+- **Oversized body (API-009).** Rust answers 413 `Failed to buffer the request body: length limit exceeded` before
+  auth and drops the connection; the Go proxy replay turned that into 502. Go now sends the same 413 itself for
+  JSON bodies over 2 MiB on any `/api/w/{ws}/commands/{name}` path.
+- **Request id (API-013).** Go adds `X-Request-Id` (echoes a sane client value, else random) to every response and
+  logs it on internal errors. Rust sends none; the header is additive and bodies stay byte-identical. The
+  unreachable non-command error path now answers `internal error` instead of the raw cause (Rust echoes the cause).
+
+Open, not fixed (see test skips and the QA report): API-007 reusing an idempotency key with a different payload
+returns the first result on both servers (needs a payload hash in `core.idempotency` and a Rust change);
+`core.events` is append-only, so hard-deleting a note that has events fails (notes are soft-deleted in practice);
+SEC-014 denials are not written to the event log; the three OAuth/install tables are readable by any tenant session.
