@@ -143,3 +143,14 @@ Small, read-heavy, few events first; money, outbound and background-coupled last
   `core.events` and `core.jobs` written by Go.
 - The Go server needs `DATABASE_URL`; `RUST_API_URL` must be reachable or non-native traffic returns 502.
 - pgx v5.8.0 is the newest release that builds with Go 1.24; later pgx releases require Go 1.25.
+
+## Module note: sharing (ported)
+
+`note.permissions`, `note.restrict`, `note.share`, `note.unshare`, `note.shared_with_me` run natively
+(`apps/api/internal/modules/sharing`), same SQL and events (`note.restricted`, `note.shared`,
+`note.unshared`) as `sharing.rs`. Inputs are decoded with exact-case keys (serde is case sensitive,
+`encoding/json` is not); anything serde would reject falls back to Rust. Tests: `internal/server/sharing_test.go`
+(port of `page_permissions.rs`; unported commands it uses are proxied to Rust) and
+`TestDifferentialSharingWrites` (twin fixtures, responses plus permission rows and events compared).
+The differential test waits for the Rust worker to drain jobs (`settle`) before comparing `note.history`,
+because the worker adds asynchronous `doc.bindings_synced` events.
