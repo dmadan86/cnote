@@ -3,6 +3,7 @@ import { Plus } from 'lucide-react'
 import Link from 'next/link'
 import { useState } from 'react'
 import { ApprovalBanner } from '@/components/approvals/banner'
+import { BranchSelect } from '@/components/company/branch-filter'
 import { useShell } from '@/components/shell'
 import { btn, btnPrimary, ErrorText, Field, inputCls, Modal, Pill } from '@/components/ui'
 import { CmdFailure } from '@/lib/api'
@@ -474,7 +475,11 @@ type Tab = 'mine' | 'approve' | 'reimburse'
 export function ExpenseList() {
   const { ws, me, spaces } = useShell()
   const admin = ['owner', 'admin'].includes(me.workspaces.find((w) => w.id === ws)?.role ?? '')
-  const { data, error, reload } = useCmd<Expense[]>(ws, 'expense.list', { limit: 500 })
+  const [branch, setBranch] = useState('')
+  const { data, error, reload } = useCmd<Expense[]>(ws, 'expense.list', {
+    limit: 500,
+    ...(branch && { branch_id: branch }),
+  })
   const [tab, setTab] = useState<Tab>('mine')
   const [adding, setAdding] = useState<'claim' | 'direct'>()
   const [open, setOpen] = useState<string>()
@@ -508,6 +513,7 @@ export function ExpenseList() {
             </button>
           ))}
         </div>
+        <BranchSelect ws={ws} value={branch} onChange={setBranch} />
         <div className="ml-auto flex gap-2">
           {admin && (
             <button

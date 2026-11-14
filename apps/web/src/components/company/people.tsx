@@ -6,6 +6,7 @@ import { useShell } from '@/components/shell'
 import { Avatar, btn, btnPrimary, ErrorText, Field, inputCls, Modal, Pill } from '@/components/ui'
 import { cmd } from '@/lib/api'
 import { useCmd } from '@/lib/hooks'
+import { type Branch, useBranches } from './branch-filter'
 
 export type Person = {
   user_id: string
@@ -14,6 +15,8 @@ export type Person = {
   role: string
   department_id: string | null
   department: string | null
+  branch_id: string | null
+  branch: string | null
   manager_user_id: string | null
   manager_name: string | null
   designation: string | null
@@ -29,6 +32,7 @@ export function PeopleDirectory() {
   const { ws, me } = useShell()
   const people = useCmd<Person[]>(ws, 'people.list')
   const depts = useCmd<Dept[]>(ws, 'department.list')
+  const { branches, reload: reloadBranches } = useBranches(ws)
   const [q, setQ] = useState('')
   const [dept, setDept] = useState('')
   const [inactive, setInactive] = useState(false)
@@ -38,6 +42,7 @@ export function PeopleDirectory() {
   const reload = () => {
     people.reload()
     depts.reload()
+    reloadBranches()
   }
   const rows = (people.data ?? []).filter(
     (p) =>
@@ -119,6 +124,7 @@ export function PeopleDirectory() {
         </ul>
       </section>
       {admin && <Departments ws={ws} depts={depts.data ?? []} onChange={reload} />}
+      {admin && <Branches ws={ws} branches={branches} onChange={reload} />}
       {edit && (
         <EditPerson
           key={edit.user_id}
@@ -126,6 +132,7 @@ export function PeopleDirectory() {
           person={edit}
           all={people.data ?? []}
           depts={depts.data ?? []}
+          branches={branches}
           meId={me.user.id}
           onClose={() => setEdit(undefined)}
           onSaved={() => {
@@ -143,6 +150,7 @@ function EditPerson({
   person: p,
   all,
   depts,
+  branches,
   meId,
   onClose,
   onSaved,
@@ -151,6 +159,7 @@ function EditPerson({
   person: Person
   all: Person[]
   depts: Dept[]
+  branches: Branch[]
   meId: string
   onClose: () => void
   onSaved: () => void
@@ -178,6 +187,7 @@ function EditPerson({
             user_id: p.user_id,
             ...(p.role !== 'owner' && { role: t('role') }),
             department_id: t('department_id') || null,
+            branch_id: t('branch_id') || null,
             manager_user_id: t('manager_user_id') || null,
             designation: t('designation') || null,
             phone: t('phone') || null,
@@ -212,6 +222,20 @@ function EditPerson({
               </select>
             )}
           </Field>
+          {branches.length > 0 && (
+            <Field label="Branch">
+              {(id) => (
+                <select id={id} name="branch_id" defaultValue={p.branch_id ?? ''} className={inputCls}>
+                  <option value="">None</option>
+                  {branches.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.name}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </Field>
+          )}
           <Field label="Reports to">
             {(id) => (
               <select
@@ -380,6 +404,128 @@ function Departments({ ws, depts, onChange }: { ws: string; depts: Dept[]; onCha
             onClick={() => del && run('department.delete', { id: del.id })}
           >
             Delete department
+          </button>
+          <button type="button" className={btn} onClick={() => setDel(undefined)}>
+            Cancel
+          </button>
+        </div>
+      </Modal>
+    </section>
+  )
+}
+
+function Branches({ ws, branches, onChange }: { ws: string; branches: Branch[]; onChange: () => void }) {
+  const [err, setErr] = useState<string>()
+  const [del, setDel] = useState<Branch>()
+  const run = async (name: string, input: object) => {
+    try {
+      await cmd(ws, name, input)
+      setErr(undefined)
+      setDel(undefined)
+      onChange()
+    } catch (x) {
+      setErr((x as Error).message)
+      setDel(undefined)
+    }
+  }
+  return (
+    <section aria-label="Branches" className="space-y-3">
+      <h2 className="text-[14px] font-semibold">Branches</h2>
+      <p className="text-[13px] text-muted">
+        A branch with its own GSTIN prints that GSTIN on its invoices and uses its state for place of supply.
+        Without one, invoices use the company GSTIN.
+      </p>
+      <ul className="space-y-2">
+        {branches.map((b) => (
+          <li key={b.id} className="rounded-md border border-line p-3">
+            <form
+              className="grid gap-2 sm:grid-cols-[1fr_1fr_12rem_auto]"
+              onSubmit={(e) => {
+                e.preventDefault()
+                const f = new FormData(e.currentTarget)
+                run('branch.update', {
+                  id: b.id,
+                  name: String(f.get('name')),
+                  address: String(f.get('address')),
+                  gstin: String(f.get('gstin')).toUpperCase(),
+                })
+              }}
+            >
+              <input
+                aria-label={`Name of ${b.name}`}
+                name="name"
+                defaultValue={b.name}
+                className={inputCls}
+              />
+              <input
+                aria-label={`Address of ${b.name}`}
+                name="address"
+                placeholder="Address"
+                defaultValue={b.address ?? ''}
+                className={inputCls}
+              />
+              <input
+                aria-label={`GSTIN of ${b.name}`}
+                name="gstin"
+                placeholder="GSTIN (optional)"
+                defaultValue={b.gstin ?? ''}
+                className={inputCls}
+              />
+              <div className="flex items-center gap-2">
+                <button type="submit" className={btn}>
+                  Save
+                </button>
+                <button
+                  type="button"
+                  className={btn}
+                  aria-label={`Delete ${b.name}`}
+                  onClick={() => setDel(b)}
+                >
+                  Delete
+                </button>
+              </div>
+            </form>
+            <p className="mt-1 text-[12px] text-muted">{b.members} people</p>
+          </li>
+        ))}
+        {branches.length === 0 && <li className="text-[13px] text-muted">No branches yet.</li>}
+      </ul>
+      <form
+        className="grid gap-2 sm:grid-cols-[1fr_1fr_12rem_auto] sm:items-end"
+        onSubmit={async (e) => {
+          e.preventDefault()
+          const form = e.currentTarget
+          const f = new FormData(form)
+          await run('branch.create', {
+            name: String(f.get('name')),
+            ...(f.get('address') && { address: String(f.get('address')) }),
+            ...(f.get('gstin') && { gstin: String(f.get('gstin')).toUpperCase() }),
+          })
+          form.reset()
+        }}
+      >
+        <Field label="New branch">
+          {(id) => <input id={id} name="name" required className={inputCls} />}
+        </Field>
+        <Field label="Address">{(id) => <input id={id} name="address" className={inputCls} />}</Field>
+        <Field label="GSTIN (optional)">{(id) => <input id={id} name="gstin" className={inputCls} />}</Field>
+        <button type="submit" className={btnPrimary}>
+          Add branch
+        </button>
+      </form>
+      <ErrorText error={err} />
+      <Modal open={!!del} onClose={() => setDel(undefined)} title={`Delete ${del?.name ?? ''}?`}>
+        <p className="mb-3 text-[13px]">
+          {del?.members ? `${del.members} people will be left without a branch. ` : ''}A branch that already
+          raised an issued invoice cannot be deleted.
+        </p>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            className={btnPrimary}
+            onClick={() => del && run('branch.delete', { id: del.id })}
+          >
+            Delete branch
           </button>
           <button type="button" className={btn} onClick={() => setDel(undefined)}>
             Cancel

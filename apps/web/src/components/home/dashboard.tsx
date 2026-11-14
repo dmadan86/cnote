@@ -3,6 +3,7 @@ import { AlertTriangle } from 'lucide-react'
 import Link from 'next/link'
 import { useState } from 'react'
 import { money } from '@/components/billing/fmt'
+import { BranchSelect } from '@/components/company/branch-filter'
 import { CheckInCard } from '@/components/hr/checkin'
 import { useShell } from '@/components/shell'
 import { useCmd } from '@/lib/hooks'
@@ -69,7 +70,8 @@ function TileLink({
 
 export function HomeDashboard() {
   const { ws } = useShell()
-  const { data, error } = useCmd<Summary>(ws, 'home.summary')
+  const [branch, setBranch] = useState('')
+  const { data, error } = useCmd<Summary>(ws, 'home.summary', branch ? { branch_id: branch } : {})
   const [all, setAll] = useState(false)
   const base = `/w/${ws}`
   if (error)
@@ -199,6 +201,7 @@ export function HomeDashboard() {
   return (
     <div className="space-y-6">
       <CheckInCard />
+      <BranchSelect ws={ws} value={branch} onChange={setBranch} allLabel="All branches (invoices)" />
       {tiles.length > 0 && (
         <section aria-label="Today at a glance">
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">{tiles}</div>

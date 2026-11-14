@@ -64,6 +64,12 @@ function Row({ a, ws, done }: { a: Approval; ws: string; done: () => void }) {
           <Pill tone={tone[a.status]}>{word[a.status]}</Pill>
         </div>
       </div>
+      {a.status === 'pending' && a.steps.length > 1 && (
+        <p className="text-[13px]">
+          Step {a.step + 1} of {a.steps.length}
+          {a.decisions.length > 0 && ` · approved by ${a.decisions.map((d) => d.name).join(', ')}`}
+        </p>
+      )}
       {a.reason && <p className="text-[13px]">Reason: {a.reason}</p>}
       {(a.can_decide || a.can_cancel) && !rejecting && (
         <div className="flex flex-wrap gap-2">
