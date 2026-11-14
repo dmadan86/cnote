@@ -198,19 +198,20 @@ func load(c *command.Ctx, id string, lock bool) (row, error) {
 }
 
 type lineOut struct {
-	ID           string  `json:"id"`
-	Position     int32   `json:"position"`
-	Description  string  `json:"description"`
-	HsnSac       *string `json:"hsn_sac"`
-	Quantity     string  `json:"quantity"`
-	UnitPrice    int64   `json:"unit_price_minor"`
-	GSTRateBP    int32   `json:"gst_rate_bp"`
-	TaxableMinor int64   `json:"taxable_minor"`
-	CGSTMinor    int64   `json:"cgst_minor"`
-	SGSTMinor    int64   `json:"sgst_minor"`
-	IGSTMinor    int64   `json:"igst_minor"`
-	AccountCode  *string `json:"account_code"`
-	StockItemID  *string `json:"stock_item_id,omitempty"`
+	ID           string          `json:"id"`
+	Position     int32           `json:"position"`
+	Description  string          `json:"description"`
+	HsnSac       *string         `json:"hsn_sac"`
+	Quantity     string          `json:"quantity"`
+	UnitPrice    int64           `json:"unit_price_minor"`
+	GSTRateBP    int32           `json:"gst_rate_bp"`
+	TaxableMinor int64           `json:"taxable_minor"`
+	CGSTMinor    int64           `json:"cgst_minor"`
+	SGSTMinor    int64           `json:"sgst_minor"`
+	IGSTMinor    int64           `json:"igst_minor"`
+	AccountCode  *string         `json:"account_code"`
+	StockItemID  *string         `json:"stock_item_id,omitempty"`
+	Tracking     json.RawMessage `json:"tracking,omitempty"`
 }
 
 type paymentOut struct {
@@ -250,7 +251,7 @@ func detailOf(c *command.Ctx, id string) (detail, error) {
 	}
 	rows, err := c.Tx.Query(c.Context,
 		`select id::text, position, description, hsn_sac, quantity::text, unit_price_minor, gst_rate_bp, taxable_minor,
-		   cgst_minor, sgst_minor, igst_minor, account_code, stock_item_id::text
+		   cgst_minor, sgst_minor, igst_minor, account_code, stock_item_id::text, tracking
 		 from billing.purchase_bill_lines where bill_id = $1::uuid order by position`, id)
 	if err != nil {
 		return d, command.DB(err)
@@ -258,7 +259,7 @@ func detailOf(c *command.Ctx, id string) (detail, error) {
 	for rows.Next() {
 		var l lineOut
 		if err := rows.Scan(&l.ID, &l.Position, &l.Description, &l.HsnSac, &l.Quantity, &l.UnitPrice, &l.GSTRateBP,
-			&l.TaxableMinor, &l.CGSTMinor, &l.SGSTMinor, &l.IGSTMinor, &l.AccountCode, &l.StockItemID); err != nil {
+			&l.TaxableMinor, &l.CGSTMinor, &l.SGSTMinor, &l.IGSTMinor, &l.AccountCode, &l.StockItemID, &l.Tracking); err != nil {
 			rows.Close()
 			return d, command.DB(err)
 		}

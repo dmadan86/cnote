@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -40,6 +41,9 @@ func Commands() []command.Command {
 		mk("stock.transfer", mi, command.Member, transfer),
 		mk("stock.movement_list", rd, command.Member, movementList),
 		mk("report.stock_valuation", rd, command.Member, valuation),
+		mk("stock_batch.list", rd, command.Member, batchList),
+		mk("stock_serial.list", rd, command.Member, serialList_),
+		mk("report.stock_expiry", rd, command.Member, expiryReport),
 	}
 }
 
@@ -160,18 +164,19 @@ type itemOut struct {
 	Active       bool       `json:"active"`
 	OnHand       string     `json:"on_hand"`
 	Low          bool       `json:"low"`
+	Tracking     string     `json:"tracking"`
 	CreatedAt    command.Ts `json:"created_at"`
 }
 
 // itemSelect: on hand is derived from the ledger (RLS scopes the movements to the workspace).
 const itemSelect = `select i.id::text, i.sku, i.name, i.hsn_sac, i.unit, i.gst_rate_bp, i.price_minor, i.reorder_level::text, i.active,
-	coalesce(s.q, 0)::text, i.active and i.reorder_level > 0 and coalesce(s.q, 0) <= i.reorder_level, i.created_at
+	coalesce(s.q, 0)::text, i.active and i.reorder_level > 0 and coalesce(s.q, 0) <= i.reorder_level, i.tracking, i.created_at
 	from inventory.items i left join (select item_id, sum(qty) q from inventory.movements group by item_id) s on s.item_id = i.id `
 
 func scanItem(r pgx.Row) (itemOut, error) {
 	var o itemOut
 	var at time.Time
-	err := r.Scan(&o.ID, &o.SKU, &o.Name, &o.HSNSAC, &o.Unit, &o.GSTRateBP, &o.PriceMinor, &o.ReorderLevel, &o.Active, &o.OnHand, &o.Low, &at)
+	err := r.Scan(&o.ID, &o.SKU, &o.Name, &o.HSNSAC, &o.Unit, &o.GSTRateBP, &o.PriceMinor, &o.ReorderLevel, &o.Active, &o.OnHand, &o.Low, &o.Tracking, &at)
 	o.CreatedAt = command.Ts(at)
 	return o, err
 }
@@ -202,6 +207,16 @@ func itemFields(o obj, create bool) (map[string]any, error) {
 			}
 			f[k.key] = v
 		}
+	}
+	if o.has("tracking") {
+		t, err := o.str("tracking", 10)
+		if err != nil {
+			return nil, err
+		}
+		if t != "none" && t != "batch" && t != "serial" {
+			return nil, command.ErrInvalid("tracking must be none, batch or serial")
+		}
+		f["tracking"] = t
 	}
 	if o.has("hsn_sac") {
 		h, err := o.str("hsn_sac", 8)
@@ -251,10 +266,10 @@ func itemCreate(c *command.Ctx, b json.RawMessage) (any, error) {
 	}
 	var id string
 	err = c.Tx.QueryRow(c.Context,
-		`insert into inventory.items (workspace_id, sku, name, hsn_sac, unit, gst_rate_bp, price_minor, reorder_level)
-		 values ($1::uuid, $2, $3, $4, coalesce(nullif($5, ''), 'pcs'), coalesce($6::int, 1800), coalesce($7::bigint, 0), coalesce($8::numeric, 0))
+		`insert into inventory.items (workspace_id, sku, name, hsn_sac, unit, gst_rate_bp, price_minor, reorder_level, tracking)
+		 values ($1::uuid, $2, $3, $4, coalesce(nullif($5, ''), 'pcs'), coalesce($6::int, 1800), coalesce($7::bigint, 0), coalesce($8::numeric, 0), coalesce($9::text, 'none'))
 		 on conflict do nothing returning id::text`,
-		c.WorkspaceID(), f["sku"], f["name"], f["hsn_sac"], f["unit"], f["gst_rate_bp"], f["price_minor"], f["reorder_level"]).Scan(&id)
+		c.WorkspaceID(), f["sku"], f["name"], f["hsn_sac"], f["unit"], f["gst_rate_bp"], f["price_minor"], f["reorder_level"], f["tracking"]).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, command.ErrConflict("an item with this SKU already exists")
 	}
@@ -283,15 +298,24 @@ func itemUpdate(c *command.Ctx, b json.RawMessage) (any, error) {
 	if len(f) == 0 {
 		return loadItem(c, id)
 	}
-	var found string
-	if err := c.Tx.QueryRow(c.Context, "select id::text from inventory.items where id = $1::uuid for no key update", id).Scan(&found); errors.Is(err, pgx.ErrNoRows) {
+	var cur string
+	if err := c.Tx.QueryRow(c.Context, "select tracking from inventory.items where id = $1::uuid for no key update", id).Scan(&cur); errors.Is(err, pgx.ErrNoRows) {
 		return nil, command.ErrNotFound("item")
 	} else if err != nil {
 		return nil, command.DB(err)
 	}
+	if t, ok := f["tracking"]; ok && t != cur { // the lock above keeps a receipt from landing between this check and the update
+		var stock bool
+		if err := c.Tx.QueryRow(c.Context, "select coalesce(sum(qty), 0) <> 0 from inventory.movements where item_id = $1::uuid", id).Scan(&stock); err != nil {
+			return nil, command.DB(err)
+		}
+		if stock {
+			return nil, command.ErrConflict("tracking can only change while the item has no stock: adjust the stock to zero first")
+		}
+	}
 	sets, args := []string{}, []any{id}
 	cast := map[string]string{"gst_rate_bp": "::int", "price_minor": "::bigint", "reorder_level": "::numeric", "active": "::boolean"}
-	for _, k := range []string{"sku", "name", "hsn_sac", "unit", "gst_rate_bp", "price_minor", "reorder_level", "active"} {
+	for _, k := range []string{"sku", "name", "hsn_sac", "unit", "gst_rate_bp", "price_minor", "reorder_level", "active", "tracking"} {
 		if v, ok := f[k]; ok {
 			args = append(args, v)
 			sets = append(sets, fmt.Sprintf("%s = $%d%s", k, len(args), cast[k]))
@@ -576,15 +600,16 @@ type posting struct {
 	srcType, srcID      string
 	transferID          string
 	reverses            string
+	batchID, serial     string // WP21
 }
 
 func insertMovement(c *command.Ctx, p posting) (string, error) {
 	var id string
 	err := c.Tx.QueryRow(c.Context,
-		`insert into inventory.movements (workspace_id, item_id, location_id, kind, qty, value_minor, reason, source_type, source_id, transfer_id, reverses, created_by)
-		 values ($1::uuid, $2::uuid, $3::uuid, $4, $5::numeric, $6::bigint, nullif($7, ''), nullif($8, ''), nullif($9, '')::uuid, nullif($10, '')::uuid, nullif($11, '')::uuid, $12::uuid)
+		`insert into inventory.movements (workspace_id, item_id, location_id, kind, qty, value_minor, reason, source_type, source_id, transfer_id, reverses, created_by, batch_id, serial)
+		 values ($1::uuid, $2::uuid, $3::uuid, $4, $5::numeric, $6::bigint, nullif($7, ''), nullif($8, ''), nullif($9, '')::uuid, nullif($10, '')::uuid, nullif($11, '')::uuid, $12::uuid, nullif($13, '')::uuid, nullif($14, ''))
 		 returning id::text`,
-		c.WorkspaceID(), p.itemID, p.locID, p.kind, p.qty, p.value, p.reason, p.srcType, p.srcID, p.transferID, p.reverses, c.Principal.UserID).Scan(&id)
+		c.WorkspaceID(), p.itemID, p.locID, p.kind, p.qty, p.value, p.reason, p.srcType, p.srcID, p.transferID, p.reverses, c.Principal.UserID, p.batchID, p.serial).Scan(&id)
 	return id, command.DB(err)
 }
 
@@ -661,19 +686,22 @@ func outflow(c *command.Ctx, p posting, sku, qty string) (string, error) {
 // the line table and its document column (constants). Lines without an item are ignored. Safe to call once per
 // document: movements_once rejects a second posting.
 func PostLines(c *command.Ctx, kind, srcType, srcID, table, col string) error {
-	rows, err := c.Tx.Query(c.Context, `select stock_item_id::text, sum(quantity)::text, sum(taxable_minor)::bigint
-		from `+table+` where `+col+` = $1::uuid and stock_item_id is not null group by 1 order by 1`, srcID)
+	// Untracked items: one row per item (quantities summed). Tracked items: one row per line, it carries its own batch or serials.
+	rows, err := c.Tx.Query(c.Context, `select l.stock_item_id::text, sum(l.quantity)::text, sum(l.taxable_minor)::bigint, (array_agg(coalesce(l.tracking::text, '')))[1], i.tracking
+		from `+table+` l join inventory.items i on i.id = l.stock_item_id
+		where l.`+col+` = $1::uuid group by l.stock_item_id, i.tracking, case when i.tracking = 'none' then null else l.id end
+		order by 1, min(l.position)`, srcID)
 	if err != nil {
 		return command.DB(err)
 	}
 	type line struct {
-		item, qty string
-		taxable   int64
+		item, qty, tracking, mode string
+		taxable                   int64
 	}
 	var ls []line
 	for rows.Next() {
 		var l line
-		if err := rows.Scan(&l.item, &l.qty, &l.taxable); err != nil {
+		if err := rows.Scan(&l.item, &l.qty, &l.taxable, &l.tracking, &l.mode); err != nil {
 			rows.Close()
 			return command.DB(err)
 		}
@@ -690,6 +718,7 @@ func PostLines(c *command.Ctx, kind, srcType, srcID, table, col string) error {
 	if err != nil {
 		return err
 	}
+	seen, overridden := map[string]bool{}, false
 	for _, l := range ls {
 		sku, err := lockItem(c, l.item)
 		if err != nil {
@@ -703,34 +732,80 @@ func PostLines(c *command.Ctx, kind, srcType, srcID, table, col string) error {
 			return command.ErrInvalid("lines with a stock item need a positive quantity and amount (" + sku + ")")
 		}
 		p := posting{itemID: l.item, locID: loc, kind: kind, srcType: srcType, srcID: srcID}
-		if kind == "receipt" {
-			p.qty, p.value = l.qty, fmt.Sprint(l.taxable)
-			_, err = insertMovement(c, p)
-		} else {
-			_, err = outflow(c, p, sku, l.qty)
+		if l.mode == "none" {
+			if t, err := parseTracking(json.RawMessage(l.tracking)); err != nil || !t.empty() {
+				return command.ErrInvalid(sku + " is not tracked by batch or serial: remove the tracking details")
+			}
+			if kind == "receipt" {
+				p.qty, p.value = l.qty, fmt.Sprint(l.taxable)
+				_, err = insertMovement(c, p)
+			} else {
+				_, err = outflow(c, p, sku, l.qty)
+			}
+			if err != nil {
+				return err
+			}
+			continue
 		}
+		if !seen[l.item] { // movements_once only guards untracked postings
+			seen[l.item] = true
+			var done bool
+			if err := c.Tx.QueryRow(c.Context, `select exists (select 1 from inventory.movements where source_type = $1 and source_id = $2::uuid
+				and item_id = $3::uuid and kind in ('receipt','issue'))`, srcType, srcID, l.item).Scan(&done); err != nil {
+				return command.DB(err)
+			}
+			if done {
+				return command.ErrConflict("stock for " + sku + " is already posted for this document")
+			}
+		}
+		t, err := parseTracking(json.RawMessage(l.tracking))
 		if err != nil {
 			return err
 		}
+		if kind == "receipt" {
+			legs, err := receiveLegs(c, l.item, sku, l.mode, l.qty, t)
+			if err != nil {
+				return err
+			}
+			err = postIn(c, p, legs, l.taxable)
+			if err != nil {
+				return err
+			}
+			continue
+		}
+		legs, err := issueLegs(c, l.item, sku, l.mode, loc, l.qty, t, true)
+		if err != nil {
+			return err
+		}
+		p.reason = t.OverrideExpired
+		if _, err := postOut(c, p, sku, legs); err != nil {
+			return err
+		}
+		for _, g := range legs {
+			overridden = overridden || g.expired
+		}
 	}
 	_, err = c.Emit("stock."+kind+"_posted", &srcID, map[string]any{"source_type": srcType, "items": len(ls)})
+	if err == nil && overridden {
+		_, err = c.Emit("stock.expired_issued", &srcID, map[string]any{"source_type": srcType})
+	}
 	return err
 }
 
 // Reverse appends the exact opposite of every movement the document posted that is not reversed yet (same quantity
 // and cost). Taking back a receipt can leave stock negative: refused unless the workspace allows it.
 func Reverse(c *command.Ctx, srcType, srcID string) error {
-	rows, err := c.Tx.Query(c.Context, `select m.id::text, m.item_id::text, m.location_id::text, m.qty::text, m.value_minor::text
+	rows, err := c.Tx.Query(c.Context, `select m.id::text, m.item_id::text, m.location_id::text, m.qty::text, m.value_minor::text, coalesce(m.batch_id::text, ''), coalesce(m.serial, '')
 		from inventory.movements m where m.source_type = $1 and m.source_id = $2::uuid and m.kind in ('receipt','issue')
 		  and not exists (select 1 from inventory.movements r where r.reverses = m.id) order by m.item_id`, srcType, srcID)
 	if err != nil {
 		return command.DB(err)
 	}
-	type mv struct{ id, item, loc, qty, value string }
+	type mv struct{ id, item, loc, qty, value, batch, serial string }
 	var ms []mv
 	for rows.Next() {
 		var m mv
-		if err := rows.Scan(&m.id, &m.item, &m.loc, &m.qty, &m.value); err != nil {
+		if err := rows.Scan(&m.id, &m.item, &m.loc, &m.qty, &m.value, &m.batch, &m.serial); err != nil {
 			rows.Close()
 			return command.DB(err)
 		}
@@ -750,8 +825,11 @@ func Reverse(c *command.Ctx, srcType, srcID string) error {
 				return err
 			}
 		}
+		if err := checkTrackedReversal(c, sku, m.item, m.loc, m.qty, m.batch, m.serial); err != nil {
+			return err
+		}
 		if _, err := insertMovement(c, posting{itemID: m.item, locID: m.loc, kind: "reversal", qty: neg(m.qty), value: neg(m.value),
-			srcType: srcType, srcID: srcID, reverses: m.id}); err != nil {
+			srcType: srcType, srcID: srcID, reverses: m.id, batchID: m.batch, serial: m.serial}); err != nil {
 			return err
 		}
 	}
@@ -759,6 +837,39 @@ func Reverse(c *command.Ctx, srcType, srcID string) error {
 		_, err = c.Emit("stock.reversed", &srcID, map[string]any{"source_type": srcType, "items": len(ms)})
 	}
 	return err
+}
+
+// checkTrackedReversal: undoing a receipt needs the batch quantity or the serial still in stock there; undoing an issue
+// puts a serial back, which must not be in stock already (it may have been received again meanwhile).
+func checkTrackedReversal(c *command.Ctx, sku, item, loc, qty, batch, serial string) error {
+	switch {
+	case serial != "":
+		var have int64
+		if err := c.Tx.QueryRow(c.Context, "select coalesce(sum(qty), 0)::bigint from inventory.movements where item_id = $1::uuid and serial = $2", item, serial).Scan(&have); err != nil {
+			return command.DB(err)
+		}
+		if strings.HasPrefix(qty, "-") && have != 0 {
+			return command.ErrConflict("serial " + serial + " of " + sku + " is in stock again: it cannot be put back")
+		}
+		if !strings.HasPrefix(qty, "-") {
+			var here int64
+			if err := c.Tx.QueryRow(c.Context, "select coalesce(sum(qty), 0)::bigint from inventory.movements where item_id = $1::uuid and serial = $2 and location_id = $3::uuid", item, serial, loc).Scan(&here); err != nil {
+				return command.DB(err)
+			}
+			if here < 1 {
+				return command.ErrConflict("serial " + serial + " of " + sku + " has left stock: it cannot be taken back")
+			}
+		}
+	case batch != "" && !strings.HasPrefix(qty, "-"):
+		var enough bool
+		if err := c.Tx.QueryRow(c.Context, "select coalesce(sum(qty), 0) >= $3::numeric from inventory.movements where batch_id = $1::uuid and location_id = $2::uuid", batch, loc, qty).Scan(&enough); err != nil {
+			return command.DB(err)
+		}
+		if !enough {
+			return command.ErrConflict("part of this batch of " + sku + " has been issued: it cannot be taken back")
+		}
+	}
+	return nil
 }
 
 // ---------- manual movements ----------
@@ -806,8 +917,24 @@ func adjust(c *command.Ctx, b json.RawMessage) (any, error) {
 		return nil, err
 	}
 	p := posting{itemID: item, locID: loc, kind: "adjustment", reason: reason}
+	mode, err := itemMode(c, item)
+	if err != nil {
+		return nil, err
+	}
+	tr, err := parseTracking(o["tracking"])
+	if err != nil {
+		return nil, err
+	}
 	if strings.HasPrefix(qty, "-") {
-		if _, err = outflow(c, p, sku, qty[1:]); err != nil {
+		if mode == "none" {
+			_, err = outflow(c, p, sku, qty[1:])
+		} else {
+			var legs []leg
+			if legs, err = issueLegs(c, item, sku, mode, loc, qty[1:], tr, false); err == nil {
+				_, err = postOut(c, p, sku, legs)
+			}
+		}
+		if err != nil {
 			return nil, err
 		}
 		// outflow wrote the negative movement already
@@ -827,7 +954,22 @@ func adjust(c *command.Ctx, b json.RawMessage) (any, error) {
 			return nil, command.DB(err)
 		}
 		p.qty, p.value = qty, v
-		if _, err = insertMovement(c, p); err != nil {
+		if mode == "none" {
+			if !tr.empty() {
+				return nil, command.ErrInvalid(sku + " is not tracked by batch or serial: remove the tracking details")
+			}
+			_, err = insertMovement(c, p)
+		} else {
+			var legs []leg
+			var total int64
+			if legs, err = receiveLegs(c, item, sku, mode, qty, tr); err == nil {
+				total, err = strconv.ParseInt(v, 10, 64)
+			}
+			if err == nil {
+				err = postIn(c, p, legs, total)
+			}
+		}
+		if err != nil {
 			return nil, err
 		}
 	}
@@ -898,12 +1040,29 @@ func transfer(c *command.Ctx, b json.RawMessage) (any, error) {
 	if err := c.Tx.QueryRow(c.Context, "select gen_random_uuid()::text").Scan(&tid); err != nil {
 		return nil, command.DB(err)
 	}
-	v, err := outflow(c, posting{itemID: item, locID: from, kind: "transfer_out", transferID: tid, reason: reason}, sku, qty)
+	mode, err := itemMode(c, item)
 	if err != nil {
 		return nil, err
 	}
-	if _, err := insertMovement(c, posting{itemID: item, locID: to, kind: "transfer_in", qty: qty, value: v, transferID: tid, reason: reason}); err != nil {
+	tr, err := parseTracking(o["tracking"])
+	if err != nil {
 		return nil, err
+	}
+	legs, err := issueLegs(c, item, sku, mode, from, qty, tr, false)
+	if err != nil {
+		return nil, err
+	}
+	if mode == "none" {
+		legs = []leg{{qty: qty}}
+	}
+	for _, l := range legs {
+		v, err := outflow(c, posting{itemID: item, locID: from, kind: "transfer_out", transferID: tid, reason: reason, batchID: l.batch, serial: l.serial}, sku, l.qty)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := insertMovement(c, posting{itemID: item, locID: to, kind: "transfer_in", qty: l.qty, value: v, transferID: tid, reason: reason, batchID: l.batch, serial: l.serial}); err != nil {
+			return nil, err
+		}
 	}
 	if _, err := c.Emit("stock.transferred", nil, map[string]any{"item_id": item, "from": from, "to": to, "qty": qty}); err != nil {
 		return nil, err
@@ -922,6 +1081,8 @@ type movementOut struct {
 	Location   string     `json:"location"`
 	Kind       string     `json:"kind"`
 	Qty        string     `json:"qty"`
+	Batch      *string    `json:"batch"`
+	Serial     *string    `json:"serial"`
 	Reason     *string    `json:"reason"`
 	SourceType *string    `json:"source_type"`
 	SourceID   *string    `json:"source_id"`
@@ -932,9 +1093,9 @@ type movementOut struct {
 
 // movements lists newest first. The ledger shows quantities only: cost is in report.stock_valuation (finance access).
 func movements(c *command.Ctx, item, loc string, limit int64) ([]movementOut, error) {
-	rows, err := c.Tx.Query(c.Context, `select m.id::text, m.item_id::text, i.sku, i.name, m.location_id::text, l.name, m.kind, m.qty::text,
+	rows, err := c.Tx.Query(c.Context, `select m.id::text, m.item_id::text, i.sku, i.name, m.location_id::text, l.name, m.kind, m.qty::text, b.number, m.serial,
 		m.reason, m.source_type, m.source_id::text, m.transfer_id::text, m.reverses::text, m.created_at
-		from inventory.movements m join inventory.items i on i.id = m.item_id join inventory.locations l on l.id = m.location_id
+		from inventory.movements m join inventory.items i on i.id = m.item_id join inventory.locations l on l.id = m.location_id left join inventory.batches b on b.id = m.batch_id
 		where ($1 = '' or m.item_id = $1::uuid) and ($2 = '' or m.location_id = $2::uuid)
 		order by m.created_at desc, m.id desc limit $3`, item, loc, limit)
 	if err != nil {
@@ -945,7 +1106,7 @@ func movements(c *command.Ctx, item, loc string, limit int64) ([]movementOut, er
 	for rows.Next() {
 		var m movementOut
 		var at time.Time
-		if err := rows.Scan(&m.ID, &m.ItemID, &m.SKU, &m.ItemName, &m.LocationID, &m.Location, &m.Kind, &m.Qty, &m.Reason, &m.SourceType, &m.SourceID, &m.TransferID, &m.Reverses, &at); err != nil {
+		if err := rows.Scan(&m.ID, &m.ItemID, &m.SKU, &m.ItemName, &m.LocationID, &m.Location, &m.Kind, &m.Qty, &m.Batch, &m.Serial, &m.Reason, &m.SourceType, &m.SourceID, &m.TransferID, &m.Reverses, &at); err != nil {
 			return nil, command.DB(err)
 		}
 		m.CreatedAt = command.Ts(at)

@@ -19,6 +19,12 @@ type Summary = {
     approvals?: { count: number; confirmations: number; quotes_awaiting: number; to_approve: number }
     bills_due?: { count: number; total_minor: number; overdue_count: number }
     tickets_breaching?: { count: number }
+    expiring_stock?: {
+      days: number
+      soon: number
+      expired: number
+      sample: { item_name: string; number: string }[]
+    }
     low_stock?: { count: number; items: number; sample: { id: string; name: string }[] }
     people_present?: { present: number; expected: number; on_leave: number; not_marked: number }
     urgent?: { count: number; overdue_tasks: number; overdue_invoices: number }
@@ -191,6 +197,21 @@ export function HomeDashboard() {
             : `${plural(t.low_stock.items, 'item')}, all above reorder level`
         }
         alert={t.low_stock.count ? 'Needs reordering' : undefined}
+      />
+    ),
+    t.expiring_stock && (
+      <TileLink
+        key="expiring"
+        href={`${base}/billing/stock/expiry`}
+        label="Expiring in 30 days"
+        value={String(t.expiring_stock.soon)}
+        detail={
+          t.expiring_stock.expired
+            ? `${t.expiring_stock.expired} batch${t.expiring_stock.expired === 1 ? '' : 'es'} already expired`
+            : t.expiring_stock.sample.map((s) => `${s.item_name} ${s.number}`).join(', ') ||
+              'No batch expires soon'
+        }
+        alert={t.expiring_stock.soon || t.expiring_stock.expired ? 'Needs attention' : undefined}
       />
     ),
     t.people_present && (

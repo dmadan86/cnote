@@ -351,6 +351,17 @@ func summary(c *command.Ctx, input json.RawMessage) (any, error) {
 		}
 	}
 
+	// ---- expiring stock: batches with stock that expire within 30 days or already have (batch-tracked items only) ----
+	if on("billing") && role >= command.Member {
+		t, tracked, err := inventory.Expiring(c, 30)
+		if err != nil {
+			return nil, err
+		}
+		if tracked {
+			tiles["expiring_stock"] = map[string]any{"days": 30, "soon": t.Soon, "expired": t.Expired, "sample": t.Sample}
+		}
+	}
+
 	// ---- urgent: overdue items + overdue invoices ----
 	if haveTasks || on("billing") && fin && role >= command.Member {
 		tiles["urgent"] = map[string]any{"count": overdueTasks + overdueInvoices, "overdue_tasks": overdueTasks, "overdue_invoices": overdueInvoices}

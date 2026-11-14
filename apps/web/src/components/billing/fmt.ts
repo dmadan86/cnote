@@ -113,6 +113,13 @@ export type Line = {
   taxable_minor: number
   item_note_id: string | null
   stock_item_id?: string
+  tracking?: {
+    batch?: string
+    mfg_date?: string
+    expiry_date?: string
+    serials?: string[]
+    override_expired_reason?: string
+  }
 }
 
 export type InvoiceDetail = Invoice & {

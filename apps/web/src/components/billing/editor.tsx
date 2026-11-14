@@ -7,6 +7,7 @@ import { useCmd } from '@/lib/hooks'
 import { Confirm, run } from './bits'
 import { type Contact, type InvoiceDetail, money, parseMinor, STATES, toRupees } from './fmt'
 import { StockSelect } from './stock'
+import { blankTrk, TrackingFields, type Trk, trkFrom, trkPayload } from './tracking'
 
 const RATES = [0, 5, 12, 18, 28]
 type Row = {
@@ -18,6 +19,7 @@ type Row = {
   rate: number
   item: string
   stock: string
+  trk: Trk
   total: number | null // server taxable amount; null while edited
 }
 type Preview = {
@@ -41,6 +43,7 @@ const blank = (): Row => ({
   rate: 18,
   item: '',
   stock: '',
+  trk: blankTrk,
   total: null,
 })
 const fromServer = (inv: InvoiceDetail): Row[] =>
@@ -53,6 +56,7 @@ const fromServer = (inv: InvoiceDetail): Row[] =>
     rate: l.gst_rate_bp / 100,
     item: l.item_note_id ?? '',
     stock: l.stock_item_id ?? '',
+    trk: trkFrom(l.tracking),
     total: l.taxable_minor,
   }))
 
@@ -71,6 +75,7 @@ function toPayload(rows: Row[]) {
       gst_rate_bp: r.rate * 100,
       item_note_id: r.item || undefined,
       stock_item_id: r.stock || undefined,
+      tracking: r.stock ? trkPayload('invoice', r.trk) : undefined,
     })
   }
   return out
@@ -274,10 +279,20 @@ export function Editor({ inv, onIssued }: { inv: InvoiceDetail; onIssued: () => 
                                 rate: it.gst_rate_bp / 100,
                                 price: it.price_minor ? toRupees(it.price_minor) : r.price,
                               }
-                            : { stock: '' },
+                            : { stock: '', trk: blankTrk },
                         )
                       }
                     />
+                    {r.stock && (
+                      <TrackingFields
+                        label={`Line ${i + 1}`}
+                        stockId={r.stock}
+                        qty={r.qty}
+                        kind="invoice"
+                        value={r.trk}
+                        onChange={(p) => patch(r.k, { trk: { ...r.trk, ...p } })}
+                      />
+                    )}
                     <select
                       aria-label={`Line ${i + 1} work item`}
                       value={r.item}
