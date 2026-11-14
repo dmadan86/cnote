@@ -115,6 +115,12 @@ var mcpMeta = map[string]meta{
 	"report.itc_summary":     {"Input tax credit from purchase bills between two dates.", schema([]string{"from", "to"}, props{"from": date, "to": date})},
 	"report.payables_ageing": {"Ageing buckets of unpaid purchase bills.", schema(nil, props{"as_of": date})},
 	"home.summary":           {"Owner home: what needs attention today (tasks, invoices, bills, quotes, deals, confirmations).", schema(nil, props{})},
+	"audit.list":             {"Search the workspace audit log (events) by actor, kind prefix, page and dates, newest first, 200 per page. Admins only.", schema(nil, props{"actor_id": str, "kind_prefix": str, "note_id": id, "from": date, "to": date, "cursor": str, "limit": num})},
+	"audit.export":           {"Export the filtered audit log as CSV (at most 50000 rows). Needs human confirmation for agents.", schema(nil, props{"actor_id": str, "kind_prefix": str, "note_id": id, "from": date, "to": date})},
+	"audit.retention":        {"Report how many audit events are older than the retention period and optionally set the period in years. Nothing is deleted.", schema(nil, props{"years": num})},
+	"data.export_subject":    {"Export one data subject's own records (a contact, or a workspace member) as JSON. Needs human confirmation for agents.", schema(nil, props{"contact_id": id, "user_id": id})},
+	"data.request_list":      {"List data export and erase requests with their outcome.", schema(nil, props{})},
+	"data.erase_subject":     {"Anonymise a contact (DPDP erasure) while keeping statutory finance records. People only; refused while unpaid documents exist unless confirm_unpaid is set.", schema([]string{"contact_id", "reason"}, props{"contact_id": id, "reason": str, "confirm_unpaid": flag})},
 	"contact.lifecycle":      {"Everything about one contact in one read: deals, quotes, invoices and more.", idOnly},
 }
 

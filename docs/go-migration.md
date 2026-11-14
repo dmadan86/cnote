@@ -488,7 +488,7 @@ Findings fixed in this pass:
 Open, not fixed (see test skips and the QA report): API-007 reusing an idempotency key with a different payload
 returns the first result on both servers (needs a payload hash in `core.idempotency` and a Rust change);
 `core.events` is append-only, so hard-deleting a note that has events fails (notes are soft-deleted in practice);
-SEC-014 denials are not written to the event log; the three OAuth/install tables are readable by any tenant session.
+SEC-014 is closed by WP7 (`command.denied` events for agent/API-key gate refusals, Go-registry commands only; Rust-handled commands still do not log denials); the three OAuth/install tables are readable by any tenant session.
 
 ## MCP for Go-only commands
 
@@ -515,3 +515,13 @@ behalf of the link creator (their current role and page access; a removed or dem
 Rate limits (in-process): `PUBLIC_IP_BURST/PER_SEC`, `PUBLIC_FAIL_BURST/PER_SEC` (misses per IP),
 `PUBLIC_TOKEN_BURST/PER_SEC`; `PUBLIC_TRUST_PROXY=1` takes the client IP from the right-most `X-Forwarded-For`.
 Email uses `SMTP_URL` + `EMAIL_FROM`; the link origin comes from the request's `origin` or `PUBLIC_WEB_URL`.
+
+## Audit log and data protection (WP7, migration 1050)
+
+Go-only commands in `modules/audit`: `audit.list`, `audit.export` (CSV, Confirm), `audit.retention` (report only),
+`data.export_subject` (Confirm), `data.request_list`, `data.erase_subject` (Owner, people only). `core.events` stays the
+audit trail; `core.data_requests` logs exports and erasures (ids and counts, never the data). `Registry.Execute` writes
+`command.denied` in a second transaction for machine callers refused by the gate (one per actor+command per minute,
+20 per actor per minute). Erase anonymises PII; a contact with any issued invoice, recorded bill or receipt keeps name,
+GSTIN, state and address (printed on those documents). Ledger, `core.note_revisions` and `core.events` are never edited.
+Retention defaults (8 years) are data in `settings.audit_retention_years`; statutory periods are to be verified with counsel.

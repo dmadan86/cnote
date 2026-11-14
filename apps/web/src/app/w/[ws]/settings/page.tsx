@@ -2,6 +2,8 @@
 import { useSearchParams } from 'next/navigation'
 import { useEffect, useState } from 'react'
 import { ApprovalRules } from '@/components/approvals/rules'
+import { AuditLog } from '@/components/audit/log'
+import { Privacy } from '@/components/audit/privacy'
 import { CompanyProfile } from '@/components/business-type'
 import { HooksTab } from '@/components/hooks-settings'
 import { Secret } from '@/components/secret'
@@ -22,6 +24,8 @@ const TABS = [
   'Connected apps',
   'Webhooks',
   'Usage',
+  'Audit log',
+  'Privacy',
 ] as const
 type TabName = (typeof TABS)[number]
 
@@ -432,6 +436,8 @@ export default function Settings() {
         {tab === 'Connected apps' && <AppsTab ws={ws} />}
         {tab === 'Webhooks' && <HooksTab ws={ws} />}
         {tab === 'Usage' && <UsageTab ws={ws} />}
+        {tab === 'Audit log' && <AuditLog ws={ws} />}
+        {tab === 'Privacy' && <Privacy ws={ws} />}
       </div>
     </div>
   )

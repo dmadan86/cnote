@@ -99,6 +99,9 @@ func (r *Registry) Execute(ctx context.Context, pool *pgxpool.Pool, name string,
 	c := &Ctx{Context: ctx, Tx: tx, Principal: p, reg: r}
 	out, err := r.run(c, name, input, o)
 	if err != nil {
+		if p.IsMachine() {
+			r.auditDenial(ctx, pool, p, name, err)
+		}
 		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -273,4 +276,32 @@ func (r *Registry) List() []Command {
 	}
 	slices.SortFunc(out, func(a, b Command) int { return strings.Compare(a.Name, b.Name) })
 	return out
+}
+
+// auditDenial writes command.denied (SEC-014) for an agent or API key the gate refused. The caller's own transaction
+// rolls back with the error, so this is a second one; it is best effort and capped at one event per actor and
+// command per minute and 20 per actor per minute, so a probing loop cannot flood the log.
+func (r *Registry) auditDenial(ctx context.Context, pool *pgxpool.Pool, p Principal, name string, cause error) {
+	var ce *Error
+	if !errors.As(cause, &ce) || ce.Code != Forbidden {
+		return
+	}
+	ctx = context.WithoutCancel(ctx)
+	tx, err := db.BeginTenant(ctx, pool, p.WorkspaceID)
+	if err != nil {
+		return
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	_, actorID, _ := p.Actor()
+	caller := string(p.Kind)
+	var same, all int
+	if tx.QueryRow(ctx, `select count(*) filter (where payload->>'command' = $2 and payload->>'caller' = $3), count(*)
+		from core.events where kind = 'command.denied' and actor_id is not distinct from $1 and created_at > now() - interval '1 minute'`,
+		actorID, name, caller).Scan(&same, &all) != nil || same > 0 || all >= 20 {
+		return
+	}
+	c := &Ctx{Context: ctx, Tx: tx, Principal: p, reg: r}
+	if _, err := c.Emit("command.denied", nil, map[string]any{"command": name, "reason": ce.Message, "caller": caller}); err == nil {
+		_ = tx.Commit(ctx)
+	}
 }
