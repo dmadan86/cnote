@@ -1,6 +1,6 @@
 {
   "$schema": "https://biomejs.dev/schemas/2.6.6/schema.json",
-  "files": { "includes": ["**", "!**/node_modules", "!**/.next", "!**/dist", "!**/*.sql", "!**/playwright-report", "!**/test-results", "!**/next-env.d.ts"] },
+  "files": { "includes": ["**", "!**/node_modules", "!**/.next", "!**/dist", "!**/*.sql", "!**/playwright-report", "!**/test-results", "!**/next-env.d.ts", "!apps/api/**/testdata", "!apps/api/internal/mcp/catalog.json"] },
   "css": { "parser": { "tailwindDirectives": true } },
   "formatter": { "indentStyle": "space", "indentWidth": 2, "lineWidth": 110 },
   "javascript": { "formatter": { "quoteStyle": "single", "semicolons": "asNeeded" } },
