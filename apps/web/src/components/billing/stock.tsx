@@ -7,6 +7,7 @@ import { btn, btnPrimary, ErrorText, Field, inputCls, Modal, Pill } from '@/comp
 import { useCmd } from '@/lib/hooks'
 import { run } from './bits'
 import { money, parseMinor } from './fmt'
+import { BatchPill, blankTrk, TrackingFields, type Trk, trkPayload } from './tracking'
 
 export type StockItem = {
   id: string
@@ -20,6 +21,7 @@ export type StockItem = {
   active: boolean
   on_hand: string
   low: boolean
+  tracking: 'none' | 'batch' | 'serial'
 }
 type Loc = { id: string; name: string; is_default: boolean; active: boolean }
 type Move = {
@@ -27,6 +29,8 @@ type Move = {
   kind: string
   qty: string
   location: string
+  batch: string | null
+  serial: string | null
   reason: string | null
   source_type: 'invoice' | 'purchase_bill' | null
   source_id: string | null
@@ -113,6 +117,7 @@ function ItemForm({
               gst_rate_bp: Number(f.get('rate')) * 100,
               price_minor: price,
               reorder_level: String(f.get('reorder') || '0'),
+              tracking: String(f.get('tracking') || 'none'),
             })
             onSaved()
             onClose()
@@ -184,6 +189,27 @@ function ItemForm({
             )}
           </Field>
         </div>
+        <Field label="Tracking">
+          {(id) => (
+            <select
+              id={id}
+              name="tracking"
+              defaultValue={initial?.tracking ?? 'none'}
+              disabled={!!initial && Number(initial.on_hand) !== 0}
+              aria-describedby="tracking-hint"
+              className={inputCls}
+            >
+              <option value="none">None</option>
+              <option value="batch">By batch (batch number, expiry date)</option>
+              <option value="serial">By serial number (one per unit)</option>
+            </select>
+          )}
+        </Field>
+        <p id="tracking-hint" className="text-[12px] text-muted">
+          {initial && Number(initial.on_hand) !== 0
+            ? "Tracking can't change while stock remains: adjust the stock to zero first."
+            : 'Set before the first receipt; it can only change while the item has no stock.'}
+        </p>
         <ErrorText error={err} />
         <div className="flex justify-end gap-2">
           <button type="button" className={btn} onClick={onClose}>
@@ -212,6 +238,7 @@ function AdjustForm({
   const { ws } = useShell()
   const [dir, setDir] = useState<'add' | 'remove'>('add')
   const [qty, setQty] = useState('')
+  const [trk, setTrk] = useState<Trk>(blankTrk)
   const [loc, setLoc] = useState(locs.find((l) => l.is_default)?.id ?? '')
   const [err, setErr] = useState<string>()
   const [busy, setBusy] = useState(false)
@@ -239,6 +266,8 @@ function AdjustForm({
               qty: dir === 'add' ? qty : `-${qty}`,
               reason,
               unit_cost_minor: dir === 'add' ? unitCost : undefined,
+              tracking:
+                item.tracking === 'none' ? undefined : trkPayload(dir === 'add' ? 'bill' : 'invoice', trk),
             })
             onSaved()
             onClose()
@@ -284,6 +313,16 @@ function AdjustForm({
             )}
           </Field>
         </div>
+        {item.tracking !== 'none' && (
+          <TrackingFields
+            label="Adjustment"
+            stockId={item.id}
+            qty={qty}
+            kind={dir === 'add' ? 'bill' : 'invoice'}
+            value={trk}
+            onChange={(p) => setTrk((t) => ({ ...t, ...p }))}
+          />
+        )}
         {q > 0 && (
           <p className="text-[13px] text-muted" aria-live="polite">
             On hand {num(item.on_hand)} to{' '}
@@ -338,6 +377,8 @@ function TransferForm({
   const active = locs.filter((l) => l.active)
   const [from, setFrom] = useState(active[0]?.id ?? '')
   const [to, setTo] = useState(active[1]?.id ?? '')
+  const [qty, setQty] = useState('')
+  const [trk, setTrk] = useState<Trk>(blankTrk)
   const [err, setErr] = useState<string>()
   const [busy, setBusy] = useState(false)
   return (
@@ -353,7 +394,8 @@ function TransferForm({
               item_id: item.id,
               from_location_id: from,
               to_location_id: to,
-              qty: String(new FormData(e.currentTarget).get('qty')),
+              qty,
+              tracking: item.tracking === 'none' ? undefined : trkPayload('invoice', trk),
             })
             onSaved()
             onClose()
@@ -386,8 +428,28 @@ function TransferForm({
           )}
         </Field>
         <Field label={`Quantity (${item.unit})`}>
-          {(id) => <input id={id} name="qty" required inputMode="decimal" className={inputCls} />}
+          {(id) => (
+            <input
+              id={id}
+              name="qty"
+              required
+              inputMode="decimal"
+              value={qty}
+              onChange={(e) => setQty(e.target.value)}
+              className={inputCls}
+            />
+          )}
         </Field>
+        {item.tracking !== 'none' && (
+          <TrackingFields
+            label="Transfer"
+            stockId={item.id}
+            qty={qty}
+            kind="invoice"
+            value={trk}
+            onChange={(p) => setTrk((t) => ({ ...t, ...p }))}
+          />
+        )}
         <ErrorText error={err} />
         <div className="flex justify-end gap-2">
           <button type="button" className={btn} onClick={onClose}>
@@ -529,6 +591,9 @@ export function StockList() {
           Low stock only
         </label>
         <span className="ml-auto flex gap-2">
+          <Link href={`/w/${ws}/billing/stock/expiry`} className={btn}>
+            Expiry report
+          </Link>
           <button type="button" className={btn} onClick={() => setDlg({ kind: 'locations' })}>
             Locations
           </button>
@@ -562,7 +627,8 @@ export function StockList() {
                   <td className="p-2">
                     <Link href={`/w/${ws}/billing/stock/${i.id}`} className="font-medium hover:underline">
                       {i.name}
-                    </Link>
+                    </Link>{' '}
+                    {i.tracking !== 'none' && <Pill>{i.tracking === 'batch' ? 'Batches' : 'Serials'}</Pill>}
                   </td>
                   <td>{i.sku}</td>
                   <td className="text-right tabular-nums">
@@ -662,6 +728,8 @@ export function StockDetail({ params }: { params: Promise<{ id: string }> }) {
               </div>
             ))}
           </dl>
+          {it.tracking === 'batch' && <Batches itemId={it.id} unit={it.unit} />}
+          {it.tracking === 'serial' && <Serials itemId={it.id} />}
           <h3 className="text-[14px] font-semibold">Stock ledger</h3>
           {d.data?.movements.length === 0 ? (
             <p className="text-[14px] text-muted">No movements yet.</p>
@@ -681,7 +749,15 @@ export function StockDetail({ params }: { params: Promise<{ id: string }> }) {
                   {d.data?.movements.map((m) => (
                     <tr key={m.id} className="border-b border-line last:border-0">
                       <td className="p-2 whitespace-nowrap">{m.created_at.slice(0, 10)}</td>
-                      <td>{KIND[m.kind] ?? m.kind}</td>
+                      <td>
+                        {KIND[m.kind] ?? m.kind}
+                        {(m.batch || m.serial) && (
+                          <span className="text-muted">
+                            {' '}
+                            {m.batch ? `batch ${m.batch}` : `serial ${m.serial}`}
+                          </span>
+                        )}
+                      </td>
                       <td>{m.location}</td>
                       <td className="text-right tabular-nums">
                         {Number(m.qty) > 0 ? '+' : ''}
@@ -710,6 +786,138 @@ export function StockDetail({ params }: { params: Promise<{ id: string }> }) {
             <TransferForm item={it} locs={locs.data} onClose={() => setDlg(undefined)} onSaved={d.reload} />
           )}
         </>
+      )}
+    </div>
+  )
+}
+
+type Batch = {
+  id: string
+  item_id: string
+  sku: string
+  item_name: string
+  unit: string
+  number: string
+  mfg_date: string | null
+  expiry_date: string | null
+  on_hand: string
+  days_left: number | null
+  expired: boolean
+}
+
+function BatchTable({ rows, showItem }: { rows: Batch[]; showItem?: boolean }) {
+  return (
+    <div className="overflow-x-auto rounded-lg border border-line">
+      <table className="w-full min-w-[480px] text-left text-[13px]">
+        <thead className="border-b border-line text-[12px] text-muted">
+          <tr>
+            {showItem && <th className="p-2 font-medium">Item</th>}
+            <th className="p-2 font-medium">Batch</th>
+            <th className="font-medium">Expiry</th>
+            <th className="text-right font-medium">On hand</th>
+            <th className="p-2 font-medium">Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((b) => (
+            <tr key={b.id} className="border-b border-line last:border-0">
+              {showItem && (
+                <td className="p-2">
+                  {b.item_name} <span className="text-muted">{b.sku}</span>
+                </td>
+              )}
+              <td className="p-2">{b.number}</td>
+              <td className="whitespace-nowrap">{b.expiry_date ?? 'none'}</td>
+              <td className="text-right tabular-nums">
+                {num(b.on_hand)} {b.unit}
+              </td>
+              <td className="p-2">
+                <BatchPill b={b} />
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function Batches({ itemId }: { itemId: string; unit: string }) {
+  const { ws } = useShell()
+  const b = useCmd<Batch[]>(ws, 'stock_batch.list', { item_id: itemId })
+  return (
+    <div className="space-y-2">
+      <h3 className="text-[14px] font-semibold">Batches in stock</h3>
+      {b.data?.length === 0 ? <p className="text-[14px] text-muted">No batches in stock.</p> : null}
+      {!!b.data?.length && <BatchTable rows={b.data} />}
+    </div>
+  )
+}
+
+function Serials({ itemId }: { itemId: string }) {
+  const { ws } = useShell()
+  const s = useCmd<{ serial: string; location: string }[]>(ws, 'stock_serial.list', { item_id: itemId })
+  return (
+    <div className="space-y-2">
+      <h3 className="text-[14px] font-semibold">Serial numbers in stock</h3>
+      {s.data?.length === 0 ? <p className="text-[14px] text-muted">No serials in stock.</p> : null}
+      <ul className="grid grid-cols-1 gap-1 text-[13px] sm:grid-cols-3">
+        {s.data?.map((x) => (
+          <li key={x.serial} className="rounded border border-line px-2 py-1">
+            {x.serial} <span className="text-muted">{x.location}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
+export function ExpiryReport() {
+  const { ws } = useShell()
+  const [days, setDays] = useState(30)
+  const r = useCmd<{ batches: Batch[] }>(ws, 'report.stock_expiry', { days })
+  const expired = r.data?.batches.filter((b) => b.expired) ?? []
+  const soon = r.data?.batches.filter((b) => !b.expired) ?? []
+  return (
+    <div className="space-y-4">
+      <Link
+        href={`/w/${ws}/billing/stock`}
+        className="inline-flex items-center gap-1 text-[13px] text-muted hover:text-fg"
+      >
+        <ArrowLeft size={14} /> All items
+      </Link>
+      <div className="flex items-center gap-3">
+        <h2 className="text-lg font-semibold">Expiry report</h2>
+        <label className="flex items-center gap-1.5 text-[13px]">
+          Expiring within
+          <select
+            aria-label="Expiring within"
+            value={days}
+            onChange={(e) => setDays(Number(e.target.value))}
+            className={inputCls}
+          >
+            {[30, 60, 90].map((d) => (
+              <option key={d} value={d}>
+                {d} days
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+      <ErrorText error={r.error} />
+      <h3 className="text-[14px] font-semibold">Expired ({expired.length})</h3>
+      {expired.length ? (
+        <BatchTable rows={expired} showItem />
+      ) : (
+        <p className="text-[14px] text-muted">No expired stock.</p>
+      )}
+      <h3 className="text-[14px] font-semibold">
+        Expiring in {days} days ({soon.length})
+      </h3>
+      {soon.length ? (
+        <BatchTable rows={soon} showItem />
+      ) : (
+        <p className="text-[14px] text-muted">Nothing expires in this window.</p>
       )}
     </div>
   )

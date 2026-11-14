@@ -133,19 +133,20 @@ func loadInvoice(c *command.Ctx, id string, lock bool) (invoiceRow, error) {
 }
 
 type lineOut struct {
-	ID           string  `json:"id"`
-	Position     int32   `json:"position"`
-	Description  string  `json:"description"`
-	HsnSac       *string `json:"hsn_sac"`
-	Quantity     string  `json:"quantity"`
-	UnitPrice    int64   `json:"unit_price_minor"`
-	GSTRateBP    int32   `json:"gst_rate_bp"`
-	TaxableMinor int64   `json:"taxable_minor"`
-	CGSTMinor    int64   `json:"cgst_minor"`
-	SGSTMinor    int64   `json:"sgst_minor"`
-	IGSTMinor    int64   `json:"igst_minor"`
-	ItemNoteID   *string `json:"item_note_id"`
-	StockItemID  *string `json:"stock_item_id,omitempty"`
+	ID           string          `json:"id"`
+	Position     int32           `json:"position"`
+	Description  string          `json:"description"`
+	HsnSac       *string         `json:"hsn_sac"`
+	Quantity     string          `json:"quantity"`
+	UnitPrice    int64           `json:"unit_price_minor"`
+	GSTRateBP    int32           `json:"gst_rate_bp"`
+	TaxableMinor int64           `json:"taxable_minor"`
+	CGSTMinor    int64           `json:"cgst_minor"`
+	SGSTMinor    int64           `json:"sgst_minor"`
+	IGSTMinor    int64           `json:"igst_minor"`
+	ItemNoteID   *string         `json:"item_note_id"`
+	StockItemID  *string         `json:"stock_item_id,omitempty"`
+	Tracking     json.RawMessage `json:"tracking,omitempty"` // WP21: batch or serials, applied when stock posts
 }
 
 type paymentOut struct {
@@ -174,6 +175,7 @@ type lineIn struct {
 	rateBP      *int64
 	item        *string
 	stock       *string
+	tracking    json.RawMessage
 }
 
 func decodeLines(o obj, key string, required bool) ([]lineIn, bool, error) {
@@ -220,6 +222,13 @@ func decodeLines(o obj, key string, required bool) ([]lineIn, bool, error) {
 		if l.stock, err = lo.optUUID("stock_item_id"); err != nil {
 			return nil, false, err
 		}
+		if tv, ok := lo.get("tracking"); ok {
+			var m map[string]json.RawMessage
+			if json.Unmarshal(tv, &m) != nil || m == nil {
+				return nil, false, command.ErrInvalid("tracking must be an object")
+			}
+			l.tracking = tv
+		}
 		out = append(out, l)
 	}
 	return out, true, nil
@@ -229,6 +238,7 @@ type ln struct {
 	description string
 	item        *string
 	stock       *string // inventory.items id: posts stock when the document is issued or recorded
+	tracking    json.RawMessage
 	g           gstLine
 }
 
@@ -267,7 +277,7 @@ func parseLines(in []lineIn) ([]ln, error) {
 				return nil, gstErrToCmd(err)
 			}
 		}
-		out = append(out, ln{strings.TrimSpace(l.description), l.item, l.stock, g})
+		out = append(out, ln{strings.TrimSpace(l.description), l.item, l.stock, l.tracking, g})
 	}
 	return out, nil
 }
@@ -279,7 +289,7 @@ func loadLines(c *command.Ctx, invoiceID string) ([]ln, error) {
 // loadLinesOf reads lines from an invoice-shaped line table (table and col are constants, never user input).
 func loadLinesOf(c *command.Ctx, table, col, id string) ([]ln, error) {
 	rows, err := c.Tx.Query(c.Context,
-		`select description, hsn_sac, quantity::text, unit_price_minor, gst_rate_bp, item_note_id::text, stock_item_id::text
+		`select description, hsn_sac, quantity::text, unit_price_minor, gst_rate_bp, item_note_id::text, stock_item_id::text, tracking::text
 		 from `+table+` where `+col+` = $1::uuid order by position`, id)
 	if err != nil {
 		return nil, command.DB(err)
@@ -290,8 +300,12 @@ func loadLinesOf(c *command.Ctx, table, col, id string) ([]ln, error) {
 		var l ln
 		var qty string
 		var rate int32
-		if err := rows.Scan(&l.description, &l.g.hsn, &qty, &l.g.price, &rate, &l.item, &l.stock); err != nil {
+		var tr *string
+		if err := rows.Scan(&l.description, &l.g.hsn, &qty, &l.g.price, &rate, &l.item, &l.stock, &tr); err != nil {
 			return nil, command.DB(err)
+		}
+		if tr != nil {
+			l.tracking = json.RawMessage(*tr)
 		}
 		q, ok := parseDec(qty)
 		if !ok {
@@ -327,10 +341,10 @@ func writeLinesTo(c *command.Ctx, table, col, invoiceID string, lines []ln, tax 
 		subtotal += t.taxable
 		if _, err := c.Tx.Exec(c.Context,
 			`insert into `+table+` (workspace_id, `+col+`, position, description, hsn_sac, quantity,
-			   unit_price_minor, gst_rate_bp, taxable_minor, cgst_minor, sgst_minor, igst_minor, item_note_id, stock_item_id)
-			 values ($1::uuid,$2::uuid,$3,$4,$5,$6::numeric,$7,$8,$9,$10,$11,$12,$13::uuid,$14::uuid)`,
+			   unit_price_minor, gst_rate_bp, taxable_minor, cgst_minor, sgst_minor, igst_minor, item_note_id, stock_item_id, tracking)
+			 values ($1::uuid,$2::uuid,$3,$4,$5,$6::numeric,$7,$8,$9,$10,$11,$12,$13::uuid,$14::uuid,$15::jsonb)`,
 			c.WorkspaceID(), invoiceID, int32(pos+1), l.description, l.g.hsn, l.g.qtyText, l.g.price, int32(l.g.rateBP),
-			t.taxable, t.cgst, t.sgst, t.igst, l.item, l.stock); err != nil {
+			t.taxable, t.cgst, t.sgst, t.igst, l.item, l.stock, nilRaw(l.tracking)); err != nil {
 			return 0, command.DB(err)
 		}
 	}
@@ -718,7 +732,7 @@ func invoiceDetail(c *command.Ctx, id string) (invoiceOut, error) {
 	}
 	rows, err := c.Tx.Query(c.Context,
 		`select id::text, position, description, hsn_sac, quantity::text, unit_price_minor, gst_rate_bp,
-		   taxable_minor, cgst_minor, sgst_minor, igst_minor, item_note_id::text, stock_item_id::text
+		   taxable_minor, cgst_minor, sgst_minor, igst_minor, item_note_id::text, stock_item_id::text, tracking
 		 from billing.invoice_lines where invoice_id = $1::uuid order by position`, id)
 	if err != nil {
 		return out, command.DB(err)
@@ -726,7 +740,7 @@ func invoiceDetail(c *command.Ctx, id string) (invoiceOut, error) {
 	for rows.Next() {
 		var l lineOut
 		if err := rows.Scan(&l.ID, &l.Position, &l.Description, &l.HsnSac, &l.Quantity, &l.UnitPrice, &l.GSTRateBP,
-			&l.TaxableMinor, &l.CGSTMinor, &l.SGSTMinor, &l.IGSTMinor, &l.ItemNoteID, &l.StockItemID); err != nil {
+			&l.TaxableMinor, &l.CGSTMinor, &l.SGSTMinor, &l.IGSTMinor, &l.ItemNoteID, &l.StockItemID, &l.Tracking); err != nil {
 			rows.Close()
 			return out, command.DB(err)
 		}
@@ -1353,4 +1367,12 @@ func invoiceWriteOff(c *command.Ctx, input json.RawMessage) (any, error) {
 		return nil, err
 	}
 	return invoiceDetail(c, id)
+}
+
+// nilRaw stores no tracking as SQL null.
+func nilRaw(r json.RawMessage) any {
+	if len(r) == 0 {
+		return nil
+	}
+	return string(r)
 }
