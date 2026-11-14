@@ -4,7 +4,7 @@ import { auth } from '@/lib/api'
 import { qrMatrix, qrPath } from '@/lib/qr'
 import { btn, btnPrimary, ErrorText, Field, inputCls } from '../ui'
 
-type Phase = 'loading' | 'off' | 'setup' | 'codes' | 'on' | 'disable'
+type Phase = 'loading' | 'off' | 'setup' | 'codes' | 'on' | 'disable' | 'regen'
 
 export function MfaCard() {
   const [phase, setPhase] = useState<Phase>('loading')
@@ -185,10 +185,68 @@ export function MfaCard() {
           <p className="text-[13px] text-muted">
             {left} recovery code{left === 1 ? '' : 's'} left.
           </p>
-          <button type="button" className={btn} onClick={() => setPhase('disable')}>
-            Turn off...
-          </button>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" className={btn} onClick={() => setPhase('regen')}>
+              Regenerate recovery codes...
+            </button>
+            <button type="button" className={btn} onClick={() => setPhase('disable')}>
+              Turn off...
+            </button>
+          </div>
         </>
+      )}
+
+      {phase === 'regen' && (
+        <form
+          className="space-y-3"
+          onSubmit={(e) => {
+            e.preventDefault()
+            const b = { password: val(e, 'password'), code: val(e, 'code') }
+            run(async () => {
+              setCodes((await auth.mfaRecovery(b)).recovery_codes)
+              setPhase('codes')
+            })
+          }}
+        >
+          {h2('Regenerate recovery codes')}
+          <p className="text-[13px] text-muted">
+            This makes a new set of 10 codes. Every code you have now, used or not, stops working. Confirm
+            with your password and a current code from your authenticator app.
+          </p>
+          <Field label="Password">
+            {(id) => (
+              <input
+                id={id}
+                name="password"
+                type="password"
+                required
+                autoComplete="current-password"
+                className={inputCls}
+              />
+            )}
+          </Field>
+          <Field label="Authenticator app code">
+            {(id) => (
+              <input
+                id={id}
+                name="code"
+                required
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                className={inputCls}
+              />
+            )}
+          </Field>
+          <ErrorText error={error} />
+          <div className="flex flex-wrap gap-2">
+            <button type="submit" disabled={busy} className={btnPrimary}>
+              Generate new codes
+            </button>
+            <button type="button" className={btn} onClick={() => setPhase('on')}>
+              Cancel
+            </button>
+          </div>
+        </form>
       )}
 
       {phase === 'disable' && (

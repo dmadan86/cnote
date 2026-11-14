@@ -1,4 +1,4 @@
-// Package security is the workspace sign-in policy (WP18): require MFA for admins and owners, and OpenID Connect
+// Package security is the workspace sign-in policy (WP18): require MFA for admins and owners, and OpenID Connect or SAML 2.0
 // single sign-on with an optional "enforce" switch. Go-only, owner-only, people only (never an agent or key): the policy
 // decides who may sign in. The provider's client secret is encrypted with CNOTE_MASTER_KEY and never returned.
 package security
@@ -45,17 +45,26 @@ type policy struct {
 	ClientID   string
 	SecretEnc  []byte
 	Enforce    bool
+
+	Protocol        string // oidc or saml
+	SAMLMetadata    string
+	SAMLMetadataURL string
+	SAMLEmailAttr   string
+	SAMLEntityID    string
 }
 
 func load(c *command.Ctx) (policy, error) {
 	var p policy
-	var iss, cid *string
-	err := c.Tx.QueryRow(c.Context, `select require_mfa_admins, sso_enabled, sso_issuer, sso_client_id, sso_client_secret_enc, sso_enforce
-		from core.workspace_security where workspace_id = $1::uuid`, c.WorkspaceID()).Scan(&p.RequireMFA, &p.SSOEnabled, &iss, &cid, &p.SecretEnc, &p.Enforce)
+	var iss, cid, md, mdURL, attr *string
+	p.Protocol = "oidc"
+	err := c.Tx.QueryRow(c.Context, `select require_mfa_admins, sso_enabled, sso_issuer, sso_client_id, sso_client_secret_enc, sso_enforce,
+		sso_protocol, saml_idp_metadata, saml_idp_metadata_url, saml_email_attribute
+		from core.workspace_security where workspace_id = $1::uuid`, c.WorkspaceID()).Scan(&p.RequireMFA, &p.SSOEnabled, &iss, &cid, &p.SecretEnc, &p.Enforce,
+		&p.Protocol, &md, &mdURL, &attr)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return p, command.DB(err)
 	}
-	p.Issuer, p.ClientID = deref(iss), deref(cid)
+	p.Issuer, p.ClientID, p.SAMLMetadata, p.SAMLMetadataURL, p.SAMLEmailAttr = deref(iss), deref(cid), deref(md), deref(mdURL), deref(attr)
 	return p, nil
 }
 
@@ -67,8 +76,12 @@ func deref(s *string) string {
 }
 
 func view(p policy, extra map[string]any) map[string]any {
+	if ed, err := auth.ParseIDPMetadata([]byte(p.SAMLMetadata)); err == nil {
+		p.SAMLEntityID = ed.EntityID
+	}
 	out := map[string]any{"require_mfa_admins": p.RequireMFA, "sso": map[string]any{"enabled": p.SSOEnabled, "issuer": p.Issuer, "client_id": p.ClientID,
-		"has_client_secret": len(p.SecretEnc) > 0, "enforce": p.Enforce}}
+		"has_client_secret": len(p.SecretEnc) > 0, "enforce": p.Enforce, "protocol": p.Protocol,
+		"saml": map[string]any{"has_metadata": p.SAMLMetadata != "", "metadata_url": p.SAMLMetadataURL, "idp_entity_id": p.SAMLEntityID, "email_attribute": p.SAMLEmailAttr}}}
 	for k, v := range extra {
 		out[k] = v
 	}
@@ -104,7 +117,8 @@ func get(c *command.Ctx, _ json.RawMessage) (any, error) {
 	if err := c.Tx.QueryRow(c.Context, "select slug from core.workspaces where id = $1::uuid", c.WorkspaceID()).Scan(&slug); err != nil {
 		return nil, command.DB(err)
 	}
-	return view(p, map[string]any{"domains": doms, "admins_without_mfa": without, "sso_login_path": "/api/auth/sso/start?workspace=" + slug, "sso_callback_path": "/api/auth/sso/callback"}), rows.Err()
+	return view(p, map[string]any{"domains": doms, "admins_without_mfa": without, "sso_login_path": "/api/auth/sso/start?workspace=" + slug, "sso_callback_path": "/api/auth/sso/callback",
+		"saml_login_path": "/api/auth/saml/start?workspace=" + slug, "saml_metadata_path": "/api/auth/saml/" + slug + "/metadata", "saml_acs_path": "/api/auth/saml/" + slug + "/acs"}), rows.Err()
 }
 
 type ssoIn struct {
@@ -113,6 +127,11 @@ type ssoIn struct {
 	ClientID     *string `json:"client_id"`
 	ClientSecret *string `json:"client_secret"`
 	Enforce      *bool   `json:"enforce"`
+
+	Protocol        *string `json:"protocol"`
+	SAMLMetadata    *string `json:"saml_metadata"`
+	SAMLMetadataURL *string `json:"saml_metadata_url"`
+	SAMLEmailAttr   *string `json:"saml_email_attribute"`
 }
 
 func update(c *command.Ctx, b json.RawMessage) (any, error) {
@@ -166,32 +185,67 @@ func update(c *command.Ctx, b json.RawMessage) (any, error) {
 		if s.Enforce != nil {
 			p.Enforce = *s.Enforce
 		}
+		if s.Protocol != nil {
+			if *s.Protocol != "oidc" && *s.Protocol != "saml" {
+				return nil, command.ErrInvalid("protocol must be oidc or saml")
+			}
+			p.Protocol = *s.Protocol
+		}
+		if s.SAMLEmailAttr != nil {
+			p.SAMLEmailAttr = strings.TrimSpace(*s.SAMLEmailAttr)
+		}
+		// pasted metadata wins over a URL sent in the same call; a URL alone is fetched now (through the SSRF guard) and the
+		// XML stored, so a later IdP outage does not stop sign-in. Save again to pick up a rotated certificate.
+		if s.SAMLMetadataURL != nil {
+			p.SAMLMetadataURL = strings.TrimSpace(*s.SAMLMetadataURL)
+		}
+		switch {
+		case s.SAMLMetadata != nil && strings.TrimSpace(*s.SAMLMetadata) != "":
+			p.SAMLMetadata = strings.TrimSpace(*s.SAMLMetadata)
+			if _, err := auth.ParseIDPMetadata([]byte(p.SAMLMetadata)); err != nil {
+				return nil, command.ErrInvalid(err.Error())
+			}
+		case s.SAMLMetadataURL != nil && p.SAMLMetadataURL != "":
+			md, err := auth.FetchIDPMetadata(c.Context, p.SAMLMetadataURL)
+			if err != nil {
+				return nil, command.ErrInvalid("the identity provider metadata could not be loaded: " + err.Error())
+			}
+			p.SAMLMetadata = md
+		}
 		if p.SSOEnabled {
 			var verified int
 			if err := c.Tx.QueryRow(c.Context, "select count(*) from core.sso_domains where workspace_id = $1::uuid and verified_at is not null", c.WorkspaceID()).Scan(&verified); err != nil {
 				return nil, command.DB(err)
 			}
-			if p.Issuer == "" || p.ClientID == "" || len(p.SecretEnc) == 0 || verified == 0 {
-				return nil, command.ErrInvalid("single sign-on needs an issuer URL, client id, client secret and at least one verified domain (security.domain_add, then security.domain_verify)")
-			}
-			if err := auth.ValidateIssuer(c.Context, p.Issuer); err != nil {
-				return nil, command.ErrInvalid("the identity provider could not be reached: " + err.Error())
+			if p.Protocol == "saml" {
+				if p.SAMLMetadata == "" || verified == 0 {
+					return nil, command.ErrInvalid("SAML single sign-on needs the identity provider metadata (a URL or the pasted XML) and at least one verified domain (security.domain_add, then security.domain_verify)")
+				}
+			} else {
+				if p.Issuer == "" || p.ClientID == "" || len(p.SecretEnc) == 0 || verified == 0 {
+					return nil, command.ErrInvalid("single sign-on needs an issuer URL, client id, client secret and at least one verified domain (security.domain_add, then security.domain_verify)")
+				}
+				if err := auth.ValidateIssuer(c.Context, p.Issuer); err != nil {
+					return nil, command.ErrInvalid("the identity provider could not be reached: " + err.Error())
+				}
 			}
 		} else if p.Enforce {
 			return nil, command.ErrInvalid("enforcing single sign-on needs it to be enabled")
 		}
 		changed = append(changed, "sso")
 	}
-	_, err = c.Tx.Exec(c.Context, `insert into core.workspace_security (workspace_id, require_mfa_admins, sso_enabled, sso_issuer, sso_client_id, sso_client_secret_enc, sso_enforce)
-		values ($1::uuid,$2,$3,nullif($4,''),nullif($5,''),$6,$7)
+	_, err = c.Tx.Exec(c.Context, `insert into core.workspace_security (workspace_id, require_mfa_admins, sso_enabled, sso_issuer, sso_client_id, sso_client_secret_enc, sso_enforce,
+		  sso_protocol, saml_idp_metadata, saml_idp_metadata_url, saml_email_attribute)
+		values ($1::uuid,$2,$3,nullif($4,''),nullif($5,''),$6,$7,$8,nullif($9,''),nullif($10,''),nullif($11,''))
 		on conflict (workspace_id) do update set require_mfa_admins = excluded.require_mfa_admins, sso_enabled = excluded.sso_enabled, sso_issuer = excluded.sso_issuer,
 		  sso_client_id = excluded.sso_client_id, sso_client_secret_enc = excluded.sso_client_secret_enc,
-		  sso_enforce = excluded.sso_enforce, updated_at = now()`,
-		c.WorkspaceID(), p.RequireMFA, p.SSOEnabled, p.Issuer, p.ClientID, p.SecretEnc, p.Enforce)
+		  sso_enforce = excluded.sso_enforce, sso_protocol = excluded.sso_protocol, saml_idp_metadata = excluded.saml_idp_metadata,
+		  saml_idp_metadata_url = excluded.saml_idp_metadata_url, saml_email_attribute = excluded.saml_email_attribute, updated_at = now()`,
+		c.WorkspaceID(), p.RequireMFA, p.SSOEnabled, p.Issuer, p.ClientID, p.SecretEnc, p.Enforce, p.Protocol, p.SAMLMetadata, p.SAMLMetadataURL, p.SAMLEmailAttr)
 	if err != nil {
 		return nil, command.DB(err)
 	}
-	if _, err := c.Emit("security.updated", nil, map[string]any{"changed": changed, "require_mfa_admins": p.RequireMFA, "sso_enabled": p.SSOEnabled, "sso_enforce": p.Enforce}); err != nil {
+	if _, err := c.Emit("security.updated", nil, map[string]any{"changed": changed, "require_mfa_admins": p.RequireMFA, "sso_enabled": p.SSOEnabled, "sso_enforce": p.Enforce, "sso_protocol": p.Protocol}); err != nil {
 		return nil, err
 	}
 	return view(p, nil), nil

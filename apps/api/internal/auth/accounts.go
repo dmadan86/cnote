@@ -223,8 +223,10 @@ func (a *Auth) CreateSession(ctx context.Context, userID string) (string, error)
 // createSession: amr is how the person proved themselves (pwd, mfa, sso); ssoWS pins an SSO session to one workspace.
 func (a *Auth) createSession(ctx context.Context, userID, amr, ssoWS string) (string, error) {
 	tok := RandomToken(32)
-	_, err := a.Pool.Exec(ctx, "insert into core.sessions (id, user_id, expires_at, amr, sso_workspace_id) values ($1, $2::uuid, now() + make_interval(days => $3), $4, nullif($5,'')::uuid)",
-		sha256Hex(tok), userID, sessionDays, amr, ssoWS)
+	c := clientOf(ctx)
+	_, err := a.Pool.Exec(ctx, `insert into core.sessions (id, user_id, expires_at, amr, sso_workspace_id, ip, user_agent, last_seen_at)
+		values ($1, $2::uuid, now() + make_interval(days => $3), $4, nullif($5,'')::uuid, nullif($6,''), nullif($7,''), now())`,
+		sha256Hex(tok), userID, sessionDays, amr, ssoWS, c.ip, c.ua)
 	return tok, command.DB(err)
 }
 
@@ -252,11 +254,16 @@ func (a *Auth) SessionUser(ctx context.Context, h http.Header) (SessionUser, err
 		return SessionUser{}, command.NewError(command.Unauthenticated, "sign in required")
 	}
 	var u SessionUser
+	var stale bool
 	err := a.Pool.QueryRow(ctx,
-		`select u.id::text, u.email, u.name, s.amr, coalesce(s.sso_workspace_id::text, '') from core.sessions s join core.users u on u.id = s.user_id
-		 where s.id = $1 and s.expires_at > now()`, sha256Hex(tok)).Scan(&u.ID, &u.Email, &u.Name, &u.AMR, &u.SSOWorkspace)
+		`select u.id::text, u.email, u.name, s.amr, coalesce(s.sso_workspace_id::text, ''), (s.last_seen_at is null or s.last_seen_at < now() - make_interval(secs => $2))
+		 from core.sessions s join core.users u on u.id = s.user_id
+		 where s.id = $1 and s.expires_at > now()`, sha256Hex(tok), seenEvery.Seconds()).Scan(&u.ID, &u.Email, &u.Name, &u.AMR, &u.SSOWorkspace, &stale)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return u, command.NewError(command.Unauthenticated, "session expired")
+	}
+	if err == nil && stale {
+		a.touch(ctx, sha256Hex(tok))
 	}
 	return u, command.DB(err)
 }

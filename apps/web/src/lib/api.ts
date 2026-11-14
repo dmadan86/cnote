@@ -35,6 +35,16 @@ export type Me = {
   workspaces: { id: string; name: string; slug: string; role: string }[]
 }
 
+export type SessionRow = {
+  id: string
+  user_agent: string
+  ip: string
+  amr: 'pwd' | 'mfa' | 'sso'
+  created_at: string
+  last_seen_at: string | null
+  current: boolean
+}
+
 export const auth = {
   me: () => api<Me>('/api/auth/me'),
   signup: (b: { name: string; email: string; password: string; workspace_name: string }) =>
@@ -52,6 +62,12 @@ export const auth = {
   mfaConfirm: (code: string) =>
     api<{ recovery_codes: string[] }>('/api/auth/mfa/confirm', { body: { code } }),
   mfaDisable: (b: { password: string; code: string }) => api('/api/auth/mfa/disable', { body: b }),
+  mfaRecovery: (b: { password: string; code: string }) =>
+    api<{ recovery_codes: string[] }>('/api/auth/mfa/recovery', { body: b }),
+  sessions: () => api<{ sessions: SessionRow[] }>('/api/auth/sessions'),
+  revokeSession: (id: string) => api('/api/auth/sessions/revoke', { body: { id } }),
+  revokeOtherSessions: () =>
+    api<{ revoked: number }>('/api/auth/sessions/revoke_others', { method: 'POST', body: {} }),
   logout: () => api('/api/auth/logout', { method: 'POST' }),
   createWorkspace: (name: string) => api<{ id: string }>('/api/workspaces', { body: { name } }),
 }
