@@ -10,7 +10,7 @@ import (
 	"github.com/cnote/api/internal/command"
 )
 
-// rustCatalog is a snapshot of GET /api/commands on the Rust server: the commands Rust owns and what agents are told
+// RustCatalog is a snapshot of GET /api/commands on the Rust server: the commands Rust owns and what agents are told
 // about them (description, tool group, confirmation, whether they are a direct MCP tool, input schema). Go serves the
 // MCP protocol itself, so it needs the whole catalogue; Go-only commands add theirs from modules/mcpmeta.go.
 // TestCatalogMatchesRust compares it with the running Rust server; regenerate with:
@@ -18,7 +18,7 @@ import (
 //	curl -s localhost:4000/api/commands > internal/mcp/catalog.json
 //
 //go:embed catalog.json
-var rustCatalog []byte
+var RustCatalog []byte // GET /api/commands of the Rust server, shared with the /api/commands handler
 
 type entry struct {
 	Name        string          `json:"name"`
@@ -36,7 +36,7 @@ var (
 
 func rustEntries() []entry {
 	baseOnce.Do(func() {
-		if err := json.Unmarshal(rustCatalog, &baseList); err != nil {
+		if err := json.Unmarshal(RustCatalog, &baseList); err != nil {
 			panic("mcp: bad catalog.json: " + err.Error())
 		}
 		for i := range baseList {
