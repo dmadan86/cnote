@@ -1,6 +1,7 @@
 package server_test
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -173,4 +174,21 @@ func TestPublicTicketForm(t *testing.T) {
 	eq(t, b.submitTicket("nope", ip, map[string]any{}).status, 404)
 	b.ok("inquiry_form.set", map[string]any{"enabled": false})
 	eq(t, b.submitTicket(tok, ip, map[string]any{"name": "Late", "phone": "9123456780", "subject": "s", "message": "m"}).status, 404)
+}
+
+// DPDP: a contact's tickets and their replies are exported and scrubbed with the contact.
+func TestTicketsFollowSubjectExportAndErase(t *testing.T) {
+	b := newBT(t, false)
+	id := b.ticket("Printer jam", map[string]any{"description": "Private detail"})["id"].(string)
+	b.ok("comment.add", map[string]any{"note_id": id, "body": "Private reply"})
+	out, _ := json.Marshal(b.ok("data.export_subject", map[string]any{"contact_id": b.contact}))
+	for _, want := range []string{"Printer jam", "Private detail", "Private reply"} {
+		if !strings.Contains(string(out), want) {
+			t.Fatalf("export misses %q", want)
+		}
+	}
+	r := b.ok("data.erase_subject", map[string]any{"contact_id": b.contact, "reason": "customer request"})
+	eq(t, r["status"], "done")
+	eq(t, b.dbStrings(b.owner.ws, "select description from crm.tickets where note_id = $1::uuid", id), []string{"[erased]"})
+	eq(t, b.dbStrings(b.owner.ws, "select body from core.comments where note_id = $1::uuid", id), []string{"[erased]"})
 }
