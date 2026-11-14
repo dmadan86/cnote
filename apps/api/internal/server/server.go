@@ -1,5 +1,6 @@
 // Package server is the strangler front door: commands registered in Go run natively, everything else
-// (all other HTTP paths, WebSocket upgrades on /collab and /mcp) is proxied to the Rust server.
+// (all other HTTP paths, WebSocket upgrades on /collab and /mcp) is proxied to the Rust server;
+// /collab goes to the TypeScript collab service instead when COLLAB_URL is set.
 package server
 
 import (
@@ -24,6 +25,8 @@ type Server struct {
 	Registry *command.Registry
 	Auth     *auth.Auth
 	Upstream http.Handler
+	// Collab, when set (COLLAB_URL), serves the /collab/ live-editing WebSocket instead of Upstream.
+	Collab http.Handler
 }
 
 func New(pool *pgxpool.Pool, reg *command.Registry, upstream http.Handler) *Server {
@@ -44,6 +47,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.WriteString(w, "ok")
 	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.EscapedPath(), "/api/w/"):
 		s.runCommand(w, r)
+	case s.Collab != nil && strings.HasPrefix(r.URL.Path, "/collab/"):
+		slog.Debug("collab", "path", r.URL.Path)
+		s.Collab.ServeHTTP(w, r)
 	default:
 		slog.Debug("proxy", "method", r.Method, "path", r.URL.Path)
 		s.Upstream.ServeHTTP(w, r)
