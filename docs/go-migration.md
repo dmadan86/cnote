@@ -154,3 +154,40 @@ Small, read-heavy, few events first; money, outbound and background-coupled last
 `TestDifferentialSharingWrites` (twin fixtures, responses plus permission rows and events compared).
 The differential test waits for the Rust worker to drain jobs (`settle`) before comparing `note.history`,
 because the worker adds asynchronous `doc.bindings_synced` events.
+## Admin port
+
+`internal/modules/admin` now registers all 12 commands from `cnote-core/src/admin.rs`:
+`member.list`, `member.add`, `agent.create`, `agent.list`, `apikey.create`, `apikey.list`,
+`apikey.revoke`, `workspace.get`, `workspace.update`, `confirmation.list`, `confirmation.decide`,
+and `usage.summary`.
+
+- Both key-creation commands set `ReturnsSecret`: repeated idempotency keys create fresh credentials,
+  and no response is persisted in `core.idempotency`. Keys use 24 random bytes encoded as unpadded
+  base64url, an eight-character random hex prefix, and lowercase SHA-256 hex of the full key.
+  Integration tests authenticate Rust-issued keys in Go and Go-issued keys in Rust, for both personal
+  and agent keys, and check revocation in both servers.
+- Role defaults and overrides match Rust (including member-level personal key creation and human
+  confirmation decisions). Admins may add guests but cannot change the owner or an admin peer.
+  Agent ownership, default scopes, human-only creation, and workspace tool-group gates are preserved.
+- Confirmation decisions only change pending requests, record the deciding person and event, and do
+  not execute the requested command. Tests cover rejection, immutable decisions, authoritative approved
+  input and single-use consumption through the existing command gate.
+- The package has small private key-generation and slug helpers because those Rust auth helpers have
+  no exported Go counterpart. Rust's expanding lowercase of U+0130 is reproduced. Email inputs with
+  uppercase Greek sigma use Rust fallback for contextual lowercase parity. Malformed/duplicate inputs
+  use the existing fallback contract; no whole admin command remains proxied.
+- `internal/server/admin_test.go` adds real-Postgres integration and differential coverage based on
+  `command_layer.rs` security/agent tests and the confirmation flow in finance/MCP tests. It compares
+  deterministic responses byte for byte across owner/admin/member/guest, foreign-workspace, personal
+  key, agent key and unauthenticated callers. Twin fixtures compare writes and database effects,
+  including events and dispatch jobs. UUIDs, fixture slugs, timestamps, and freshly generated secret
+  material cannot be identical across independent writes: generated identifiers are mapped or removed,
+  secret response shapes are compared, and each stored hash is verified against its returned key.
+  Settings include Unicode, empty and large values and integers beyond JavaScript's exact range.
+  Usage tests check aggregation, the 30-day window, and tenant isolation. Differential usage reads
+  restore the fixture's meter between servers because each machine read records another call.
+
+Validation: from `apps/api`, with the worktree `.env` loaded, run `go vet ./...`,
+`test -z "$(gofmt -l .)"`, and `go test -race -count=1 ./...`. The shared Rust reference stays running;
+Go HTTP servers are in-process `httptest` listeners. Browser e2e was not run: this worktree's brief
+forbids starting servers on the web/API ports used by that workflow.

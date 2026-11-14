@@ -4,6 +4,7 @@ package modules
 
 import (
 	"github.com/cnote/api/internal/command"
+	"github.com/cnote/api/internal/modules/admin"
 	"github.com/cnote/api/internal/modules/notes"
 	"github.com/cnote/api/internal/modules/sharing"
 )
@@ -12,6 +13,7 @@ func Commands() []command.Command {
 	var cmds []command.Command
 	cmds = append(cmds, notes.Commands()...)
 	cmds = append(cmds, sharing.Commands()...)
+	cmds = append(cmds, admin.Commands()...)
 	return cmds
 }
 
