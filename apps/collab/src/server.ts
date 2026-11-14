@@ -36,6 +36,9 @@ interface Room {
   note: string
   /** core.notes.collab_epoch this room was loaded at; every write is fenced on it. */
   epoch: number
+  /** core.notes.version this room last loaded or wrote. With no one connected, a different value means the API
+   * edited the note since and wins; live editors also save through the API (same text), so then it is ignored. */
+  version: number
   doc: Y.Doc
   peers: Map<number, Peer>
   nextPeer: number
@@ -152,14 +155,16 @@ export function createServer(opts: Options) {
   /** Access check plus room lookup/creation. Returns the room and whether this caller may edit. */
   async function prepare(p: Principal, ws: string, note: string): Promise<{ room: Room; write: boolean }> {
     const key = `${ws}/${note}`
+    await rooms.get(key)?.persisting // so the version read below includes this room's own last write
     const a = await tenant(pool, ws, async (tx) => {
       const write = await mayWrite(tx, p, note)
-      const e = await tx.query('select collab_epoch from core.notes where id = $1', [note])
-      return { write, epoch: e.rows[0].collab_epoch as number }
+      const e = await tx.query('select collab_epoch, version from core.notes where id = $1', [note])
+      return { write, epoch: e.rows[0].collab_epoch as number, version: e.rows[0].version as number }
     })
     const open = rooms.get(key)
-    if (open && open.epoch === a.epoch) return { room: open, write: a.write }
-    if (open) retire(open) // restored since this room loaded
+    if (open && open.epoch === a.epoch && (open.version === a.version || open.peers.size > 0))
+      return { room: open, write: a.write }
+    if (open) retire(open) // restored, or edited through the API while nobody had it open
     // Own the note before reading it, so nobody else can log updates between our load and our first write.
     if (!(await lockNote(note))) throw new CmdError('conflict', 'note is open on another collab instance')
     let l: Awaited<ReturnType<typeof loadDoc>>
@@ -174,6 +179,7 @@ export function createServer(opts: Options) {
       ws,
       note,
       epoch: l.epoch,
+      version: l.version,
       doc: l.doc,
       peers: new Map(),
       nextPeer: 0,
@@ -264,10 +270,11 @@ export function createServer(opts: Options) {
         const written = await tenant(pool, room.ws, async (tx) => {
           const v = await tx.query(
             `update core.notes set content_ydoc = $2, content_md = $3, version = version + 1, updated_at = now()
-             where id = $1 and deleted_at is null and collab_epoch = $4 returning version`,
-            [room.note, state, mdText, room.epoch],
+             where id = $1 and deleted_at is null and collab_epoch = $4 and (version = $5 or $6::bool) returning version`,
+            [room.note, state, mdText, room.epoch, room.version, room.peers.size > 0],
           )
-          if (!v.rows[0]) return false // restored (or deleted) since this room loaded: fenced out
+          if (!v.rows[0]) return false // restored, deleted, or (nobody connected) API-edited since this room loaded: fenced out
+          room.version = v.rows[0].version as number
           await tx.query('delete from core.note_updates where id = any($1::bigint[])', [applied])
           await tx.query(
             `insert into core.note_revisions (workspace_id, note_id, number, title, content_md, reason, created_by)
@@ -459,7 +466,8 @@ export function createServer(opts: Options) {
         }
       })
     })
-    socket.on('close', cleanup)
+    // Frames still queued when the socket closes (a page leaving mid-typing) are applied before the final snapshot.
+    socket.on('close', () => void chain.then(cleanup))
     socket.on('error', cleanup)
     if (room.retired) fence()
   }

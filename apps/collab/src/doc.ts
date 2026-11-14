@@ -12,9 +12,12 @@ export function seedClient(note: string): number {
 
 /** The live document: the last snapshot (or a seed from Markdown) plus every logged update of the current epoch.
  * Returns the doc, the epoch, and the log ids it absorbed (the next snapshot deletes them). */
-export async function loadDoc(tx: Tx, note: string): Promise<{ doc: Y.Doc; epoch: number; ids: string[] }> {
+export async function loadDoc(
+  tx: Tx,
+  note: string,
+): Promise<{ doc: Y.Doc; epoch: number; version: number; ids: string[] }> {
   const n = await tx.query(
-    'select content_md, content_ydoc, collab_epoch from core.notes where id = $1 and deleted_at is null',
+    'select content_md, content_ydoc, collab_epoch, version from core.notes where id = $1 and deleted_at is null',
     [note],
   )
   if (!n.rows[0]) throw new CmdError('not_found', 'note')
@@ -22,10 +25,12 @@ export async function loadDoc(tx: Tx, note: string): Promise<{ doc: Y.Doc; epoch
     content_md: mdText,
     content_ydoc: ydoc,
     collab_epoch: epoch,
+    version,
   } = n.rows[0] as {
     content_md: string
     content_ydoc: Buffer | null
     collab_epoch: number
+    version: number
   }
   const log = await tx.query(
     'select id, update from core.note_updates where note_id = $1 and epoch = $2 order by id',
@@ -61,5 +66,5 @@ export async function loadDoc(tx: Tx, note: string): Promise<{ doc: Y.Doc; epoch
       } catch {}
     }
   }
-  return { doc, epoch, ids }
+  return { doc, epoch, version, ids }
 }
