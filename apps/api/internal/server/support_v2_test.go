@@ -181,7 +181,7 @@ func TestInboundThreadingDedupeAndContacts(t *testing.T) {
 	eq(t, len(b.okList("ticket.messages", map[string]any{"id": first["ticket_id"]})), 1)
 	eq(t, len(b.okList("ticket.list", map[string]any{})), 1)
 
-	// threading by In-Reply-To, by References (list and string), by the subject tag
+	// threading by In-Reply-To and by References (list and string)
 	r1 := send(mail("ravi@cust.example.test", "Re: Cannot log in", "Still failing", "m2@cust", map[string]any{"in_reply_to": "<m1@cust>"}))
 	eq(t, r1["created"], false)
 	eq(t, r1["ticket_id"], first["ticket_id"])
@@ -189,7 +189,7 @@ func TestInboundThreadingDedupeAndContacts(t *testing.T) {
 	eq(t, r2["ticket_id"], first["ticket_id"])
 	r3 := send(mail("ravi@cust.example.test", "Re: Cannot log in", "Fourth", "m4@cust", map[string]any{"references": "<zzz@x> <m3@cust>"}))
 	eq(t, r3["ticket_id"], first["ticket_id"])
-	r4 := send(mail("ravi@cust.example.test", "Re: [TKT-000001] Cannot log in", "Fifth", "m5@cust", nil))
+	r4 := send(mail("ravi@cust.example.test", "Re: Cannot log in", "Fifth", "m5@cust", map[string]any{"in_reply_to": "<m4@cust>"}))
 	eq(t, r4["ticket_id"], first["ticket_id"])
 	eq(t, len(b.okList("ticket.messages", map[string]any{"id": first["ticket_id"]})), 5)
 	eq(t, len(b.okList("ticket.list", map[string]any{})), 1)
@@ -199,6 +199,14 @@ func TestInboundThreadingDedupeAndContacts(t *testing.T) {
 	eq(t, s1["created"], true)
 	if s1["ticket_id"] == first["ticket_id"] {
 		t.Fatal("a stranger threaded onto someone else's ticket")
+	}
+	eq(t, len(b.okList("ticket.messages", map[string]any{"id": first["ticket_id"]})), 5)
+
+	// forged From + the TKT tag, no thread headers: a new ticket, the victim's is untouched
+	f := send(mail("ravi@cust.example.test", "Re: [TKT-000001] Cannot log in", "forged", "f1@evil", nil))
+	eq(t, f["created"], true)
+	if f["ticket_id"] == first["ticket_id"] {
+		t.Fatal("subject tag threaded a message onto an existing ticket")
 	}
 	eq(t, len(b.okList("ticket.messages", map[string]any{"id": first["ticket_id"]})), 5)
 
@@ -281,10 +289,7 @@ func TestTicketReplyEmailsCustomerNotes(t *testing.T) {
 	}
 	eq(t, len(b.okList("comment.list", map[string]any{"note_id": tk})), 1)
 
-	// the customer's reply to that email threads by the tag in the subject
-	sec := b.inbound()
-	rr := b.postMail(sec, mail("cust@example.test", "Re: [TKT-000001] Printer offline", "Thanks", "c1@cust", nil), "", "")
-	eq(t, rr.json()["ticket_id"], tk)
+	b.inbound()
 
 	// a failing mail server saves nothing
 	n := len(b.okList("ticket.messages", map[string]any{"id": tk}))

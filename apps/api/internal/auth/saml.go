@@ -10,8 +10,11 @@ package auth
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -176,37 +179,49 @@ func FetchIDPMetadata(ctx context.Context, u string) (string, error) {
 	return string(buf), nil
 }
 
-// SAMLStart stores a request id and returns the IdP URL to send the browser to.
-func (a *Auth) SAMLStart(ctx context.Context, slug, base string) (string, error) {
+// samlBinding is what the saml_requests row keeps of the browser's nonce cookie.
+func samlBinding(nonce string) string {
+	h := sha256.Sum256([]byte(nonce))
+	return hex.EncodeToString(h[:])
+}
+
+// SAMLStart stores a request id and returns the IdP URL to send the browser to, plus a random nonce the caller sets as
+// a cookie; only a browser presenting it at the ACS can finish this sign-in (login-CSRF binding).
+func (a *Auth) SAMLStart(ctx context.Context, slug, base string) (string, string, error) {
 	cfg, err := a.samlConfig(ctx, slug)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	sp, err := samlSP(base, slug, cfg.IDP)
 	if err != nil {
-		return "", ssoErr(err.Error())
+		return "", "", ssoErr(err.Error())
 	}
 	req, err := sp.MakeAuthenticationRequest(sp.GetSSOBindingLocation(saml.HTTPRedirectBinding), saml.HTTPRedirectBinding, saml.HTTPPostBinding)
 	if err != nil {
-		return "", ssoErr("could not build the sign-in request")
+		return "", "", ssoErr("could not build the sign-in request")
 	}
 	to, err := req.Redirect("", sp)
 	if err != nil {
-		return "", ssoErr("could not build the sign-in request")
+		return "", "", ssoErr("could not build the sign-in request")
 	}
+	nb := make([]byte, 32)
+	if _, err := rand.Read(nb); err != nil {
+		return "", "", ssoErr("could not build the sign-in request")
+	}
+	nonce := hex.EncodeToString(nb)
 	tx, err := db.BeginTenant(ctx, a.Pool, cfg.WorkspaceID)
 	if err != nil {
-		return "", command.DB(err)
+		return "", "", command.DB(err)
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	if _, err := tx.Exec(ctx, "delete from core.saml_requests where expires_at < now()"); err != nil {
-		return "", command.DB(err)
+		return "", "", command.DB(err)
 	}
-	if _, err := tx.Exec(ctx, "insert into core.saml_requests (workspace_id, request_id, expires_at) values ($1::uuid, $2, now() + make_interval(secs => $3))",
-		cfg.WorkspaceID, req.ID, samlRequestTTL.Seconds()); err != nil {
-		return "", command.DB(err)
+	if _, err := tx.Exec(ctx, "insert into core.saml_requests (workspace_id, request_id, expires_at, binding) values ($1::uuid, $2, now() + make_interval(secs => $3), $4)",
+		cfg.WorkspaceID, req.ID, samlRequestTTL.Seconds(), samlBinding(nonce)); err != nil {
+		return "", "", command.DB(err)
 	}
-	return to.String(), command.DB(tx.Commit(ctx))
+	return to.String(), nonce, command.DB(tx.Commit(ctx))
 }
 
 // structure refuses what the library would tolerate: DTDs, repeated IDs (the usual signature-wrapping carrier) and anything
@@ -284,7 +299,7 @@ func attr(as *saml.Assertion, names ...string) string {
 
 // SAMLFinish completes the login from the POSTed SAMLResponse: it returns the user id, the workspace id (the session is
 // pinned to it) and the session token.
-func (a *Auth) SAMLFinish(ctx context.Context, slug, base, samlResponse string) (userID, ws, token string, err error) {
+func (a *Auth) SAMLFinish(ctx context.Context, slug, base, samlResponse, nonce string) (userID, ws, token string, err error) {
 	const generic = "the identity provider's response could not be verified"
 	cfg, err := a.samlConfig(ctx, slug)
 	if err != nil {
@@ -308,11 +323,11 @@ func (a *Auth) SAMLFinish(ctx context.Context, slug, base, samlResponse string) 
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	var pending bool
-	if err := tx.QueryRow(ctx, "select exists (select 1 from core.saml_requests where request_id = $1 and expires_at > now())", inResp).Scan(&pending); err != nil {
+	if err := tx.QueryRow(ctx, "select exists (select 1 from core.saml_requests where request_id = $1 and expires_at > now() and binding = $2)", inResp, samlBinding(nonce)).Scan(&pending); err != nil {
 		return "", "", "", command.DB(err)
 	}
 	if inResp == "" || !pending {
-		return "", "", "", samlReject("the sign-in link is incomplete or expired", "InResponseTo matches no pending request")
+		return "", "", "", samlReject("the sign-in link is incomplete or expired", "InResponseTo matches no pending request for this browser")
 	}
 	as, perr := parseSAML(sp, doc, inResp)
 	if perr != nil {

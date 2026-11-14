@@ -392,3 +392,24 @@ func TestChatAgentPostIsStreamed(t *testing.T) {
 		t.Fatalf("agent post: %v", e)
 	}
 }
+
+// A person holds at most 5 streams; the 6th is a 429 (the web client polls instead), and a closed stream frees a slot.
+func TestChatStreamCapPerUser(t *testing.T) {
+	b := newBT(t, false)
+	var open []*sse
+	for i := 0; i < 5; i++ {
+		open = append(open, b.stream(b.owner))
+	}
+	if _, code := b.openStream(b.owner, b.owner.ws, nil); code != 429 {
+		t.Fatalf("6th stream: %d, want 429", code)
+	}
+	open[0].cancel()
+	for i := 0; ; i++ {
+		if s, code := b.openStream(b.owner, b.owner.ws, nil); s != nil {
+			break
+		} else if code != 429 || i > 50 {
+			t.Fatalf("slot not freed: %d", code)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}

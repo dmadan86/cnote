@@ -55,3 +55,20 @@ func join(s []string) string {
 	}
 	return out
 }
+
+// clientIP (inquiry/support rate buckets) and publiclinksIP share one rule: X-Forwarded-For only with PUBLIC_TRUST_PROXY=1,
+// and then its rightmost value (the one our proxy appended), never the client-supplied first one.
+func TestClientIPTrustsForwardedForOnlyBehindProxy(t *testing.T) {
+	r := httptest.NewRequest("POST", "/api/public/inquiry/x", nil)
+	r.RemoteAddr = "192.0.2.1:5555"
+	r.Header.Set("X-Forwarded-For", "6.6.6.6, 203.0.113.9")
+	for env, want := range map[string]string{"": "192.0.2.1", "0": "192.0.2.1", "1": "203.0.113.9"} {
+		t.Setenv("PUBLIC_TRUST_PROXY", env)
+		if got := clientIP(r); got != want {
+			t.Errorf("clientIP PUBLIC_TRUST_PROXY=%q: %s, want %s", env, got, want)
+		}
+		if got := publiclinksIP(r); got != want {
+			t.Errorf("publiclinksIP PUBLIC_TRUST_PROXY=%q: %s, want %s", env, got, want)
+		}
+	}
+}

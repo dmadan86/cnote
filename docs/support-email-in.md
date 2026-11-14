@@ -22,8 +22,9 @@ Headers:
 - `X-Cnote-Signature`: hex `HMAC-SHA256(secret, timestamp + "." + body)` over the exact bytes you send.
 
 Behaviour: the sender is matched to a CRM contact by email (or created). A reply joins its ticket when it quotes a
-`message_id` we hold in `in_reply_to`/`references`, or carries `TKT-000123` in the subject, and only when it comes from
-that ticket's contact; anything else opens a new ticket. A resolved or closed ticket reopens. The same `message_id`
+`message_id` we hold in `in_reply_to`/`references`, and only when it comes from that ticket's contact; anything else
+opens a new ticket. The `TKT-000123` subject tag is not used for threading: the sender address is not authenticated by
+the signature, so a forged `from` plus a guessed tag could otherwise write into someone's ticket. A resolved or closed ticket reopens. The same `message_id`
 twice is stored once (the second answer has `"duplicate": true`). Quoted history ("On ... wrote:", "> ..." lines) is
 cut when something remains above it.
 

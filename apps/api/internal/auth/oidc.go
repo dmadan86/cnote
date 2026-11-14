@@ -32,6 +32,7 @@ import (
 
 const (
 	SSOCookie    = "cn_sso"
+	SAMLCookie   = "cn_saml"
 	ssoStateTTL  = 10 * time.Minute
 	maxIDPBody   = 1 << 20
 	clockLeeway  = time.Minute
