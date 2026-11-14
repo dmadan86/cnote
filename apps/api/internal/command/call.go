@@ -12,3 +12,6 @@ func (c *Ctx) Call(name string, input any) (json.RawMessage, error) {
 	out, err := c.reg.run(c, name, b, ExecOptions{})
 	return out, err
 }
+
+// Bind attaches this registry to a context whose tenant transaction is owned by the caller.
+func (r *Registry) Bind(c *Ctx) { c.reg = r }

@@ -405,3 +405,21 @@ Final race-suite result: 55 top-level tests / 357 including subtests passed, zer
 input returns an `invalid` error from Go rather than `ErrFallback`. The Rust MCP endpoint (`/mcp`) does not list
 them yet, so MCP clients cannot call them until the tool list is generated from the Go registry. Quotations never
 post to the ledger; their numbers (`QT/<FY>/<n>`) come from their own `quote:<FY>` series in `billing.sequences`.
+
+## Go-only commands: recurring invoices
+
+`recurring.create|update|get|list|pause|resume|end|run_now` (`internal/modules/recurring`, migration
+`0960_recurring_invoices.sql`) are Go-only and absent from the Rust `/mcp` list. A schedule is a `recurring_invoice`
+note with `billing.recurring_invoices` (frequency monthly|quarterly|yearly, interval, start/next/end dates,
+`auto_issue`, status, `last_invoice_id`) and `billing.recurring_invoice_lines`; both have tenant RLS. Each period calls
+`invoice.create_draft` with `invoice_date` = the period date, then `invoice.issue` when `auto_issue`. The anchor day is
+kept, so a 31st schedule runs on the last day of shorter months and Feb 29 returns in leap years.
+
+The sweep (`RECURRING_SWEEP_SECS`, default 60, `0` disables) lists workspaces via `core.all_workspace_ids()` and handles
+each due schedule in its own `db.BeginTenant` transaction using `for update skip locked`, so several API instances
+never double-generate. It catches up at most 12 periods per run and rolls everything back if one period fails (the
+schedule is retried next sweep). Runs act as `KindSystem` on behalf of the creator, who must still be a member; system
+principals may issue invoices, so scheduled auto-issue posts directly. A machine caller (agent or API key) of
+`run_now` needs confirmation, and if `auto_issue` is set the nested `invoice.issue` needs its own: the draft is kept,
+the period is consumed and `recurring.issue_confirmation_required` carries the invoice and confirmation ids.
+`run_now` only consumes a due period. Cadence cannot change once an invoice was generated.

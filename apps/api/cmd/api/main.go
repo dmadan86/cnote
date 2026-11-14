@@ -14,6 +14,7 @@ import (
 
 	"github.com/cnote/api/internal/db"
 	"github.com/cnote/api/internal/modules"
+	"github.com/cnote/api/internal/modules/recurring"
 	"github.com/cnote/api/internal/proxy"
 	"github.com/cnote/api/internal/server"
 )
@@ -45,9 +46,16 @@ func main() {
 		slog.Error("RUST_API_URL", "error", err)
 		os.Exit(1)
 	}
+	registry := modules.Registry()
+	sweepSecs, err := strconv.Atoi(env("RECURRING_SWEEP_SECS", "60"))
+	if err != nil || sweepSecs < 0 {
+		slog.Error("invalid RECURRING_SWEEP_SECS")
+		os.Exit(1)
+	}
+	recurring.Start(ctx, pool, registry, time.Duration(sweepSecs)*time.Second)
 	srv := &http.Server{
 		Addr:              ":" + env("PORT", "4100"),
-		Handler:           server.New(pool, modules.Registry(), upstream),
+		Handler:           server.New(pool, registry, upstream),
 		ReadHeaderTimeout: 10 * time.Second, // no Read/WriteTimeout: WebSockets and streams are long-lived
 	}
 	go func() {
