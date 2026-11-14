@@ -54,6 +54,12 @@ type meta struct {
 var idOnly = schema([]string{"id"}, props{"id": id})
 
 var mcpMeta = map[string]meta{
+	"approval.rule_set": {"Set the approval rule for a command (quote.send, invoice.issue, bill.record, bill.pay, invoice.write_off): actions at or above the amount by non-owners wait for approval. Admins only.", schema([]string{"command"}, props{
+		"command": str, "min_amount_minor": props{"type": "integer", "description": "Paise"}, "approver_user_id": id, "approver_role": props{"type": "string", "enum": []string{"admin", "owner"}}, "fallback_user_id": id, "escalate_after_hours": num, "enabled": flag})},
+	"approval.rule_list": {"List the workspace's approval rules.", schema(nil, props{})},
+	"approval.list":      {"List approval requests (pending by default), optionally only mine or for one page.", schema(nil, props{"status": str, "mine": flag, "note_id": id})},
+	"approval.decide":    {"Approve or reject a pending approval request; rejecting needs a reason. People only: agents and API keys are refused.", schema([]string{"id", "decision"}, props{"id": id, "decision": props{"type": "string", "enum": []string{"approve", "reject"}}, "reason": str})},
+	"approval.cancel":    {"Cancel your own pending approval request.", idOnly},
 	"share.create": {"Create a public link to a quotation or invoice for the customer (accept or pay). Returns the link once, plus a WhatsApp click-to-chat URL. Needs human confirmation for agents.", schema([]string{"note_id"}, props{
 		"note_id": id, "expires_in_days": props{"type": "integer", "description": "1-365, default 30"}, "origin": str, "phone": str, "message": str, "reminder": flag})},
 	"share.email": {"Email a fresh public link to a quotation or invoice. Needs human confirmation for agents.", schema([]string{"note_id", "to"}, props{

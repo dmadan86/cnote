@@ -1,6 +1,7 @@
 'use client'
 import { useSearchParams } from 'next/navigation'
 import { useEffect, useState } from 'react'
+import { ApprovalRules } from '@/components/approvals/rules'
 import { CompanyProfile } from '@/components/business-type'
 import { HooksTab } from '@/components/hooks-settings'
 import { Secret } from '@/components/secret'
@@ -16,6 +17,7 @@ const TABS = [
   'API keys',
   'Agents',
   'Tool groups',
+  'Approvals',
   'Confirmations',
   'Connected apps',
   'Webhooks',
@@ -425,6 +427,7 @@ export default function Settings() {
         {tab === 'API keys' && <KeysTab ws={ws} />}
         {tab === 'Agents' && <AgentsTab ws={ws} />}
         {tab === 'Tool groups' && <GroupsTab ws={ws} />}
+        {tab === 'Approvals' && <ApprovalRules ws={ws} />}
         {tab === 'Confirmations' && <ConfirmationsTab ws={ws} />}
         {tab === 'Connected apps' && <AppsTab ws={ws} />}
         {tab === 'Webhooks' && <HooksTab ws={ws} />}

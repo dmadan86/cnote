@@ -39,7 +39,7 @@ func me(c *command.Ctx) (string, error) {
 type NotificationOut struct {
 	ID        string      `json:"id"`
 	Kind      string      `json:"kind"`
-	NoteID    string      `json:"note_id"`
+	NoteID    *string     `json:"note_id"`
 	NoteTitle string      `json:"note_title"`
 	ActorName *string     `json:"actor_name"`
 	CreatedAt command.Ts  `json:"created_at"`

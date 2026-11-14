@@ -98,3 +98,7 @@ only after Lost is chosen and Cancel changes nothing; 44px targets and 16px inpu
   from the page; line items stack on phones; actions and forms are hidden in print; expired, revoked and unknown
   links share one neutral "Link unavailable" state; the new link is shown once and older links list as
   status, views and revoke; 44px touch targets and 16px inputs on the public page.
+
+## Approvals (WP1)
+
+Mobbin refs: Canva "Designs to review" table (https://mobbin.com/screens/476563dd-d2bd-418e-8ddf-8ba75b6130c8), Remote expense approval rule builder (https://mobbin.com/screens/5b8c1fc5-a2a0-4064-9eec-3e22ee6b6596), Square rules cards (https://mobbin.com/screens/89b02f1d-3d90-481c-b8aa-1f0859bc7f16). Codex consult applied: plain action labels, count on "Waiting for me", explicit approve label, labelled rejection field, one-sentence rule summary, per-row switch labels, stacked cards on phones, distinct empty states.

@@ -7,12 +7,26 @@ import { ago } from '@/lib/hooks'
 
 type Item = {
   id: string
-  note_id: string
+  kind: string
+  note_id: string | null
   note_title: string
   actor_name: string | null
   created_at: string
   read_at: string | null
 }
+
+const text = (n: Item) => {
+  const who = n.actor_name ?? 'Someone'
+  if (n.kind === 'approval_requested') return `${who} asked for your approval: ${n.note_title || 'Untitled'}`
+  if (n.kind === 'approval_decided' || n.kind === 'reminder') return n.note_title // the server wrote the sentence
+  return `${who} mentioned you in ${n.note_title || 'Untitled'}`
+}
+const link = (ws: string, n: Item) =>
+  n.kind === 'reminder'
+    ? `/w/${ws}`
+    : n.kind.startsWith('approval')
+      ? `/w/${ws}/approvals`
+      : `/w/${ws}/n/${n.note_id}`
 
 /** Bell with an unread badge (polled every 30s and on focus) and a panel of the latest notifications. */
 export function NotificationBell({ ws }: { ws: string }) {
@@ -100,7 +114,7 @@ export function NotificationBell({ ws }: { ws: string }) {
                   onClick={async () => {
                     if (!n.read_at) await markRead(n.id)
                     setOpen(false)
-                    router.push(`/w/${ws}/n/${n.note_id}`)
+                    router.push(link(ws, n))
                   }}
                   className="flex w-full items-start gap-2 rounded px-2 py-1.5 text-left text-[13px] hover:bg-hover"
                 >
@@ -109,9 +123,7 @@ export function NotificationBell({ ws }: { ws: string }) {
                     className={`mt-1.5 size-2 shrink-0 rounded-full ${n.read_at ? 'bg-transparent' : 'bg-accent'}`}
                   />
                   <span className="min-w-0">
-                    <span className="block">
-                      {n.actor_name ?? 'Someone'} mentioned you in {n.note_title || 'Untitled'}
-                    </span>
+                    <span className="block">{text(n)}</span>
                     <span className="block text-[12px] text-muted">{ago(n.created_at)}</span>
                   </span>
                 </button>

@@ -14,12 +14,12 @@ type Summary = {
     payments_pending?: { count: number; total_minor: number; overdue_count: number; overdue_minor: number }
     new_inquiries?: { count: number }
     follow_ups?: { count: number; overdue: number }
-    approvals?: { count: number; confirmations: number; quotes_awaiting: number }
+    approvals?: { count: number; confirmations: number; quotes_awaiting: number; to_approve: number }
     bills_due?: { count: number; total_minor: number; overdue_count: number }
     urgent?: { count: number; overdue_tasks: number; overdue_invoices: number }
   }
   attention: {
-    kind: 'task' | 'invoice' | 'bill' | 'quote' | 'deal' | 'confirmation'
+    kind: 'task' | 'invoice' | 'bill' | 'quote' | 'deal' | 'confirmation' | 'approval'
     id: string
     key: string | null
     title: string
@@ -85,6 +85,7 @@ export function HomeDashboard() {
       quote: `${base}/billing/quotes/${a.id}`,
       deal: `${base}/crm/deals/${a.id}`,
       confirmation: `${base}/settings?tab=Confirmations`,
+      approval: `${base}/approvals`,
     })[a.kind]
   const rows = all ? data.attention : data.attention.slice(0, 5)
   const tiles: Tile<React.ReactNode>[] = [
@@ -122,13 +123,15 @@ export function HomeDashboard() {
       <TileLink
         key="appr"
         href={
-          t.approvals.confirmations
-            ? `${base}/settings?tab=Confirmations`
-            : `${base}/billing/quotes?status=sent`
+          t.approvals.to_approve
+            ? `${base}/approvals`
+            : t.approvals.confirmations
+              ? `${base}/settings?tab=Confirmations`
+              : `${base}/billing/quotes?status=sent`
         }
         label="Approvals waiting"
         value={String(t.approvals.count)}
-        detail={`${t.approvals.confirmations} to confirm, ${t.approvals.quotes_awaiting} quotes awaiting customer`}
+        detail={`${t.approvals.to_approve} to approve, ${t.approvals.confirmations} to confirm, ${t.approvals.quotes_awaiting} quotes awaiting customer`}
       />
     ),
     t.tasks_due && (

@@ -27,11 +27,14 @@ export function SubNav({ label, items }: { label: string; items: [href: string, 
   )
 }
 
-/** Run a command; agents get `confirmation_required`, which a human UI treats as a failure to surface. */
+/** Run a command. Agents get `confirmation_required`, a failure to surface. A held human action (`approval_required`)
+ * is not a failure: it returns, and the document's banner shows who is asked. */
 export async function run<T>(ws: string, name: string, input: unknown): Promise<T> {
   const r = await cmd<T & { confirmation_required?: boolean }>(ws, name, input)
   if (r && typeof r === 'object' && 'confirmation_required' in r && r.confirmation_required)
     throw new Error('This action needs approval in Settings > Confirmations.')
+  if (r && typeof r === 'object' && 'approval_required' in r)
+    window.dispatchEvent(new Event('approval-changed'))
   return r
 }
 

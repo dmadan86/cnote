@@ -14,6 +14,8 @@ import (
 
 	"github.com/cnote/api/internal/db"
 	"github.com/cnote/api/internal/modules"
+	"github.com/cnote/api/internal/modules/approvals"
+	"github.com/cnote/api/internal/modules/billing"
 	"github.com/cnote/api/internal/modules/recurring"
 	"github.com/cnote/api/internal/proxy"
 	"github.com/cnote/api/internal/server"
@@ -53,6 +55,12 @@ func main() {
 		os.Exit(1)
 	}
 	recurring.Start(ctx, pool, registry, time.Duration(sweepSecs)*time.Second)
+	approvalSecs, err := strconv.Atoi(env("APPROVAL_SWEEP_SECS", "300"))
+	if err != nil || approvalSecs < 0 {
+		slog.Error("invalid APPROVAL_SWEEP_SECS")
+		os.Exit(1)
+	}
+	approvals.Start(ctx, pool, time.Duration(approvalSecs)*time.Second, billing.TodayIST)
 	front := server.New(pool, registry, upstream)
 	if u := os.Getenv("COLLAB_URL"); u != "" { // the TypeScript collab service; unset keeps /collab on Rust
 		if front.Collab, err = proxy.New(u); err != nil {

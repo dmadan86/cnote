@@ -24,7 +24,7 @@ const attentionMax = 10
 
 // Item is one row of the attention list. Severity: overdue > due > info.
 type Item struct {
-	Kind        string  `json:"kind"` // task | invoice | bill | quote | deal | confirmation
+	Kind        string  `json:"kind"` // task | invoice | bill | quote | deal | confirmation | approval
 	ID          string  `json:"id"`
 	Key         *string `json:"key"` // task key (ENG-42): the route of an item
 	Title       string  `json:"title"`
@@ -237,13 +237,13 @@ func summary(c *command.Ctx, input json.RawMessage) (any, error) {
 	}
 
 	// ---- approvals: pending confirmations + quotes sent and awaiting the customer ----
-	var confirmations, quotes int64
+	var confirmations, quotes, decisions int64
 	haveApprovals := false
 	if role >= command.Member {
 		haveApprovals = true
 		// admins see every pending confirmation (confirmation.decide is member-level, but the queue is the owner's);
 		// members see the ones they or their agents requested
-		const cw = ` from core.confirmations f where f.status = 'pending' and ($1 or f.requested_by = $2::text
+		const cw = ` from core.confirmations f where f.status = 'pending' and f.kind = 'agent' and ($1 or f.requested_by = $2::text
 			 or f.requested_by in (select a.id::text from core.agents a where a.owner_user_id = $2::uuid))`
 		if err := c.Tx.QueryRow(c.Context, "select count(*)"+cw, admin, uid).Scan(&confirmations); err != nil {
 			return nil, command.DB(err)
@@ -258,6 +258,27 @@ func summary(c *command.Ctx, input json.RawMessage) (any, error) {
 			}); err != nil {
 			return nil, err
 		}
+	}
+	// human approval requests this person can decide (WP1): admins every one, others those naming them; never their own unless owner
+	if role >= command.Member && uid != nil {
+		const dw = ` from core.confirmations f where f.status = 'pending' and f.kind = 'approval' and ($1 or f.approver_user_id = $2::uuid)
+			 and (f.requested_by <> $2::text or $3)`
+		args := []any{admin, uid, role == command.Owner}
+		if err := c.Tx.QueryRow(c.Context, "select count(*)"+dw, args...).Scan(&decisions); err != nil {
+			return nil, command.DB(err)
+		}
+		if err := r.add("select f.id::text, coalesce(n.title, f.command), f.amount_minor, f.created_at::date::text, f.command from core.confirmations f left join core.notes n on n.id = f.note_id"+
+			dw[len(" from core.confirmations f"):]+" order by f.created_at limit 10", args,
+			func(rs pgx.Rows) (Item, error) {
+				it := Item{Kind: "approval", Severity: "due", Reason: "Waiting for your approval"}
+				var d, cmdName string
+				err := rs.Scan(&it.ID, &it.Title, &it.AmountMinor, &d, &cmdName)
+				it.Date = &d
+				return it, err
+			}); err != nil {
+			return nil, err
+		}
+		haveApprovals = true
 	}
 	if on("billing") && role >= command.Member {
 		const qw = ` from billing.quotations q join core.notes n on n.id = q.note_id where q.status = 'sent' and` + vis
@@ -279,7 +300,7 @@ func summary(c *command.Ctx, input json.RawMessage) (any, error) {
 		}
 	}
 	if haveApprovals {
-		tiles["approvals"] = map[string]any{"count": confirmations + quotes, "confirmations": confirmations, "quotes_awaiting": quotes}
+		tiles["approvals"] = map[string]any{"count": confirmations + quotes + decisions, "confirmations": confirmations, "quotes_awaiting": quotes, "to_approve": decisions}
 	}
 
 	// ---- urgent: overdue items + overdue invoices ----
