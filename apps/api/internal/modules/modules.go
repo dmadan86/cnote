@@ -36,7 +36,7 @@ func Commands() []command.Command {
 	cmds = append(cmds, purchases.Commands()...)
 	cmds = append(cmds, recurring.Commands()...)
 	cmds = append(cmds, home.Commands()...)
-	return cmds
+	return withMeta(cmds)
 }
 
 func Registry() *command.Registry { return command.NewRegistry(Commands()...) }

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -52,6 +53,10 @@ type Command struct {
 	Confirm       bool
 	ReturnsSecret bool
 	Handler       Handler
+	// Description and Schema (JSON Schema of the input) are what agents see over MCP. Set for Go-only commands;
+	// commands Rust also has are described by Rust. See modules/mcpmeta.go.
+	Description string
+	Schema      json.RawMessage
 }
 
 func NewCommand(name string, g Group, h Handler) Command {
@@ -250,4 +255,14 @@ func serialize(out any) ([]byte, error) {
 		return nil, NewError(Invalid, err.Error())
 	}
 	return n, nil
+}
+
+// List returns every command sorted by name (MCP discovery, metadata checks).
+func (r *Registry) List() []Command {
+	out := make([]Command, 0, len(r.cmds))
+	for _, c := range r.cmds {
+		out = append(out, c)
+	}
+	slices.SortFunc(out, func(a, b Command) int { return strings.Compare(a.Name, b.Name) })
+	return out
 }

@@ -614,7 +614,6 @@ func TestCnQaSecRevokedAndReadOnlyAgentKeys(t *testing.T) {
 // MCP-003 (Go-only commands visible to agents). The Rust /mcp endpoint, which the Go API proxies, lists only the Rust
 // registry, so commands that exist only in Go (quote.*) cannot be found with `discover` nor run with `invoke`.
 func TestCnQaMCP003GoOnlyCommandsAreDiscoverableByAgents(t *testing.T) {
-	t.Skip("known gap: /mcp is proxied to Rust, whose registry lacks Go-only commands (quote.*); fix = Go answers tools/call discover+invoke for its native commands (merge into Rust's discover) and proxies the rest")
 	d, owner := newDG(t)
 	key := d.ok(owner, "agent.create", map[string]any{"name": "Seller"})["api_key"].(string)
 	body := map[string]any{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": map[string]any{"name": "discover", "arguments": map[string]any{"query": "quote send"}}}

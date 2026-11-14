@@ -140,3 +140,41 @@ func (a *Auth) principalFromAPIKey(ctx context.Context, key string) (command.Pri
 	}
 	return p, nil
 }
+
+// MCPPrincipal resolves the bearer of an /mcp request (cn_ API key or cno_ OAuth token issued for `resource`).
+// ok=false means "not authenticated": the caller proxies to Rust, which owns the 401 challenge.
+func (a *Auth) MCPPrincipal(ctx context.Context, h http.Header, resource string) (p command.Principal, ok bool, err error) {
+	key, has := bearer(h)
+	if !has {
+		return p, false, nil
+	}
+	if !strings.HasPrefix(key, oauthAccessPrefix) {
+		p, err = a.principalFromAPIKey(ctx, key)
+		return p, p.WorkspaceID != "", err
+	}
+	// Same SQL as principal_from_oauth_token: the grant's resource must equal this endpoint's URL.
+	var grant, user, ws string
+	var stale bool
+	err = a.Pool.QueryRow(ctx,
+		`select g.id::text, g.user_id::text, g.workspace_id::text,
+		        (g.last_used_at is null or g.last_used_at < now() - interval '1 minute')
+		 from core.oauth_tokens t join core.oauth_grants g on g.id = t.grant_id
+		 where t.token_hash = $1 and t.kind = 'access' and t.expires_at > now() and g.revoked_at is null
+		   and g.resource = $2`, sha256Hex(key), resource).Scan(&grant, &user, &ws, &stale)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return p, false, nil
+	}
+	if err != nil {
+		return p, false, command.DB(err)
+	}
+	owner, err := a.userPrincipal(ctx, user, ws)
+	if err != nil {
+		return p, false, nil // user left the workspace
+	}
+	if stale {
+		if _, err := a.Pool.Exec(ctx, "update core.oauth_grants set last_used_at = now() where id = $1::uuid", grant); err != nil {
+			return p, false, command.DB(err)
+		}
+	}
+	return command.Principal{Kind: command.KindAgent, UserID: &user, WorkspaceID: ws, Role: min(owner.Role, command.Admin)}, true, nil
+}

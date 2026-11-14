@@ -409,8 +409,8 @@ Final race-suite result: 55 top-level tests / 357 including subtests passed, zer
 `quote.create_draft`, `quote.update_draft`, `quote.get`, `quote.list`, `quote.send`, `quote.accept`,
 `quote.reject`, `quote.convert_to_invoice` and `quote.convert_to_project` (`internal/modules/quotes`, migration
 `0950_quotations.sql`) exist only in Go. Rust has no handler for them, so there is nothing to fall back to: bad
-input returns an `invalid` error from Go rather than `ErrFallback`. The Rust MCP endpoint (`/mcp`) does not list
-them yet, so MCP clients cannot call them until the tool list is generated from the Go registry. Quotations never
+input returns an `invalid` error from Go rather than `ErrFallback`. Agents reach them through
+`/mcp` `discover` and `invoke` (see "MCP for Go-only commands" below). Quotations never
 post to the ledger; their numbers (`QT/<FY>/<n>`) come from their own `quote:<FY>` series in `billing.sequences`.
 
 ## Go-only command: contact.lifecycle
@@ -489,3 +489,16 @@ Open, not fixed (see test skips and the QA report): API-007 reusing an idempoten
 returns the first result on both servers (needs a payload hash in `core.idempotency` and a Rust change);
 `core.events` is append-only, so hard-deleting a note that has events fails (notes are soft-deleted in practice);
 SEC-014 denials are not written to the event log; the three OAuth/install tables are readable by any tenant session.
+
+## MCP for Go-only commands
+
+`/mcp` stays on Rust (transport, resources, core tools, OAuth endpoints, the 401 challenge). `internal/server/mcp.go`
+intercepts only `POST /mcp` `tools/call` of the two meta tools: `discover` is answered by Rust and Go merges in its
+Go-only commands (same scoring and shape); `invoke` of a Go-only command runs natively through `Registry.Execute`, so
+role, scopes, workspace tool groups, rate limit, idempotency, confirmation and usage are the REST gate. Anything else,
+any request Go cannot authenticate (bad key, wrong OAuth audience, revoked grant) and any request with `requestState`
+is proxied unchanged. `cn_` keys and `cno_` tokens (resource must equal `PUBLIC_BASE_URL/mcp`, or the loopback Host)
+resolve in `auth.MCPPrincipal`. A Go-only command is one with `Description` + `Schema`, set in
+`modules/mcpmeta.go`; `TestGoOnlyCommandsHaveMCPMetadata` fails for a Go-only command without an entry. Go-only
+commands are not "core" tools, like most Rust commands: they are not in `tools/list`. Not done: the MCP elicitation
+nudge for Go-only confirmations (the result still carries the approval message).
