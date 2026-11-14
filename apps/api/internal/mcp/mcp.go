@@ -39,7 +39,6 @@ type Server struct {
 	Pool     *pgxpool.Pool
 	Registry *command.Registry
 	Auth     *auth.Auth
-	Upstream http.Handler
 
 	once sync.Once
 	cat  []entry

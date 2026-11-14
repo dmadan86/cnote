@@ -113,7 +113,7 @@ func TestQAConcurrentCheckpointsAndRestoresKeepNumbersConsistent(t *testing.T) {
 	t.Run("concurrent restores and edits", func(t *testing.T) {
 		note := e.note(o, "race restore")
 		e.must(o, "note.update", map[string]any{"id": note, "content_md": "first"})
-		r := e.cmd(e.rust, o, o.ws, "note.revisions", map[string]any{"note_id": note}, nil)
+		r := e.cmd(e.gosv.URL, o, o.ws, "note.revisions", map[string]any{"note_id": note}, nil)
 		var list []map[string]any
 		if err := jsonUnmarshal(r.body, &list); err != nil || len(list) != 1 {
 			t.Fatalf("revisions: %d %s", r.status, r.body)
@@ -131,7 +131,7 @@ func TestQAConcurrentCheckpointsAndRestoresKeepNumbersConsistent(t *testing.T) {
 			wg.Add(2)
 			go func() {
 				defer wg.Done()
-				x := e.cmd(e.rust, o, o.ws, "note.restore", map[string]any{"note_id": note, "revision_id": rev}, nil)
+				x := e.cmd(e.gosv.URL, o, o.ws, "note.restore", map[string]any{"note_id": note, "revision_id": rev}, nil)
 				codes <- result{"restore", x.status, x.body}
 			}()
 			go func() {
@@ -171,7 +171,7 @@ func TestQARestoreNeedsEditAccess(t *testing.T) {
 	e.must(o, "note.restrict", map[string]any{"note_id": note, "restriction": "edit"})
 	e.must(o, "note.share", map[string]any{"note_id": note, "email": guest.email, "level": "view"})
 	var list []map[string]any
-	_ = jsonUnmarshal(e.cmd(e.rust, o, o.ws, "note.revisions", map[string]any{"note_id": note}, nil).body, &list)
+	_ = jsonUnmarshal(e.cmd(e.gosv.URL, o, o.ws, "note.revisions", map[string]any{"note_id": note}, nil).body, &list)
 	rev := list[0]["id"].(string)
 	in := map[string]any{"note_id": note, "revision_id": rev}
 	for name, c := range map[string]struct {
@@ -186,7 +186,7 @@ func TestQARestoreNeedsEditAccess(t *testing.T) {
 		"no credentials":                    {who{}, o.ws, []int{401}},
 	} {
 		t.Run(name, func(t *testing.T) {
-			for _, base := range []string{e.gosv.URL, e.rust} {
+			for _, base := range []string{e.gosv.URL} {
 				r := e.cmd(base, c.w, c.ws, "note.restore", in, nil)
 				ok := false
 				for _, s := range c.status {

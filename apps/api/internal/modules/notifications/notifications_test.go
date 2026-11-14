@@ -1,6 +1,6 @@
 // Integration tests for notifications commands, ported from
 // crates/cnote-core/tests/page_permissions.rs (mentions_notify_once_and_only_people_who_can_read).
-// All tests run against the real Postgres and the real Rust server; nothing is mocked.
+// All tests run against the real Postgres and the Go server; nothing is mocked.
 package notifications_test
 
 import (
@@ -12,13 +12,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"strings"
 	"testing"
 
 	"github.com/cnote/api/internal/command"
 	"github.com/cnote/api/internal/db"
 	"github.com/cnote/api/internal/modules"
-	"github.com/cnote/api/internal/proxy"
 	"github.com/cnote/api/internal/server"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -31,7 +29,7 @@ import (
 type testEnv struct {
 	t    *testing.T
 	pool *pgxpool.Pool
-	rust string
+	api  string
 	gosv *httptest.Server
 }
 
@@ -47,30 +45,21 @@ func rnd() string {
 
 func newTestEnv(t *testing.T) *testEnv {
 	t.Helper()
+	t.Setenv("AUTH_SIGNUP_FREE", "1000000") // every test signs up from 127.0.0.1; the per-IP throttle is shared through the database
+	t.Setenv("AUTH_IP_FREE", "1000000")
 	url := os.Getenv("DATABASE_URL")
 	if url == "" {
 		t.Fatal("DATABASE_URL is required (load the repo .env)")
-	}
-	rust := strings.TrimRight(os.Getenv("RUST_API_URL"), "/")
-	if rust == "" {
-		rust = "http://localhost:4000"
-	}
-	if resp, err := http.Get(rust + "/healthz"); err != nil || resp.StatusCode != 200 {
-		t.Fatalf("Rust server not reachable at %s: %v", rust, err)
 	}
 	pool, err := db.Connect(context.Background(), url, 5)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(pool.Close)
-	up, err := proxy.New(rust)
-	if err != nil {
-		t.Fatal(err)
-	}
 	reg := command.NewRegistry(modules.Commands()...)
-	gosv := httptest.NewServer(server.New(pool, reg, up))
+	gosv := httptest.NewServer(server.New(pool, reg))
 	t.Cleanup(gosv.Close)
-	return &testEnv{t: t, pool: pool, rust: rust, gosv: gosv}
+	return &testEnv{t: t, pool: pool, api: gosv.URL, gosv: gosv}
 }
 
 func (e *testEnv) signup(name string, workspace bool) who {
@@ -81,7 +70,7 @@ func (e *testEnv) signup(name string, workspace bool) who {
 		body["workspace_name"] = name + " WS"
 	}
 	b, _ := json.Marshal(body)
-	res, err := http.Post(e.rust+"/api/auth/signup", "application/json", bytes.NewReader(b))
+	res, err := http.Post(e.api+"/api/auth/signup", "application/json", bytes.NewReader(b))
 	if err != nil {
 		e.t.Fatal(err)
 	}
@@ -115,7 +104,7 @@ func (e *testEnv) addMember(owner, u who, role string) who {
 
 func (e *testEnv) must(w who, cmd string, in any) map[string]any {
 	e.t.Helper()
-	r := e.do(e.rust, "POST", "/api/w/"+w.ws+"/commands/"+cmd, w, in)
+	r := e.do(e.api, "POST", "/api/w/"+w.ws+"/commands/"+cmd, w, in)
 	if r.status != 200 {
 		e.t.Fatalf("%s: %d %s", cmd, r.status, r.body)
 	}
@@ -126,7 +115,7 @@ func (e *testEnv) must(w who, cmd string, in any) map[string]any {
 
 func (e *testEnv) space(w who) string {
 	e.t.Helper()
-	r := e.do(e.rust, "POST", "/api/w/"+w.ws+"/commands/space.list", w, map[string]any{})
+	r := e.do(e.api, "POST", "/api/w/"+w.ws+"/commands/space.list", w, map[string]any{})
 	var spaces []map[string]any
 	_ = json.Unmarshal(r.body, &spaces)
 	return spaces[0]["id"].(string)
@@ -178,8 +167,8 @@ func (e *testEnv) go_(w who, cmd string, in any) resp {
 	return e.do(e.gosv.URL, "POST", "/api/w/"+w.ws+"/commands/"+cmd, w, in)
 }
 
-func (e *testEnv) rust_(w who, cmd string, in any) resp {
-	return e.do(e.rust, "POST", "/api/w/"+w.ws+"/commands/"+cmd, w, in)
+func (e *testEnv) api_(w who, cmd string, in any) resp {
+	return e.do(e.api, "POST", "/api/w/"+w.ws+"/commands/"+cmd, w, in)
 }
 
 // ---- tests ----

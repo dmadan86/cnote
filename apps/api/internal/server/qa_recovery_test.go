@@ -15,23 +15,20 @@ import (
 
 	"github.com/cnote/api/internal/command"
 	"github.com/cnote/api/internal/modules"
-	"github.com/cnote/api/internal/proxy"
 	"github.com/cnote/api/internal/server"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // CN-QA-001 recovery tests (section 4): run with `go test -tags recovery -run TestRecovery ./internal/server`.
-// Needs the same Postgres and Rust server as the other integration tests (Rust is only used for fixtures and is
+// Needs the same Postgres as the other integration tests (fixtures go through an in-process Go server that is
 // never stopped). Everything that is stopped here is a stand-in owned by the test, on ports 4672-4675.
 // Collab restart and "database unreachable" for live editing are covered by apps/collab/test/resilience.test.ts
 // (DU-001, DU-003, CO-006), which the nightly workflow runs.
 
 const (
-	frontAddr    = "127.0.0.1:4672" // the Go front under test
-	pgProxyAddr  = "127.0.0.1:4673" // TCP forwarder in front of Postgres
-	upstreamAddr = "127.0.0.1:4674" // stand-in for the Rust server
-	deadAddr     = "127.0.0.1:4675" // nothing listens here
+	frontAddr   = "127.0.0.1:4672" // the Go front under test
+	pgProxyAddr = "127.0.0.1:4673" // TCP forwarder in front of Postgres
 )
 
 func serveOn(t *testing.T, addr string, h http.Handler) *httptest.Server {
@@ -91,21 +88,6 @@ func (f *forwarder) stop() {
 	f.mu.Unlock()
 }
 
-func recoveryEnv(t *testing.T) *env {
-	t.Helper()
-	rust := "http://localhost:4000"
-	if v := os.Getenv("RUST_API_URL"); v != "" {
-		rust = v
-	}
-	if r, err := http.Get(rust + "/healthz"); err != nil || r.StatusCode != 200 {
-		t.Fatalf("Rust server not reachable at %s: %v", rust, err)
-	}
-	if os.Getenv("DATABASE_URL") == "" {
-		t.Fatal("DATABASE_URL is required")
-	}
-	return &env{t: t, rust: rust} // fixtures only need the Rust URL
-}
-
 func (e *env) openPool(host, port string) *pgxpool.Pool {
 	cfg, err := pgxpool.ParseConfig(os.Getenv("DATABASE_URL"))
 	if err != nil {
@@ -134,12 +116,8 @@ func mustPort(p string) uint16 {
 	return n
 }
 
-func (e *env) front(pool *pgxpool.Pool, upstream string) string {
-	up, err := proxy.New(upstream)
-	if err != nil {
-		e.t.Fatal(err)
-	}
-	s := serveOn(e.t, frontAddr, server.New(pool, command.NewRegistry(modules.Commands()...), up))
+func (e *env) front(pool *pgxpool.Pool) string {
+	s := serveOn(e.t, frontAddr, server.New(pool, command.NewRegistry(modules.Commands()...)))
 	e.t.Cleanup(s.Close)
 	return s.URL
 }
@@ -157,12 +135,12 @@ func until(d time.Duration, f func() bool) bool {
 }
 
 func TestRecovery_PostgresDropAndReconnect(t *testing.T) {
-	e := recoveryEnv(t)
+	e := newEnv(t)
 	owner := e.signup("Rec", true)
 	fw := &forwarder{addr: pgProxyAddr, target: "localhost:5432"}
 	pg := e.openPool("127.0.0.1", "4673")
 	fw.start(t)
-	base := e.front(pg, e.rust)
+	base := e.front(pg)
 	call := func() resp { return e.cmd(base, owner, owner.ws, "space.list", map[string]any{}, nil) }
 
 	if r := call(); r.status != 200 {
@@ -191,10 +169,10 @@ func TestRecovery_PostgresDropAndReconnect(t *testing.T) {
 }
 
 func TestRecovery_PostgresBackendTerminated(t *testing.T) {
-	e := recoveryEnv(t)
+	e := newEnv(t)
 	owner := e.signup("Rec", true)
 	pool := e.openPool("", "")
-	base := e.front(pool, e.rust)
+	base := e.front(pool)
 	call := func() resp { return e.cmd(base, owner, owner.ws, "space.list", map[string]any{}, nil) }
 	for range 8 { // fill the pool with live connections
 		if call().status != 200 {
@@ -222,54 +200,14 @@ func TestRecovery_PostgresBackendTerminated(t *testing.T) {
 	}
 }
 
-func TestRecovery_RustUpstreamDownAndUp(t *testing.T) {
-	e := recoveryEnv(t)
-	owner := e.signup("Rec", true)
-	pool := e.openPool("", "")
-	ok := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = io.WriteString(w, "upstream ok") })
-	up := serveOn(t, upstreamAddr, ok)
-	base := e.front(pool, "http://"+upstreamAddr)
-	get := func(path string) resp { return e.do(base, "GET", path, owner, nil, nil) }
-
-	if r := get("/api/auth/me"); r.status != 200 || string(r.body) != "upstream ok" {
-		t.Fatalf("proxied while up: %d %s", r.status, r.body)
-	}
-	up.Close()
-	// docs/go-migration.md: non-native traffic returns 502 while Rust is unreachable; native commands keep working.
-	if r := get("/api/auth/me"); r.status != http.StatusBadGateway {
-		t.Fatalf("upstream down must be 502, got %d %s", r.status, r.body)
-	}
-	if r := e.cmd(base, owner, owner.ws, "space.list", map[string]any{}, nil); r.status != 200 {
-		t.Fatalf("native command while upstream is down: %d %s", r.status, r.body)
-	}
-	if r := get("/healthz"); r.status != 200 {
-		t.Fatalf("healthz while upstream is down: %d", r.status)
-	}
-	up = serveOn(t, upstreamAddr, ok)
-	defer up.Close()
-	if !until(5*time.Second, func() bool { return get("/api/auth/me").status == 200 }) {
-		t.Fatal("proxy did not recover after the upstream returned")
-	}
-}
-
-func TestRecovery_UnreachableUpstreamFailsFast(t *testing.T) {
-	e := recoveryEnv(t)
-	owner := e.signup("Rec", true)
-	base := e.front(e.openPool("", ""), "http://"+deadAddr)
-	start := time.Now()
-	if r := e.do(base, "GET", "/api/auth/me", owner, nil, nil); r.status != http.StatusBadGateway || time.Since(start) > 5*time.Second {
-		t.Fatalf("want fast 502, got %d after %s", r.status, time.Since(start))
-	}
-}
-
-// Worker crash mid-job. The Rust worker (crates/cnote-server/src/worker.rs) claims with core.claim_jobs
+// Worker crash mid-job. The worker claims with core.claim_jobs
 // (status running, attempts+1) and applies the effect and the done mark in separate transactions; nothing
 // requeues a job whose worker died (no lease expiry). This test pins what the queue does today and what a
 // recovery must guarantee: a crash before commit leaves no partial effect, the job is stuck in running until
-// requeued, and the retry then applies the effect exactly once. The jobs use a future run_at so the live Rust
+// requeued, and the retry then applies the effect exactly once. The jobs use a future run_at so the live
 // worker never touches them; the stand-in worker claims by id with the same transition claim_jobs makes.
 func TestRecovery_WorkerCrashMidJobRetriedOnceInEffect(t *testing.T) {
-	e := recoveryEnv(t)
+	e := newEnv(t)
 	e.pool = e.openPool("", "")
 	owner := e.signup("Rec", true)
 	note := e.note(owner, "job")

@@ -50,7 +50,7 @@ func TestAuth(t *testing.T) {
 			t.Fatalf("%d %s", r.status, r.body)
 		}
 	})
-	t.Run("no auth is 401 with the Rust body", func(t *testing.T) {
+	t.Run("no auth is 401", func(t *testing.T) {
 		r := e.cmd(e.gosv.URL, who{}, a.ws, "space.list", map[string]any{}, nil)
 		if r.status != 401 || string(r.body) != unauth {
 			t.Fatalf("%d %s", r.status, r.body)
@@ -68,11 +68,10 @@ func TestAuth(t *testing.T) {
 			t.Fatalf("%d %s", r.status, r.body)
 		}
 	})
-	t.Run("OAuth tokens fall back to Rust", func(t *testing.T) {
+	t.Run("unknown OAuth token is 401", func(t *testing.T) {
 		g := e.cmd(e.gosv.URL, who{bearer: "cno_whatever"}, a.ws, "space.list", map[string]any{}, nil)
-		r := e.cmd(e.rust, who{bearer: "cno_whatever"}, a.ws, "space.list", map[string]any{}, nil)
-		if g.status != r.status || string(g.body) != string(r.body) {
-			t.Fatalf("go %d %s vs rust %d %s", g.status, g.body, r.status, r.body)
+		if g.status != 401 {
+			t.Fatalf("%d %s", g.status, g.body)
 		}
 	})
 }
@@ -83,11 +82,10 @@ func TestTenantIsolation(t *testing.T) {
 	b := e.signup("Bob", true)
 	nid := e.note(a, "secret of A")
 
-	// B calls note.get in B's own workspace with A's note id: RLS hides it, same NotFound as Rust.
+	// B calls note.get in B's own workspace with A's note id: RLS hides it.
 	g := e.cmd(e.gosv.URL, b, b.ws, "note.get", map[string]any{"id": nid}, nil)
-	r := e.cmd(e.rust, b, b.ws, "note.get", map[string]any{"id": nid}, nil)
-	if g.status != 404 || string(g.body) != `{"error":{"code":"not_found","message":"note not found"}}` || string(g.body) != string(r.body) {
-		t.Fatalf("go %d %s rust %d %s", g.status, g.body, r.status, r.body)
+	if g.status != 404 || string(g.body) != `{"error":{"code":"not_found","message":"note not found"}}` {
+		t.Fatalf("%d %s", g.status, g.body)
 	}
 	if h := e.cmd(e.gosv.URL, b, b.ws, "note.history", map[string]any{"id": nid}, nil); h.status != 404 {
 		t.Fatalf("history leaked: %d %s", h.status, h.body)
@@ -251,7 +249,7 @@ func TestCommandGate(t *testing.T) {
 			t.Fatalf("actor not part of key: %d %s", r.status, r.body)
 		}
 	})
-	t.Run("idempotency rows are readable by Rust's table layout", func(t *testing.T) {
+	t.Run("idempotency rows are have the documented table layout", func(t *testing.T) {
 		key := "layout-" + rnd()
 		e.cmd(e.gosv.URL, owner, owner.ws, "test.write", in{"l"}, map[string]string{"Idempotency-Key": key})
 		tx, _ := dbTenant(e, owner.ws)
@@ -286,7 +284,7 @@ func TestCommandGate(t *testing.T) {
 	})
 }
 
-func TestFallbackToRustIsIdentical(t *testing.T) {
+func TestInputErrorsAreAnswered(t *testing.T) {
 	e := newEnv(t)
 	a := e.signup("Alice", true)
 	nid := e.note(a, "x")
@@ -294,28 +292,27 @@ func TestFallbackToRustIsIdentical(t *testing.T) {
 		name, cmd string
 		body      any
 		raw       string
+		status    int
 	}{
-		{"unknown command (not in Go)", "does.not.exist", map[string]any{}, ""},
-		{"note.list with a space filter", "note.list", map[string]any{"space_id": e.space(a)}, ""},
-		{"missing id", "note.get", map[string]any{}, ""},
-		{"bad uuid", "note.get", map[string]any{"id": "nope"}, ""},
-		{"wrong type", "note.get", map[string]any{"id": 5}, ""},
-		{"invalid json body", "note.get", nil, "{not json"},
-		{"array body for space.list", "space.list", nil, "[]"},
-		{"simple uuid form", "note.get", map[string]any{"id": strings.ReplaceAll(nid, "-", "")}, ""},
+		{"unknown command ", "does.not.exist", map[string]any{}, "", 404},
+		{"note.list with a space filter", "note.list", map[string]any{"space_id": e.space(a)}, "", 200},
+		{"missing id", "note.get", map[string]any{}, "", 400},
+		{"bad uuid", "note.get", map[string]any{"id": "nope"}, "", 400},
+		{"wrong type", "note.get", map[string]any{"id": 5}, "", 400},
+		{"invalid json body", "note.get", nil, "{not json", 400},
+		{"array body for space.list", "space.list", nil, "[]", 200},
+		{"simple uuid form", "note.get", map[string]any{"id": strings.ReplaceAll(nid, "-", "")}, "", 200},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			var g, r resp
+			var g resp
 			if c.raw != "" {
 				g = e.rawJSON(e.gosv.URL, a, c.cmd, c.raw)
-				r = e.rawJSON(e.rust, a, c.cmd, c.raw)
 			} else {
 				g = e.cmd(e.gosv.URL, a, a.ws, c.cmd, c.body, nil)
-				r = e.cmd(e.rust, a, a.ws, c.cmd, c.body, nil)
 			}
-			if g.status != r.status || string(g.body) != string(r.body) {
-				t.Fatalf("go %d %s\nrust %d %s", g.status, g.body, r.status, r.body)
+			if g.status != c.status {
+				t.Fatalf("%d %s, want %d", g.status, g.body, c.status)
 			}
 		})
 	}

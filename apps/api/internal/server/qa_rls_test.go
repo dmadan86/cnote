@@ -14,7 +14,6 @@ import (
 	"github.com/cnote/api/internal/command"
 	"github.com/cnote/api/internal/db"
 	"github.com/cnote/api/internal/modules"
-	"github.com/cnote/api/internal/proxy"
 	"github.com/cnote/api/internal/server"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -288,11 +287,7 @@ func TestQAPoolReuseDoesNotLeakTenant(t *testing.T) {
 	clean("after A then B")
 
 	// Through the HTTP gate with the same single connection: A, B (404 on A's note), a failing command, then clean.
-	up, err := proxy.New(e.rust)
-	if err != nil {
-		t.Fatal(err)
-	}
-	one := httptest.NewServer(server.New(pool, command.NewRegistry(modules.Commands()...), up))
+	one := httptest.NewServer(server.New(pool, command.NewRegistry(modules.Commands()...)))
 	defer one.Close()
 	an := e.note(a, "gate a")
 	for _, w := range []who{a, b, a} {

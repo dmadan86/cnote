@@ -18,39 +18,34 @@ import (
 	"github.com/cnote/api/internal/command"
 	"github.com/cnote/api/internal/db"
 	"github.com/cnote/api/internal/modules"
-	"github.com/cnote/api/internal/proxy"
 	"github.com/cnote/api/internal/server"
+	"github.com/cnote/api/internal/worker"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Integration tests use the real Postgres (DATABASE_URL, role cnote_app) and the real Rust server
-// (RUST_API_URL, default http://localhost:4000) both to create fixtures through its public endpoints
-// and as the reference for the differential tests. Nothing is mocked and nothing is skipped: a missing
-// dependency fails the test run.
+// Integration tests use the real Postgres (DATABASE_URL, role cnote_app) and the Go server itself (an httptest
+// server around server.New) for fixtures. A Go worker runs in the background like the production `WITH_WORKER=1`.
+// Nothing is mocked and nothing is skipped: a missing dependency fails the test run.
 type env struct {
 	t    *testing.T
 	pool *pgxpool.Pool
-	rust string
+	// api is the base URL fixtures are created through; the same server as gosv.
+	api  string
 	gosv *httptest.Server
-	// proxied records every request path the Go server handed to Rust.
-	proxied *proxiedPaths
 }
 
-type proxiedPaths struct {
-	mu    sync.Mutex
-	paths []string
-}
+var workerOnce sync.Once
 
-func (p *proxiedPaths) has(sub string) bool {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	for _, x := range p.paths {
-		if strings.Contains(x, sub) {
-			return true
+// startWorker runs one Go worker for the whole test binary (jobs of every test's workspace, as in production).
+func startWorker(t *testing.T, url string) {
+	workerOnce.Do(func() {
+		pool, err := db.Connect(context.Background(), url, 5)
+		if err != nil {
+			t.Fatal(err)
 		}
-	}
-	return false
+		go worker.New(pool, command.NewRegistry(modules.Commands()...)).Run(context.Background())
+	})
 }
 
 func rnd() string {
@@ -73,33 +68,16 @@ func newEnv(t *testing.T, extra ...command.Command) *env {
 	if url == "" {
 		t.Fatal("DATABASE_URL is required (load the repo .env)")
 	}
-	rust := strings.TrimRight(os.Getenv("RUST_API_URL"), "/")
-	if rust == "" {
-		rust = "http://localhost:4000"
-	}
-	if resp, err := http.Get(rust + "/healthz"); err != nil || resp.StatusCode != 200 {
-		t.Fatalf("Rust server not reachable at %s: %v", rust, err)
-	}
+	startWorker(t, url)
 	pool, err := db.Connect(context.Background(), url, 5)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(pool.Close)
-	up, err := proxy.New(rust)
-	if err != nil {
-		t.Fatal(err)
-	}
 	reg := command.NewRegistry(append(modules.Commands(), extra...)...)
-	seen := &proxiedPaths{}
-	counted := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		seen.mu.Lock()
-		seen.paths = append(seen.paths, r.URL.Path)
-		seen.mu.Unlock()
-		up.ServeHTTP(w, r)
-	})
-	gosv := httptest.NewServer(server.New(pool, reg, counted))
+	gosv := httptest.NewServer(server.New(pool, reg))
 	t.Cleanup(gosv.Close)
-	return &env{t: t, pool: pool, rust: rust, gosv: gosv, proxied: seen}
+	return &env{t: t, pool: pool, api: gosv.URL, gosv: gosv}
 }
 
 // who is a caller: a session cookie, or a bearer key.
@@ -154,7 +132,7 @@ func (e *env) do(base, method, path string, w who, body any, hdr map[string]stri
 	return resp{res.StatusCode, b}
 }
 
-// signup creates a user (and optionally a workspace) through the Rust server. Passwords are random per run.
+// signup creates a user (and optionally a workspace) through the Go server. Passwords are random per run.
 func (e *env) signup(name string, workspace bool) who {
 	e.t.Helper()
 	w := who{email: "go-" + rnd() + "@example.test"}
@@ -163,7 +141,7 @@ func (e *env) signup(name string, workspace bool) who {
 		body["workspace_name"] = name + " WS"
 	}
 	b, _ := json.Marshal(body)
-	res, err := http.Post(e.rust+"/api/auth/signup", "application/json", bytes.NewReader(b))
+	res, err := http.Post(e.api+"/api/auth/signup", "application/json", bytes.NewReader(b))
 	if err != nil {
 		e.t.Fatal(err)
 	}
@@ -188,10 +166,10 @@ func (e *env) signup(name string, workspace bool) who {
 	return w
 }
 
-// rust runs a command on the Rust server (fixture creation) and requires success.
+// must runs a command on the Go server (fixture creation) and requires success.
 func (e *env) must(w who, cmd string, in any) map[string]any {
 	e.t.Helper()
-	r := e.do(e.rust, "POST", "/api/w/"+w.ws+"/commands/"+cmd, w, in, nil)
+	r := e.do(e.api, "POST", "/api/w/"+w.ws+"/commands/"+cmd, w, in, nil)
 	if r.status != 200 {
 		e.t.Fatalf("%s: %d %s", cmd, r.status, r.body)
 	}
@@ -202,7 +180,7 @@ func (e *env) must(w who, cmd string, in any) map[string]any {
 
 func (e *env) space(w who) string {
 	e.t.Helper()
-	r := e.do(e.rust, "POST", "/api/w/"+w.ws+"/commands/space.list", w, map[string]any{}, nil)
+	r := e.do(e.api, "POST", "/api/w/"+w.ws+"/commands/space.list", w, map[string]any{}, nil)
 	var spaces []map[string]any
 	_ = json.Unmarshal(r.body, &spaces)
 	return spaces[0]["id"].(string)
@@ -227,7 +205,7 @@ func (e *env) apiKey(w who) who {
 	return who{ws: w.ws, bearer: k}
 }
 
-// cmd calls a command on base (e.gosv.URL or e.rust).
+// cmd calls a command on base (e.gosv.URL).
 func (e *env) cmd(base string, w who, ws, name string, in any, hdr map[string]string) resp {
 	e.t.Helper()
 	return e.do(base, "POST", "/api/w/"+ws+"/commands/"+name, w, in, hdr)

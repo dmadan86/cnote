@@ -1,6 +1,5 @@
 // Package server is the HTTP front of the Go API: commands, auth, OAuth, MCP, public links and the empty 404/405
-// answers of the old router are all served here. Nothing is proxied to Rust any more except /collab when COLLAB_URL
-// is unset (development without the TypeScript collab service); with COLLAB_URL set, Upstream is never called.
+// answers of the old router are all served here. Only /collab is proxied, to the TypeScript collab service (COLLAB_URL).
 package server
 
 import (
@@ -33,24 +32,23 @@ type Server struct {
 	Pool     *pgxpool.Pool
 	Registry *command.Registry
 	Auth     *auth.Auth
-	Upstream http.Handler
-	// Collab, when set (COLLAB_URL), serves the /collab/ live-editing WebSocket instead of Upstream.
+	// Collab, when set (COLLAB_URL), serves the /collab/ live-editing WebSocket.
 	Collab http.Handler
 	// Public serves the unauthenticated share-link API under /api/public/ (token in the path, no session).
 	Public http.Handler
 	// OAuth serves the MCP authorization server (metadata, registration, consent, token, revoke).
 	OAuth http.Handler
-	// MCP serves POST /mcp natively; what it does not understand it proxies to Upstream.
+	// MCP serves POST /mcp natively; what it does not understand it declines.
 	MCP http.Handler
 	// Chat feeds GET /api/w/{ws}/chat/stream from Postgres NOTIFY.
 	Chat *chat.Hub
 }
 
-func New(pool *pgxpool.Pool, reg *command.Registry, upstream http.Handler) *Server {
+func New(pool *pgxpool.Pool, reg *command.Registry) *Server {
 	a := &auth.Auth{Pool: pool}
-	return &Server{Pool: pool, Registry: reg, Auth: a, Upstream: upstream, Public: publiclinks.NewHandler(pool, reg),
-		OAuth: &oauth.Handler{Pool: pool, Auth: a, Upstream: upstream},
-		MCP:   &mcp.Server{Pool: pool, Registry: reg, Auth: a, Upstream: upstream}, Chat: chat.NewHub(pool)}
+	return &Server{Pool: pool, Registry: reg, Auth: a, Public: publiclinks.NewHandler(pool, reg),
+		OAuth: &oauth.Handler{Pool: pool, Auth: a},
+		MCP:   &mcp.Server{Pool: pool, Registry: reg, Auth: a}, Chat: chat.NewHub(pool)}
 }
 
 var wsRe = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
@@ -133,10 +131,6 @@ func (s *Server) unmatched(w http.ResponseWriter, r *http.Request) {
 	}
 	if strings.HasPrefix(path, "/api/hooks/github/") {
 		methodNotAllowed(w, "POST") // POST with a valid workspace id is served by authSurface; this is any other verb
-		return
-	}
-	if s.Upstream != nil && (strings.HasPrefix(path, "/collab/") || path == "/collab") {
-		s.Upstream.ServeHTTP(w, r) // only without COLLAB_URL: the TypeScript collab service is the production path
 		return
 	}
 	notFound(w)

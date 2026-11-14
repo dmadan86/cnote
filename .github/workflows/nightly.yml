@@ -19,7 +19,6 @@ concurrency:
 
 # Same shape as ci.yml: throwaway trust-auth Postgres, per-run app-role password, no stored credentials.
 env:
-  CARGO_TERM_COLOR: always
   DATABASE_ADMIN_URL: postgres://postgres@localhost:5432/cnote
 
 jobs:
@@ -41,8 +40,6 @@ jobs:
         with:
           go-version-file: apps/api/go.mod
           cache-dependency-path: apps/api/go.sum
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v5
         with:
@@ -54,34 +51,33 @@ jobs:
           echo "::add-mask::$PW"
           echo "DB_APP_PASSWORD=$PW" >> "$GITHUB_ENV"
           echo "DATABASE_URL=postgres://cnote_app:$PW@localhost:5432/cnote" >> "$GITHUB_ENV"
-      - name: Build Rust server, migrate and start it
+          SECRET=$(openssl rand -hex 16)
+          echo "::add-mask::$SECRET"
+          echo "COLLAB_INTERNAL_SECRET=$SECRET" >> "$GITHUB_ENV"
+      - run: pnpm install --frozen-lockfile
+      - name: Migrate, then start the Go API (worker included) and collab
         run: |
-          cargo build -p cnote-server
-          ./target/debug/cnote migrate
+          (cd apps/api && go run ./cmd/api migrate && go build -o ../../cnote-api ./cmd/api && go build -o ../../loadtest ./cmd/loadtest)
           echo "alter role cnote_app password :'pw';" | psql "$DATABASE_ADMIN_URL" -v pw="$DB_APP_PASSWORD"
-          CNOTE_MASTER_KEY=$(openssl rand -base64 32) ./target/debug/cnote serve --port 4000 --with-worker > rust-api.log 2>&1 &
-          npx --yes wait-on -t 120000 http://localhost:4000/healthz
-      - name: Start the Go API
-        run: |
-          (cd apps/api && go build -o ../../cnote-api ./cmd/api && go build -o ../../loadtest ./cmd/loadtest)
-          AUTH_SIGNUP_FREE=100000 AUTH_IP_FREE=100000 PORT=4100 RUST_API_URL=http://localhost:4000 ./cnote-api > go-api.log 2>&1 &
-          npx --yes wait-on -t 60000 http://localhost:4100/healthz
+          CNOTE_MASTER_KEY=$(openssl rand -base64 32) AUTH_SIGNUP_FREE=100000 AUTH_IP_FREE=100000 PORT=4100 WITH_WORKER=1 COLLAB_URL=http://localhost:4300 COLLAB_INTERNAL_SECRET=$COLLAB_INTERNAL_SECRET ./cnote-api > go-api.log 2>&1 &
+          COLLAB_PORT=4300 pnpm --filter @cnote/collab start > collab.log 2>&1 &
+          npx --yes wait-on -t 120000 http://localhost:4100/healthz http://localhost:4300/healthz
+        env:
+          MIGRATIONS_DIR: ${{ github.workspace }}/migrations
       # Thresholds are for a shared 4-core runner; they fail the job, so tune them from the nightly history.
       - name: Load test
         run: ./loadtest -api http://localhost:4100 -rate "$RATE" -duration "$DURATION" -p95 400ms -p99 1500ms -max-errors 0.01 | tee loadtest.txt
         env:
           RATE: ${{ inputs.rate || '100' }}
           DURATION: ${{ inputs.duration || '120s' }}
-      - name: Recovery tests (Postgres drop, Rust down, worker crash)
+      - name: Recovery tests (Postgres drop, backend termination, worker crash)
         working-directory: apps/api
         run: go test -tags recovery -run TestRecovery -count=1 -timeout 10m -v ./internal/server
-        env:
-          RUST_API_URL: http://localhost:4000
-      - run: pnpm install --frozen-lockfile
       - name: Collab recovery (kill and restart, database unreachable, offline clients) with a larger property-test budget
         run: pnpm --filter @cnote/collab exec vitest run test/resilience.test.ts
         env:
           FC_RUNS: "300"
+          API_URL: http://localhost:4100
       - if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -89,4 +85,4 @@ jobs:
           path: |
             loadtest.txt
             go-api.log
-            rust-api.log
+            collab.log

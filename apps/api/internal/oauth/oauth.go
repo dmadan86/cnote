@@ -3,8 +3,8 @@
 // detection and revocation. Codes and tokens are opaque; only SHA-256 hashes are stored (migration 0600), in the same
 // tables and with the same hashing as Rust, so a token issued by either server is valid on both.
 //
-// Anything this package cannot answer byte for byte (bodies serde would reject, URIs the url crate might parse
-// differently) is handed to Upstream before any side effect, like the command router does.
+// Anything this package cannot answer (bodies serde would reject, URIs the url crate might parse differently)
+// is refused before any side effect, like the command router does.
 package oauth
 
 import (
@@ -51,9 +51,8 @@ const (
 )
 
 type Handler struct {
-	Pool     *pgxpool.Pool
-	Auth     *auth.Auth
-	Upstream http.Handler
+	Pool *pgxpool.Pool
+	Auth *auth.Auth
 }
 
 // Handles reports whether the route belongs to the authorization server and is one this package serves; other

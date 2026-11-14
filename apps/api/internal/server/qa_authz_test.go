@@ -33,8 +33,7 @@ func gateDenied(r resp, cmd string) bool {
 	return v.Error.Code == "forbidden" && (strings.HasPrefix(m, cmd+" requires role ") || strings.HasPrefix(m, "scope ") || strings.HasPrefix(m, "tool group "))
 }
 
-// The matrix is generated from the Go registry (name, group, MinRole) and checked against the Rust server, which
-// is the authority on what each module declares: a Go command whose gate differs from Rust fails here.
+// The matrix is generated from the Go registry (name, group, MinRole) and checked against what the response says about the gate.
 func TestQARoleMatrixFromRegistry(t *testing.T) {
 	t.Setenv("FAIR_USE_BURST", "100000") // 127 commands x 7 principals through one process
 	e := newEnv(t)
@@ -65,34 +64,23 @@ func TestQARoleMatrixFromRegistry(t *testing.T) {
 		t.Fatalf("registry unexpectedly small: %d", len(cmds))
 	}
 	// Least privileged first so a successful owner call cannot change what the others are allowed to see.
-	denied, allowed, goOnly := 0, 0, 0
+	denied, allowed := 0, 0
 	for _, p := range ps {
 		for _, c := range cmds {
 			wantDenied := p.role < c.MinRole || p.bot && !agentGroups[c.Group]
 			g := e.cmd(e.gosv.URL, p.w, owner.ws, c.Name, map[string]any{}, nil)
-			r := e.cmd(e.rust, p.w, owner.ws, c.Name, map[string]any{}, nil)
 			label := p.name + " x " + c.Name + " (" + string(c.Group) + ", min " + c.MinRole.String() + ")"
 			if gateDenied(g, c.Name) != wantDenied {
-				t.Errorf("Go %s: want denied=%v, got %d %s", label, wantDenied, g.status, g.body)
-			}
-			if r.status == 404 && strings.Contains(string(r.body), "command "+c.Name+" not found") {
-				goOnly++ // new in Go (quotations): the running Rust build has no such command, nothing to compare
-				continue
-			}
-			if gateDenied(r, c.Name) != wantDenied {
-				t.Errorf("Rust %s: want denied=%v, got %d %s", label, wantDenied, r.status, r.body)
+				t.Errorf("%s: want denied=%v, got %d %s", label, wantDenied, g.status, g.body)
 			}
 			if wantDenied {
 				denied++
-				if string(g.body) != string(r.body) || g.status != r.status {
-					t.Errorf("%s: denial differs from Rust\n go:   %d %s\n rust: %d %s", label, g.status, g.body, r.status, r.body)
-				}
 			} else {
 				allowed++
 			}
 		}
 	}
-	t.Logf("matrix: %d commands x %d principals, %d denials and %d allowed cells; %d cells have no Rust command", len(cmds), len(ps), denied, allowed, goOnly)
+	t.Logf("matrix: %d commands x %d principals, %d denials and %d allowed cells", len(cmds), len(ps), denied, allowed)
 	if denied == 0 || allowed == 0 {
 		t.Fatal("degenerate matrix")
 	}
@@ -123,7 +111,7 @@ func TestQAGuestShareRevocationIsImmediate(t *testing.T) {
 	for _, level := range []string{"view", "edit"} {
 		t.Run(level, func(t *testing.T) {
 			e.must(owner, "note.share", map[string]any{"note_id": note, "email": guest.email, "level": level})
-			for _, base := range []string{e.gosv.URL, e.rust} {
+			for _, base := range []string{e.gosv.URL} {
 				if r := e.cmd(base, guest, owner.ws, "note.get", map[string]any{"id": note}, nil); r.status != 200 {
 					t.Fatalf("shared guest cannot read: %d %s", r.status, r.body)
 				}
@@ -132,7 +120,7 @@ func TestQAGuestShareRevocationIsImmediate(t *testing.T) {
 				}
 			}
 			e.must(owner, "note.unshare", map[string]any{"note_id": note, "user_id": guest.userID})
-			for _, base := range []string{e.gosv.URL, e.rust} {
+			for _, base := range []string{e.gosv.URL} {
 				for _, rd := range reads {
 					if rd.cmd == "note.permissions" {
 						continue // lists who can access; the owner-only view is covered by the matrix
@@ -191,7 +179,7 @@ func TestQAAgentCannotEscalate(t *testing.T) {
 		{"note.delete", map[string]any{"id": command.NilUUID}},
 		{"invoice.issue", map[string]any{"id": command.NilUUID}},
 	} {
-		for _, base := range []string{e.gosv.URL, e.rust} {
+		for _, base := range []string{e.gosv.URL} {
 			r := e.cmd(base, agent, owner.ws, c.cmd, c.in, nil)
 			if !gateDenied(r, c.cmd) {
 				t.Errorf("agent ran %s via %s: %d %s", c.cmd, base, r.status, r.body)

@@ -1,5 +1,33 @@
 # Rust to Go migration (strangler)
 
+## Final state
+
+The migration is finished and the Rust backend is deleted (`crates/`, Cargo files, Rust CI jobs). Everything below
+this section is history: it describes the strangler phases and still mentions the Rust server, `RUST_API_URL`,
+the proxy and the differential tests that compared the two servers. Those no longer exist.
+
+- The Go API (`apps/api`, binary `api`) answers every request itself. Only `/collab/...` is proxied, to the
+  TypeScript collab service (`COLLAB_URL`); `note.restore` renders live documents through that service too
+  (`COLLAB_INTERNAL_SECRET`, the same value on both sides). Default `PORT` is 4000. `WITH_WORKER=1` (or
+  `--with-worker`) runs the job worker in the API process.
+- Migrations: `api migrate [-reset]` (`internal/migrate`) applies `migrations/*.sql` with `DATABASE_ADMIN_URL`, each
+  file in its own transaction, in version order. It writes the table the retired `cnote migrate` (sqlx) used,
+  `_sqlx_migrations` (version, description, success, sha384 checksum of the file bytes, execution_time), so existing
+  databases are a no-op. It refuses to run when an applied file changed or went missing, and serializes runners
+  with sqlx's advisory lock. The migrations create the `cnote_app` role without a password; set it afterwards
+  (`scripts/setup-db.sh`, or `ALTER ROLE cnote_app PASSWORD '...'` in CI and deploys).
+- MCP protocol: the server speaks 2024-11-05, 2025-03-26, 2025-06-18 and 2025-11-25 and offers only those in
+  `initialize`, so a client that prefers a newer version downgrades. The 2026-07-28 request-metadata lifecycle
+  (stateless requests carrying `_meta` protocol version, elicitation as an `input_required` round trip) is not
+  served: such requests get a clear 400 ("the 2026-07-28 request-metadata lifecycle is not supported; use
+  MCP-Protocol-Version 2025-11-25"). The Rust server got it from its MCP library; there is no reference
+  implementation left to port from, so it needs a spec-driven implementation if clients start requiring it.
+  Approval requests (`confirmation_required` results) work on every served version without elicitation.
+- Tests: integration tests create fixtures through the Go server itself (an in-process `httptest` server around
+  `server.New`, plus a background Go worker). The differential tests against Rust were removed with it. Run
+  `go test` with `COLLAB_URL` and `COLLAB_INTERNAL_SECRET` pointing at a running collab service (the
+  `note.restore` tests need it); `pnpm --filter @cnote/collab test` needs the Go API on `API_URL`.
+
 Status: phase 1. `apps/api` is a Go server in front of the Rust server. It runs `space.list`, `note.get`
 and `note.history` natively and proxies everything else, byte for byte. Clients (web, mobile, MCP
 clients, the collab WebSocket) cannot tell the difference.

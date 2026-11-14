@@ -15,7 +15,7 @@ billing or projects record and creates a new note.
 | `template.refresh {note_id}` | Re-renders a rendered **page** from the record's current data. |
 
 `source_kind` is `none | contact | deal | invoice | item`. The catalogue lives in one place,
-`crates/cnote-docs/src/templates.rs` (`catalogue()`): `workspace.name`, `today`, `user.name` everywhere;
+`apps/api/internal/modules/docs/templates.go`: `workspace.name`, `today`, `user.name` everywhere;
 `contact.*`, `deal.*` (+ `contact.*` of the linked contact), `invoice.*` (+ `contact.*`), `item.*`.
 
 ## Rules

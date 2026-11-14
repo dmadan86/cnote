@@ -2,7 +2,7 @@ package uuidparse
 
 import "testing"
 
-// Expected texts were read from the Rust server (uuid crate) and are compared live by TestUUIDErrorsMatchRust.
+// Expected texts were read from the retired Rust server (uuid crate).
 func TestParse(t *testing.T) {
 	z := "00000000-0000-0000-0000-000000000000"
 	for in, want := range map[string]string{z: z, "00000000000000000000000000000000": z, "{" + z + "}": z, "urn:uuid:" + z: z,

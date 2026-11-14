@@ -1,7 +1,10 @@
-target
 node_modules
-apps
+**/node_modules
+**/.next
 e2e
 .git
 .claude
 .env
+graphify-out
+playwright-report
+test-results

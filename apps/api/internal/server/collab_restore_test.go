@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
-	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -59,55 +58,4 @@ func startCollab(t *testing.T) int {
 	t.Setenv("COLLAB_URL", url)
 	t.Setenv("COLLAB_INTERNAL_SECRET", secret)
 	return port
-}
-
-// typeInto types into the note through the collab service, like a browser would.
-func (r *runner) typeInto(port int, caller, note string, texts ...string) {
-	r.e.t.Helper()
-	args := append([]string{"--import", "tsx", "test/edit-cli.ts", strconv.Itoa(port), r.f.owner.ws, note, r.f.who(caller).cookie}, texts...)
-	cmd := exec.Command("node", args...)
-	cmd.Dir = "../../../collab"
-	if out, err := cmd.CombinedOutput(); err != nil {
-		r.e.t.Fatalf("edit-cli: %v\n%s", err, out)
-	}
-}
-
-// note.restore renders the live document through the collab service: with edits still in the update log (never
-// snapshotted) the before_restore version must hold the typed text, byte-identical to what Rust's yrs renders.
-func TestDifferentialRestoreLiveDocument(t *testing.T) {
-	port := startCollab(t)
-	var e *env
-	script := func(r *runner) {
-		e = r.e
-		sp := r.f.space
-		r.id("p1", "owner", "note.create", map[string]any{"space_id": sp, "title": "Live", "content_md": "alpha **bold** and `code`\n\n- one\n- two"})
-		r.call("owner", "note.update", map[string]any{"id": r.v("p1"), "content_md": "v1 ünï 🚀"})
-		r.call("owner", "note.update", map[string]any{"id": r.v("p1"), "content_md": "v2\n\n# Heading\n\ntext"})
-		var revs []map[string]any
-		revs = r.list("owner", "note.revisions", map[string]any{"note_id": r.v("p1")})
-		first := revs[len(revs)-1]["id"].(string)
-		r.vars["first"] = first
-		r.typeInto(port, "owner", r.v("p1"), " typed ünï ✓ 🚀", " more")
-		r.call("owner", "note.restore", map[string]any{"note_id": r.v("p1"), "revision_id": first, "expected_epoch": 99})
-		r.call("member", "note.restore", map[string]any{"note_id": r.v("p1"), "revision_id": first})
-		r.call("owner", "note.restore", map[string]any{"note_id": r.v("p1"), "revision_id": first})
-		// restored content is the new live document; type again and restore the version before
-		r.typeInto(port, "owner", r.v("p1"), " again")
-		revs = r.list("owner", "note.revisions", map[string]any{"note_id": r.v("p1")})
-		r.call("owner", "note.restore", map[string]any{"note_id": r.v("p1"), "revision_id": revs[len(revs)-1]["id"].(string)})
-		r.call("owner", "note.restore", map[string]any{"note_id": r.v("p1"), "revision_id": revs[0]["id"].(string), "expected_epoch": 2})
-	}
-	_, gov := runTwin(t, script, map[string]string{
-		"revisions": `select (to_jsonb(x) - 'id')::text from core.note_revisions x order by x.created_at, x.number`,
-		"notes":     `select (jsonb_build_object('t', title, 'md', content_md, 'v', version, 'e', collab_epoch, 'y', content_ydoc is null))::text from core.notes order by created_at`,
-		"updates":   `select count(*)::text from core.note_updates`,
-		"events":    `select (to_jsonb(x) - 'id')::text from core.events x where x.actor_type in ('user','agent') and x.kind <> 'command.denied' order by x.id`,
-	}, 6, 1)
-	if e.proxied.has("note.restore") {
-		t.Fatal("note.restore went to Rust: it must be served natively once COLLAB_URL and the secret are set")
-	}
-	joined := strings.Join(gov.transcript, "\n")
-	if !strings.Contains(joined, "typed ünï") || !strings.Contains(joined, "before_restore") {
-		t.Fatalf("the live edits are missing from the before_restore version:\n%s", joined)
-	}
 }

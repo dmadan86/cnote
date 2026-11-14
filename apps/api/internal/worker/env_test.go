@@ -9,10 +9,9 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
-	"regexp"
-	"sort"
-	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -23,17 +22,19 @@ import (
 	"github.com/cnote/api/internal/db"
 	"github.com/cnote/api/internal/jobs"
 	"github.com/cnote/api/internal/modules"
+	"github.com/cnote/api/internal/server"
 )
 
-// Integration tests use the real Postgres (DATABASE_URL, role cnote_app) and the Rust server on RUST_API_URL
-// (default http://localhost:4000) as fixture factory and as the reference. A Rust worker runs against the same
-// database and claims every committed queued job, so the Go side of every test runs inside ONE transaction that is
-// rolled back: nothing it enqueues is ever visible to Rust. Nothing is mocked or skipped.
+// Integration tests use the real Postgres (DATABASE_URL, role cnote_app) and the Go server (httptest) as fixture
+// factory. A background Go worker claims every committed queued job, so the checked side of a test runs inside ONE
+// transaction that is rolled back: nothing it enqueues is ever visible to that worker. Nothing is mocked or skipped.
+
+var workerOnce sync.Once
 
 type env struct {
 	t    *testing.T
 	pool *pgxpool.Pool
-	rust string
+	api  string
 	reg  *command.Registry
 	w    *Worker
 }
@@ -46,16 +47,11 @@ func rnd() string {
 
 func newEnv(t *testing.T) *env {
 	t.Helper()
+	t.Setenv("AUTH_SIGNUP_FREE", "1000000") // every test signs up from 127.0.0.1; the per-IP throttle is shared through the database
+	t.Setenv("AUTH_IP_FREE", "1000000")
 	url := os.Getenv("DATABASE_URL")
 	if url == "" {
 		t.Fatal("DATABASE_URL is required (load the repo .env)")
-	}
-	rust := strings.TrimRight(os.Getenv("RUST_API_URL"), "/")
-	if rust == "" {
-		rust = "http://localhost:4000"
-	}
-	if resp, err := http.Get(rust + "/healthz"); err != nil || resp.StatusCode != 200 {
-		t.Fatalf("Rust server not reachable at %s: %v", rust, err)
 	}
 	pool, err := db.Connect(context.Background(), url, 8)
 	if err != nil {
@@ -63,7 +59,16 @@ func newEnv(t *testing.T) *env {
 	}
 	t.Cleanup(pool.Close)
 	reg := modules.Registry()
-	return &env{t: t, pool: pool, rust: rust, reg: reg, w: New(pool, reg)}
+	workerOnce.Do(func() { // one background worker for the test binary, like production WITH_WORKER=1
+		wp, err := db.Connect(context.Background(), url, 5)
+		if err != nil {
+			t.Fatal(err)
+		}
+		go New(wp, reg).Run(context.Background())
+	})
+	srv := httptest.NewServer(server.New(pool, reg))
+	t.Cleanup(srv.Close)
+	return &env{t: t, pool: pool, api: srv.URL, reg: reg, w: New(pool, reg)}
 }
 
 type who struct {
@@ -74,7 +79,7 @@ func (e *env) signup(name string) who {
 	e.t.Helper()
 	w := who{email: "go-" + rnd() + "@example.test"}
 	b, _ := json.Marshal(map[string]any{"email": w.email, "name": name, "password": rnd() + rnd(), "workspace_name": name + " WS"})
-	res, err := http.Post(e.rust+"/api/auth/signup", "application/json", bytes.NewReader(b))
+	res, err := http.Post(e.api+"/api/auth/signup", "application/json", bytes.NewReader(b))
 	if err != nil {
 		e.t.Fatal(err)
 	}
@@ -96,11 +101,11 @@ func (e *env) signup(name string) who {
 	return w
 }
 
-// rustCmd runs a command on the Rust server and returns the decoded JSON body.
-func (e *env) rustCmd(w who, name string, in any) any {
+// apiCmd runs a command on the Go server and returns the decoded JSON body.
+func (e *env) apiCmd(w who, name string, in any) any {
 	e.t.Helper()
 	b, _ := json.Marshal(in)
-	req, _ := http.NewRequest("POST", e.rust+"/api/w/"+w.ws+"/commands/"+name, bytes.NewReader(b))
+	req, _ := http.NewRequest("POST", e.api+"/api/w/"+w.ws+"/commands/"+name, bytes.NewReader(b))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Cookie", "cn_session="+w.cookie)
 	res, err := http.DefaultClient.Do(req)
@@ -110,27 +115,19 @@ func (e *env) rustCmd(w who, name string, in any) any {
 	defer res.Body.Close()
 	body, _ := io.ReadAll(res.Body)
 	if res.StatusCode != 200 {
-		e.t.Fatalf("rust %s: %d %s", name, res.StatusCode, body)
+		e.t.Fatalf("%s: %d %s", name, res.StatusCode, body)
 	}
 	var v any
 	_ = json.Unmarshal(body, &v)
 	return v
 }
 
-// side is one workspace plus how to run commands in it: Rust over HTTP (the real worker then reacts), or Go inside
-// an uncommitted transaction (the test then plays the worker).
+// side is one workspace plus how to run commands in it: Go inside an uncommitted transaction (the test plays the
+// worker).
 type side interface {
 	cmd(name string, in any) any
 	ws() who
 }
-
-type rustSide struct {
-	e *env
-	w who
-}
-
-func (s *rustSide) cmd(name string, in any) any { return s.e.rustCmd(s.w, name, in) }
-func (s *rustSide) ws() who                     { return s.w }
 
 type goSide struct {
 	e        *env
@@ -200,12 +197,6 @@ func (s *goSide) insertAutomation(in map[string]any) ([]byte, error) {
 	return j(map[string]any{"id": id}), err
 }
 
-func (s *goSide) try(name string, in any) error {
-	s.c.Principal = s.user
-	_, err := s.c.Call(name, in)
-	return err
-}
-
 // drain plays the Go worker over the jobs this transaction created: runs every claimable job (event.dispatch and
 // the module jobs the Go worker owns) until none is left, marking them done. Jobs of kinds Go never claims stay queued.
 func (s *goSide) drain(max int) int {
@@ -242,7 +233,7 @@ func (s *goSide) drain(max int) int {
 	return ran
 }
 
-// settle waits for the shared Rust worker to finish every dispatch/hook/import job of the workspace.
+// settle waits for the background worker to finish every dispatch/hook/import job of the workspace.
 func (e *env) settle(ws string) {
 	e.t.Helper()
 	deadline := time.Now().Add(40 * time.Second)
@@ -265,105 +256,7 @@ func (e *env) settle(ws string) {
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
-	e.t.Fatalf("Rust worker did not drain workspace %s", ws)
-}
-
-// readCtx is a read-only tenant ctx over committed data (the Rust side).
-func (e *env) readCtx(ws string) *command.Ctx {
-	e.t.Helper()
-	tx, err := db.BeginTenant(context.Background(), e.pool, ws)
-	if err != nil {
-		e.t.Fatal(err)
-	}
-	e.t.Cleanup(func() { _ = tx.Rollback(context.Background()) })
-	return &command.Ctx{Context: context.Background(), Tx: tx, Principal: command.Principal{Kind: command.KindSystem, WorkspaceID: ws, Role: command.Owner}}
-}
-
-var uuidRe = regexp.MustCompile(`[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}`)
-
-// snapshot renders the worker-visible rows of a workspace with ids replaced by note titles / item keys, so a Rust
-// run and a Go run of the same scenario compare equal. Timestamps and ids are excluded.
-func snapshot(t *testing.T, c *command.Ctx, extra ...string) string {
-	t.Helper()
-	names := map[string]string{}
-	label := func(sql string, prefix string) {
-		rows, err := c.Tx.Query(c.Context, sql)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer rows.Close()
-		for rows.Next() {
-			var id, n string
-			if err := rows.Scan(&id, &n); err != nil {
-				t.Fatal(err)
-			}
-			names[id] = prefix + n
-		}
-	}
-	label("select id::text, title from core.notes", "note:")
-	label("select id::text, name from projects.automations", "automation:")
-	label("select id::text, name from core.hooks", "hook:")
-	label("select id::text, '' from core.users", "user")
-	names[c.WorkspaceID()] = "ws"
-	norm := func(s string) string {
-		return uuidRe.ReplaceAllStringFunc(s, func(m string) string {
-			if n, ok := names[m]; ok {
-				return n
-			}
-			return "<id>"
-		})
-	}
-	var out []string
-	add := func(section, sql string) {
-		rows, err := c.Tx.Query(c.Context, sql)
-		if err != nil {
-			t.Fatalf("%s: %v", section, err)
-		}
-		defer rows.Close()
-		var lines []string
-		for rows.Next() {
-			vals, err := rows.Values()
-			if err != nil {
-				t.Fatal(err)
-			}
-			parts := make([]string, len(vals))
-			for i, v := range vals {
-				switch x := v.(type) {
-				case nil:
-					parts[i] = "null"
-				case []byte:
-					parts[i] = string(x)
-				case map[string]any, []any:
-					b, _ := json.Marshal(x)
-					parts[i] = string(b)
-				default:
-					b, _ := json.Marshal(x)
-					parts[i] = string(b)
-				}
-			}
-			lines = append(lines, norm(strings.Join(parts, " | ")))
-		}
-		sort.Strings(lines)
-		out = append(out, "## "+section)
-		out = append(out, lines...)
-	}
-	add("events", "select kind, actor_type, payload::text from core.events")
-	add("relations", "select kind, coalesce(external_ref,''), from_id::text, to_id::text from core.relations")
-	add("external_bindings", "select kind, ref, note_id::text from docs.external_bindings")
-	add("flags", "select note_id::text, reason, coalesce(source_note_id::text,''), (resolved_at is null)::text from docs.freshness_flags")
-	add("notes", "select title, freshness, lapse_count::text, coalesce(verify_by::text,''), coalesce(content_md,'') from core.notes")
-	add("jobs", "select kind, payload::text from core.jobs where kind <> 'event.dispatch'")
-	add("proposals", "select proposed_md, rationale, base_version::text from docs.edit_proposals")
-	add("chunks", "select model, ordinal::text, content, embedding::text from ai.chunks")
-	add("ai_usage", "select kind, quantity::text from core.usage where kind like 'ai.%'")
-	add("ai_audit", "select provider, model, purpose, prompt::text, tokens_in::text from ai.audit")
-	add("automation_runs", "select automation_id::text, status, log::text from projects.automation_runs")
-	add("comments", "select note_id::text, body, coalesce(author_name,'') from core.comments")
-	add("usage", "select kind, quantity::text from core.usage where kind not like 'ai.%'")
-	for _, q := range extra {
-		add(q, q)
-	}
-	return strings.Join(out, "\n")
+	e.t.Fatalf("worker did not drain workspace %s", ws)
 }
 
 func beginTenant(e *env, ws string) (pgx.Tx, error) {

@@ -2,7 +2,7 @@ import * as Y from 'yjs'
 import { CmdError, type Tx } from './db.ts'
 import * as md from './md.ts'
 
-/** Deterministic client id for seeding (same derivation as the Rust gateway), so seeding the same note twice
+/** Deterministic client id for seeding (same derivation as the original gateway), so seeding the same note twice
  * yields identical Yjs items and clients that cached an earlier seed merge cleanly. */
 export function seedClient(note: string): number {
   const b = Buffer.from(note.replaceAll('-', ''), 'hex')

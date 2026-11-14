@@ -9,8 +9,7 @@ import (
 	"github.com/cnote/api/internal/modules/billing"
 )
 
-// Company profile, departments, people and finance access. Fixtures come from the Rust server; the deactivation
-// checks also hit Rust itself, so run with RUST_API_URL pointing at a build that has the deactivated_at predicate.
+// Company profile, departments, people and finance access. Fixtures come from the Go server.
 
 func (b *bt) memberAs(name, role string) who {
 	return b.env.addMember(b.owner, b.env.signup(name, false), role)
@@ -152,12 +151,12 @@ func TestMemberUpdateRolesAndAgents(t *testing.T) {
 	}
 }
 
-func TestDeactivateStopsAccessOnBothServers(t *testing.T) {
+func TestDeactivateStopsAccess(t *testing.T) {
 	b := newBT(t, false)
 	a := b.memberAs("Ana", "admin")
 	m := b.memberAs("Mina", "member")
 	mk := b.env.apiKey(m)
-	for _, base := range []string{b.gosv.URL, b.env.rust} {
+	for _, base := range []string{b.gosv.URL} {
 		eq(t, b.env.cmd(base, m, m.ws, "note.list", map[string]any{"space_id": b.space}, nil).status, 200)
 		eq(t, b.env.cmd(base, mk, m.ws, "note.list", map[string]any{"space_id": b.space}, nil).status, 200)
 	}
@@ -168,7 +167,7 @@ func TestDeactivateStopsAccessOnBothServers(t *testing.T) {
 	if p["deactivated_at"] == nil || p["left_on"] == nil {
 		t.Fatalf("not marked: %v", p)
 	}
-	for _, base := range []string{b.gosv.URL, b.env.rust} {
+	for _, base := range []string{b.gosv.URL} {
 		for _, w := range []who{m, mk} {
 			if r := b.env.cmd(base, w, m.ws, "note.list", map[string]any{"space_id": b.space}, nil); r.status != 403 && r.status != 401 {
 				t.Errorf("%s: deactivated member still gets %d %s", base, r.status, r.body)

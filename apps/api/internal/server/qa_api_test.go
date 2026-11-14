@@ -64,14 +64,13 @@ func (e *env) bigPost(base string, w who, ws, cmd string, body []byte) resp {
 	return resp{res.StatusCode, b}
 }
 
-// API-009: a body over the 2 MiB command limit is refused with 413 and Rust's text, before auth, whether the
-// command runs in Go or in Rust.
+// API-009: a body over the 2 MiB command limit is refused with 413 before auth, whatever the command.
 func TestQAOversizedBodyIs413(t *testing.T) {
 	e := newEnv(t)
 	a := e.signup("Big", true)
 	pad := func(n int) []byte { return []byte(`{"title":"` + strings.Repeat("x", n) + `"}`) }
 	const limit = 2 << 20
-	for _, cmd := range []string{"note.create", "space.list", "does.not.exist"} { // Go-native x2, proxied
+	for _, cmd := range []string{"note.create", "space.list", "does.not.exist"} {
 		t.Run(cmd, func(t *testing.T) {
 			for _, c := range []struct {
 				name string
@@ -79,9 +78,8 @@ func TestQAOversizedBodyIs413(t *testing.T) {
 				n    int
 			}{{"authenticated", a, limit + 1024}, {"anonymous", who{}, limit + 1024}, {"well over the limit", a, limit + 64<<10}} {
 				g, _ := e.raw(e.gosv.URL, c.w, a.ws, cmd, "application/json", pad(c.n), nil) // an ordinary client, as browsers are
-				r := e.bigPost(e.rust, c.w, a.ws, cmd, pad(c.n))
-				if g.status != 413 || r.status != 413 || string(g.body) != string(r.body) {
-					t.Errorf("%s: go %d %q, rust %d %q", c.name, g.status, g.body, r.status, r.body)
+				if g.status != 413 {
+					t.Errorf("%s: %d %q", c.name, g.status, g.body)
 				}
 			}
 		})
@@ -98,13 +96,13 @@ func TestQAOversizedBodyIs413(t *testing.T) {
 	})
 }
 
-// API-012: the contract is lenient, like Rust (serde without deny_unknown_fields): unknown fields are ignored,
+// API-012: the contract is lenient (serde-style, no deny_unknown_fields): unknown fields are ignored,
 // never stored, and never an error. Pinned so a change to strictness is a conscious decision.
 func TestQAUnknownFieldsAreIgnored(t *testing.T) {
 	e := newEnv(t)
 	a := e.signup("Unk", true)
 	in := map[string]any{"space_id": e.space(a), "title": "unknown fields", "is_admin": true, "workspace_id": "00000000-0000-0000-0000-000000000000", "deleted_at": "2020-01-01T00:00:00Z"}
-	for name, base := range map[string]string{"go": e.gosv.URL, "rust": e.rust} {
+	for name, base := range map[string]string{"go": e.gosv.URL} {
 		r := e.cmd(base, a, a.ws, "note.create", in, nil)
 		if r.status != 200 {
 			t.Fatalf("%s: %d %s", name, r.status, r.body)
@@ -119,7 +117,7 @@ func TestQAUnknownFieldsAreIgnored(t *testing.T) {
 	}
 }
 
-// API-002: malformed or wrongly shaped bodies are 400 on both servers with identical bodies and never a 5xx.
+// API-002: malformed or wrongly shaped bodies are a 4xx and never a 5xx.
 func TestQAMalformedBodies(t *testing.T) {
 	e := newEnv(t)
 	a := e.signup("Mal", true)
@@ -136,10 +134,6 @@ func TestQAMalformedBodies(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			g, _ := e.raw(e.gosv.URL, a, a.ws, "note.create", "application/json", []byte(body), nil)
-			r, _ := e.raw(e.rust, a, a.ws, "note.create", "application/json", []byte(body), nil)
-			if g.status != r.status || string(g.body) != string(r.body) {
-				t.Fatalf("go %d %q\nrust %d %q", g.status, g.body, r.status, r.body)
-			}
 			if g.status < 400 || g.status >= 500 {
 				t.Fatalf("want a 4xx, got %d %s", g.status, g.body)
 			}
@@ -147,13 +141,12 @@ func TestQAMalformedBodies(t *testing.T) {
 	}
 }
 
-// API-007. The plan expects a conflict when an Idempotency-Key is reused with a different payload. Rust (the
-// reference) and Go both replay the first result for the same command whatever the new payload says.
+// API-007. The plan expects a conflict when an Idempotency-Key is reused with a different payload. Go replays the first result for the same command whatever the new payload says.
 func TestQAIdempotencyKeyReuse(t *testing.T) {
 	e := newEnv(t)
 	a := e.signup("Idem", true)
 	sp := e.space(a)
-	for name, base := range map[string]string{"go": e.gosv.URL, "rust": e.rust} {
+	for name, base := range map[string]string{"go": e.gosv.URL} {
 		t.Run(name+" same payload replays", func(t *testing.T) {
 			h := map[string]string{"Idempotency-Key": "k-" + rnd()}
 			in := map[string]any{"space_id": sp, "title": "idem same"}
@@ -164,23 +157,12 @@ func TestQAIdempotencyKeyReuse(t *testing.T) {
 			}
 		})
 	}
-	t.Run("parity: different payload behaves the same on Go and Rust", func(t *testing.T) {
-		var out [2]resp
-		for i, base := range []string{e.gosv.URL, e.rust} {
-			h := map[string]string{"Idempotency-Key": "p-" + rnd()}
-			e.cmd(base, a, a.ws, "note.create", map[string]any{"space_id": sp, "title": "one"}, h)
-			out[i] = e.cmd(base, a, a.ws, "note.create", map[string]any{"space_id": sp, "title": "two"}, h)
-		}
-		if out[0].status != out[1].status {
-			t.Fatalf("go %d %s, rust %d %s", out[0].status, out[0].body, out[1].status, out[1].body)
-		}
-	})
 	t.Run("API-007 different payload with the same key is a conflict", func(t *testing.T) {
 		h := map[string]string{"Idempotency-Key": "c-" + rnd()}
 		e.cmd(e.gosv.URL, a, a.ws, "note.create", map[string]any{"space_id": sp, "title": "one"}, h)
 		r := e.cmd(e.gosv.URL, a, a.ws, "note.create", map[string]any{"space_id": sp, "title": "two"}, h)
 		if r.status != 409 {
-			t.Skipf("defect: key reused with a different payload returns the first result (%d %s) on Go and Rust; the plan expects 409. Needs a payload hash column in core.idempotency and a Rust change to stay byte-identical (not security-relevant, so Go alone is not changed)", r.status, r.body)
+			t.Skipf("defect: key reused with a different payload returns the first result (%d %s) ; the plan expects 409. Needs a payload hash column in core.idempotency (not security-relevant)", r.status, r.body)
 		}
 	})
 }
