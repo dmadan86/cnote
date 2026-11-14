@@ -17,6 +17,7 @@ type Summary = {
     follow_ups?: { count: number; overdue: number }
     approvals?: { count: number; confirmations: number; quotes_awaiting: number; to_approve: number }
     bills_due?: { count: number; total_minor: number; overdue_count: number }
+    low_stock?: { count: number; items: number; sample: { id: string; name: string }[] }
     people_present?: { present: number; expected: number; on_leave: number; not_marked: number }
     urgent?: { count: number; overdue_tasks: number; overdue_invoices: number }
   }
@@ -163,6 +164,20 @@ export function HomeDashboard() {
         value={String(t.follow_ups.count)}
         detail={t.follow_ups.count ? 'Due today or earlier' : 'Nothing due'}
         alert={t.follow_ups.overdue ? `${t.follow_ups.overdue} overdue` : undefined}
+      />
+    ),
+    t.low_stock && (
+      <TileLink
+        key="stock"
+        href={`${base}/billing/stock`}
+        label="Low stock"
+        value={String(t.low_stock.count)}
+        detail={
+          t.low_stock.count
+            ? t.low_stock.sample.map((s) => s.name).join(', ')
+            : `${plural(t.low_stock.items, 'item')}, all above reorder level`
+        }
+        alert={t.low_stock.count ? 'Needs reordering' : undefined}
       />
     ),
     t.people_present && (

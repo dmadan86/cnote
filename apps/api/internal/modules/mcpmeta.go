@@ -31,7 +31,7 @@ var (
 		"required": []string{"description", "unit_price_minor"},
 		"properties": props{"description": str, "quantity": props{"type": []string{"string", "number"}, "description": "Decimal, default 1"},
 			"unit_price_minor": props{"type": "integer", "description": "Paise per unit"}, "gst_rate_bp": props{"type": "integer", "description": "GST rate in basis points, default 1800"},
-			"hsn_sac": str, "item_note_id": id},
+			"hsn_sac": str, "item_note_id": id, "stock_item_id": props{"type": "string", "description": "UUID of a stock item: issuing the invoice or recording the bill posts stock"}},
 	}}
 )
 
@@ -176,6 +176,17 @@ var mcpMeta = map[string]meta{
 	"data.export_subject":    {"Export one data subject's own records (a contact, or a workspace member) as JSON. Needs human confirmation for agents.", schema(nil, props{"contact_id": id, "user_id": id})},
 	"data.request_list":      {"List data export and erase requests with their outcome.", schema(nil, props{})},
 	"data.erase_subject":     {"Anonymise a contact (DPDP erasure) while keeping statutory finance records. People only; refused while unpaid documents exist unless confirm_unpaid is set.", schema([]string{"contact_id", "reason"}, props{"contact_id": id, "reason": str, "confirm_unpaid": flag})},
+	"stock_item.create":      {"Create a stock item (SKU, name, HSN, unit, GST rate, default price, reorder level). SKUs are unique per workspace, case-insensitive.", schema([]string{"sku", "name"}, props{"sku": str, "name": str, "hsn_sac": str, "unit": str, "gst_rate_bp": num, "price_minor": props{"type": "integer", "description": "Default selling price per unit, paise"}, "reorder_level": props{"type": []string{"string", "number"}, "description": "Low-stock alert at or below this quantity; 0 = none"}})},
+	"stock_item.update":      {"Update a stock item; archive it with active=false. Stock on hand cannot be edited: use stock.adjust.", schema([]string{"id"}, props{"id": id, "sku": str, "name": str, "hsn_sac": str, "unit": str, "gst_rate_bp": num, "price_minor": num, "reorder_level": props{"type": []string{"string", "number"}}, "active": flag})},
+	"stock_item.list":        {"List stock items with quantity on hand (the sum of the stock ledger). low=true keeps items at or under their reorder level.", schema(nil, props{"q": str, "low": flag, "include_archived": flag, "limit": num})},
+	"stock_item.get":         {"One item with its on-hand quantity per location and its latest ledger movements.", idOnly},
+	"stock_location.list":    {"List stock locations (a default location named Main exists from first use).", schema(nil, props{})},
+	"stock_location.create":  {"Add a stock location (warehouse, shop, van). Admins only.", schema([]string{"name"}, props{"name": str})},
+	"stock_location.update":  {"Rename, archive or make a location the default (where bills and invoices post). A location with stock cannot be archived. Admins only.", schema([]string{"id"}, props{"id": id, "name": str, "is_default": flag, "active": flag})},
+	"stock.adjust":           {"Admin: add (positive qty) or remove (negative qty) stock with a mandatory reason, at the default or a given location. Adding at no existing cost needs unit_cost_minor. Needs confirmation for agents. Refuses to go below zero unless the workspace setting allow_negative_stock is true.", schema([]string{"item_id", "qty", "reason"}, props{"item_id": id, "location_id": id, "qty": props{"type": []string{"string", "number"}, "description": "Signed, up to 3 decimals"}, "reason": str, "unit_cost_minor": props{"type": "integer", "description": "Paise per unit for added stock; default is the current average cost"}})},
+	"stock.transfer":         {"Move stock between two locations at the item's average cost.", schema([]string{"item_id", "from_location_id", "to_location_id", "qty"}, props{"item_id": id, "from_location_id": id, "to_location_id": id, "qty": props{"type": []string{"string", "number"}}, "reason": str})},
+	"stock.movement_list":    {"The append-only stock ledger, newest first, optionally for one item or location. Receipts and issues come from recorded bills and issued invoices.", schema(nil, props{"item_id": id, "location_id": id, "limit": num})},
+	"report.stock_valuation": {"Stock value per item at weighted average cost (the only valuation method) and the total. Needs finance access.", schema(nil, props{})},
 	"attendance.check_in":    {"Mark yourself present for today (IST) and record the check-in time. People only: an agent or API key cannot mark presence. Repeating it keeps the first time.", schema(nil, props{})},
 	"attendance.check_out":   {"Record your check-out time for today. People only.", schema(nil, props{})},
 	"attendance.mark": {"Admin: mark someone's attendance for a day in this or the previous month (present, half_day, absent, week_off, holiday). Approved leave days cannot be overwritten.", schema([]string{"employee_id", "day", "status"}, props{

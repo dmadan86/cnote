@@ -16,6 +16,7 @@ import (
 	"github.com/cnote/api/internal/modules/expenses"
 	"github.com/cnote/api/internal/modules/home"
 	"github.com/cnote/api/internal/modules/hr"
+	"github.com/cnote/api/internal/modules/inventory"
 	"github.com/cnote/api/internal/modules/leads"
 	"github.com/cnote/api/internal/modules/marketplace"
 	"github.com/cnote/api/internal/modules/notes"
@@ -56,6 +57,7 @@ func Commands() []command.Command {
 	cmds = append(cmds, expenses.Commands()...)
 	cmds = append(cmds, timelog.Commands()...)
 	cmds = append(cmds, hr.Commands()...)
+	cmds = append(cmds, inventory.Commands()...)
 	return withMeta(markFinance(approvals.Wire(cmds)))
 }
 
@@ -63,7 +65,7 @@ func Registry() *command.Registry { return command.NewRegistry(Commands()...) }
 
 // Commands that read or move money. A member whose finance_access is off cannot run them (admins and owners always can).
 // Quotes are sales documents and stay open; notes that happen to be invoices are governed by page access instead.
-var financePrefixes = []string{"invoice.", "credit_note.", "payment.", "receipt.", "recurring.", "bill.", "vendor.", "report.receivables", "report.gst", "report.payables", "report.itc", "export.tally", "ledger.", "tds.", "report.tds", "report.profit_loss", "expense.approve", "expense.reimburse", "expense.record_direct", "time.invoice", "milestone.", "project.billing", "report.project_money"}
+var financePrefixes = []string{"invoice.", "credit_note.", "payment.", "receipt.", "recurring.", "bill.", "vendor.", "report.receivables", "report.gst", "report.payables", "report.itc", "export.tally", "ledger.", "tds.", "report.tds", "report.profit_loss", "expense.approve", "expense.reimburse", "expense.record_direct", "time.invoice", "milestone.", "project.billing", "report.project_money", "report.stock_valuation"}
 
 func markFinance(cmds []command.Command) []command.Command {
 	for i, c := range cmds {

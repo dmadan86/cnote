@@ -126,17 +126,17 @@ func checked(c *command.Ctx, raw json.RawMessage, write bool) (schedule, error) 
 	return load(c, v.ID, write)
 }
 func detail(c *command.Ctx, s schedule) (any, error) {
-	rows, e := c.Tx.Query(c.Context, `select description,hsn_sac,quantity::text,unit_price_minor,gst_rate_bp,item_note_id::text from billing.recurring_invoice_lines where recurring_invoice_id=$1::uuid order by position`, s.ID)
+	rows, e := c.Tx.Query(c.Context, `select description,hsn_sac,quantity::text,unit_price_minor,gst_rate_bp,item_note_id::text,stock_item_id::text from billing.recurring_invoice_lines where recurring_invoice_id=$1::uuid order by position`, s.ID)
 	if e != nil {
 		return nil, command.DB(e)
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var d, q string
-		var h, i *string
+		var h, i, st *string
 		var p int64
 		var g int32
-		if e = rows.Scan(&d, &h, &q, &p, &g, &i); e != nil {
+		if e = rows.Scan(&d, &h, &q, &p, &g, &i, &st); e != nil {
 			return nil, command.DB(e)
 		}
 		l := map[string]any{"description": d, "quantity": json.Number(q), "unit_price_minor": p, "gst_rate_bp": g}
@@ -145,6 +145,9 @@ func detail(c *command.Ctx, s schedule) (any, error) {
 		}
 		if i != nil {
 			l["item_note_id"] = *i
+		}
+		if st != nil {
+			l["stock_item_id"] = *st
 		}
 		s.Lines = append(s.Lines, l)
 	}

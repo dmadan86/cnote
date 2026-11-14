@@ -6,6 +6,7 @@ import { btn, btnPrimary, ErrorText, inputCls } from '@/components/ui'
 import { useCmd } from '@/lib/hooks'
 import { Confirm, run } from './bits'
 import { type Contact, type InvoiceDetail, money, parseMinor, STATES, toRupees } from './fmt'
+import { StockSelect } from './stock'
 
 const RATES = [0, 5, 12, 18, 28]
 type Row = {
@@ -16,6 +17,7 @@ type Row = {
   price: string
   rate: number
   item: string
+  stock: string
   total: number | null // server taxable amount; null while edited
 }
 type Preview = {
@@ -38,6 +40,7 @@ const blank = (): Row => ({
   price: '',
   rate: 18,
   item: '',
+  stock: '',
   total: null,
 })
 const fromServer = (inv: InvoiceDetail): Row[] =>
@@ -49,6 +52,7 @@ const fromServer = (inv: InvoiceDetail): Row[] =>
     price: toRupees(l.unit_price_minor),
     rate: l.gst_rate_bp / 100,
     item: l.item_note_id ?? '',
+    stock: l.stock_item_id ?? '',
     total: l.taxable_minor,
   }))
 
@@ -66,6 +70,7 @@ function toPayload(rows: Row[]) {
       unit_price_minor: price,
       gst_rate_bp: r.rate * 100,
       item_note_id: r.item || undefined,
+      stock_item_id: r.stock || undefined,
     })
   }
   return out
@@ -253,6 +258,25 @@ export function Editor({ inv, onIssued }: { inv: InvoiceDetail; onIssued: () => 
                       value={r.description}
                       onChange={(e) => patch(r.k, { description: e.target.value })}
                       className={cell}
+                    />
+                    <StockSelect
+                      label={`Line ${i + 1} stock item`}
+                      value={r.stock}
+                      className={`${cell} text-muted`}
+                      onPick={(it) =>
+                        patch(
+                          r.k,
+                          it
+                            ? {
+                                stock: it.id,
+                                description: it.name,
+                                hsn: it.hsn_sac ?? '',
+                                rate: it.gst_rate_bp / 100,
+                                price: it.price_minor ? toRupees(it.price_minor) : r.price,
+                              }
+                            : { stock: '' },
+                        )
+                      }
                     />
                     <select
                       aria-label={`Line ${i + 1} work item`}

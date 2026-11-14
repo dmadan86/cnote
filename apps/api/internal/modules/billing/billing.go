@@ -11,6 +11,7 @@ import (
 
 	"github.com/cnote/api/internal/access"
 	"github.com/cnote/api/internal/command"
+	"github.com/cnote/api/internal/modules/inventory"
 	"github.com/cnote/api/internal/modules/notes"
 )
 
@@ -143,6 +144,7 @@ type lineOut struct {
 	SGSTMinor    int64   `json:"sgst_minor"`
 	IGSTMinor    int64   `json:"igst_minor"`
 	ItemNoteID   *string `json:"item_note_id"`
+	StockItemID  *string `json:"stock_item_id,omitempty"`
 }
 
 type paymentOut struct {
@@ -170,6 +172,7 @@ type lineIn struct {
 	price       int64
 	rateBP      *int64
 	item        *string
+	stock       *string
 }
 
 func decodeLines(o obj, key string, required bool) ([]lineIn, bool, error) {
@@ -213,6 +216,9 @@ func decodeLines(o obj, key string, required bool) ([]lineIn, bool, error) {
 		if l.item, err = lo.optUUID("item_note_id"); err != nil {
 			return nil, false, err
 		}
+		if l.stock, err = lo.optUUID("stock_item_id"); err != nil {
+			return nil, false, err
+		}
 		out = append(out, l)
 	}
 	return out, true, nil
@@ -221,6 +227,7 @@ func decodeLines(o obj, key string, required bool) ([]lineIn, bool, error) {
 type ln struct {
 	description string
 	item        *string
+	stock       *string // inventory.items id: posts stock when the document is issued or recorded
 	g           gstLine
 }
 
@@ -259,7 +266,7 @@ func parseLines(in []lineIn) ([]ln, error) {
 				return nil, gstErrToCmd(err)
 			}
 		}
-		out = append(out, ln{strings.TrimSpace(l.description), l.item, g})
+		out = append(out, ln{strings.TrimSpace(l.description), l.item, l.stock, g})
 	}
 	return out, nil
 }
@@ -271,7 +278,7 @@ func loadLines(c *command.Ctx, invoiceID string) ([]ln, error) {
 // loadLinesOf reads lines from an invoice-shaped line table (table and col are constants, never user input).
 func loadLinesOf(c *command.Ctx, table, col, id string) ([]ln, error) {
 	rows, err := c.Tx.Query(c.Context,
-		`select description, hsn_sac, quantity::text, unit_price_minor, gst_rate_bp, item_note_id::text
+		`select description, hsn_sac, quantity::text, unit_price_minor, gst_rate_bp, item_note_id::text, stock_item_id::text
 		 from `+table+` where `+col+` = $1::uuid order by position`, id)
 	if err != nil {
 		return nil, command.DB(err)
@@ -282,7 +289,7 @@ func loadLinesOf(c *command.Ctx, table, col, id string) ([]ln, error) {
 		var l ln
 		var qty string
 		var rate int32
-		if err := rows.Scan(&l.description, &l.g.hsn, &qty, &l.g.price, &rate, &l.item); err != nil {
+		if err := rows.Scan(&l.description, &l.g.hsn, &qty, &l.g.price, &rate, &l.item, &l.stock); err != nil {
 			return nil, command.DB(err)
 		}
 		q, ok := parseDec(qty)
@@ -319,10 +326,10 @@ func writeLinesTo(c *command.Ctx, table, col, invoiceID string, lines []ln, tax 
 		subtotal += t.taxable
 		if _, err := c.Tx.Exec(c.Context,
 			`insert into `+table+` (workspace_id, `+col+`, position, description, hsn_sac, quantity,
-			   unit_price_minor, gst_rate_bp, taxable_minor, cgst_minor, sgst_minor, igst_minor, item_note_id)
-			 values ($1::uuid,$2::uuid,$3,$4,$5,$6::numeric,$7,$8,$9,$10,$11,$12,$13::uuid)`,
+			   unit_price_minor, gst_rate_bp, taxable_minor, cgst_minor, sgst_minor, igst_minor, item_note_id, stock_item_id)
+			 values ($1::uuid,$2::uuid,$3,$4,$5,$6::numeric,$7,$8,$9,$10,$11,$12,$13::uuid,$14::uuid)`,
 			c.WorkspaceID(), invoiceID, int32(pos+1), l.description, l.g.hsn, l.g.qtyText, l.g.price, int32(l.g.rateBP),
-			t.taxable, t.cgst, t.sgst, t.igst, l.item); err != nil {
+			t.taxable, t.cgst, t.sgst, t.igst, l.item, l.stock); err != nil {
 			return 0, command.DB(err)
 		}
 	}
@@ -683,7 +690,7 @@ func invoiceDetail(c *command.Ctx, id string) (invoiceOut, error) {
 	}
 	rows, err := c.Tx.Query(c.Context,
 		`select id::text, position, description, hsn_sac, quantity::text, unit_price_minor, gst_rate_bp,
-		   taxable_minor, cgst_minor, sgst_minor, igst_minor, item_note_id::text
+		   taxable_minor, cgst_minor, sgst_minor, igst_minor, item_note_id::text, stock_item_id::text
 		 from billing.invoice_lines where invoice_id = $1::uuid order by position`, id)
 	if err != nil {
 		return out, command.DB(err)
@@ -691,7 +698,7 @@ func invoiceDetail(c *command.Ctx, id string) (invoiceOut, error) {
 	for rows.Next() {
 		var l lineOut
 		if err := rows.Scan(&l.ID, &l.Position, &l.Description, &l.HsnSac, &l.Quantity, &l.UnitPrice, &l.GSTRateBP,
-			&l.TaxableMinor, &l.CGSTMinor, &l.SGSTMinor, &l.IGSTMinor, &l.ItemNoteID); err != nil {
+			&l.TaxableMinor, &l.CGSTMinor, &l.SGSTMinor, &l.IGSTMinor, &l.ItemNoteID, &l.StockItemID); err != nil {
 			rows.Close()
 			return out, command.DB(err)
 		}
@@ -905,6 +912,9 @@ func invoiceIssue(c *command.Ctx, input json.RawMessage) (any, error) {
 		return nil, command.DB(err)
 	}
 	if err := post(c, "invoice", id, "Invoice "+number, saleLegs(tax.subtotal, tax.cgst, tax.sgst, tax.igst, false)); err != nil {
+		return nil, err
+	}
+	if err := inventory.PostLines(c, "issue", "invoice", id, "billing.invoice_lines", "invoice_id"); err != nil {
 		return nil, err
 	}
 	if _, err := c.Emit("invoice.issued", &id, map[string]any{"number": number, "total_minor": tax.total, "contact_id": inv.ContactID,
@@ -1171,6 +1181,9 @@ func invoiceCancel(c *command.Ctx, input json.RawMessage) (any, error) {
 	}
 	cn, err := issueCreditNote(c, inv, lines, reason)
 	if err != nil {
+		return nil, err
+	}
+	if err := inventory.Reverse(c, "invoice", id); err != nil {
 		return nil, err
 	}
 	if _, err := c.Tx.Exec(c.Context, "update billing.invoices set status = 'cancelled', cancelled_at = now() where note_id = $1::uuid", id); err != nil {
