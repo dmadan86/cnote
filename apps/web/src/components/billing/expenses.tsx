@@ -5,6 +5,7 @@ import { useState } from 'react'
 import { ApprovalBanner } from '@/components/approvals/banner'
 import { useShell } from '@/components/shell'
 import { btn, btnPrimary, ErrorText, Field, inputCls, Modal, Pill } from '@/components/ui'
+import { CmdFailure } from '@/lib/api'
 import { useCmd } from '@/lib/hooks'
 import { run } from './bits'
 import { money, parseMinor, toRupees } from './fmt'
@@ -153,8 +154,7 @@ function ExpenseForm({
         </Field>
         {!direct && (
           <p className="text-[12px] text-muted">
-            Save it as a draft first. Then open the claim page to add the receipt photo, and submit when it is
-            ready.
+            Save it as a draft first. Then add the receipt photo on the claim, and submit when it is ready.
           </p>
         )}
         <ErrorText error={err} />
@@ -168,6 +168,111 @@ function ExpenseForm({
         </div>
       </form>
     </Modal>
+  )
+}
+
+type FileMeta = { id: string; filename: string; content_type: string; size_bytes: number }
+const kb = (n: number) =>
+  n >= 1 << 20 ? `${(n / (1 << 20)).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`
+
+/** Receipt photos and PDFs on a claim: viewable by anyone who can see the claim, changed only by its owner while draft or rejected. */
+function Receipts({ id, editable }: { id: string; editable: boolean }) {
+  const { ws } = useShell()
+  const { data, error, reload } = useCmd<FileMeta[]>(ws, 'file.list', { note_id: id })
+  const [err, setErr] = useState<string>()
+  const [busy, setBusy] = useState(false)
+  const upload = async (f: File) => {
+    setErr(undefined)
+    if (f.size > 10 << 20) return setErr('That file is larger than 10 MB.')
+    setBusy(true)
+    try {
+      const res = await fetch(`/api/w/${ws}/files?note_id=${id}&filename=${encodeURIComponent(f.name)}`, {
+        method: 'POST',
+        body: f,
+        credentials: 'same-origin',
+      })
+      if (!res.ok) {
+        const e = (await res.json().catch(() => ({})))?.error ?? {}
+        throw new CmdFailure(e.code ?? 'internal', e.message ?? res.statusText, res.status)
+      }
+      reload()
+    } catch (x) {
+      setErr((x as Error).message)
+    }
+    setBusy(false)
+  }
+  const remove = async (fid: string) => {
+    setBusy(true)
+    try {
+      await run(ws, 'file.delete', { id: fid })
+      reload()
+    } catch (x) {
+      setErr((x as Error).message)
+    }
+    setBusy(false)
+  }
+  return (
+    <section aria-label="Receipts" className="space-y-2">
+      <h3 className="text-[13px] font-medium">Receipts</h3>
+      <ErrorText error={error?.message ?? err} />
+      {data?.length === 0 && <p className="text-[13px] text-muted">No receipt attached yet.</p>}
+      <ul className="space-y-2">
+        {data?.map((f) => (
+          <li key={f.id} className="flex min-h-11 items-center gap-3">
+            <a
+              href={`/api/w/${ws}/files/${f.id}`}
+              target="_blank"
+              rel="noreferrer"
+              className="flex min-w-0 flex-1 items-center gap-3 underline-offset-2 hover:underline"
+            >
+              {f.content_type.startsWith('image/') ? (
+                // biome-ignore lint/performance/noImgElement: authenticated same-origin bytes, not a static asset
+                <img
+                  src={`/api/w/${ws}/files/${f.id}`}
+                  alt=""
+                  className="size-16 rounded-md border border-line object-cover"
+                />
+              ) : (
+                <span className="grid size-16 place-items-center rounded-md border border-line text-[12px] text-muted">
+                  PDF
+                </span>
+              )}
+              <span className="min-w-0 break-words text-[13px]">
+                {f.filename} <span className="text-muted">({kb(f.size_bytes)}, opens in a new tab)</span>
+              </span>
+            </a>
+            {editable && (
+              <button
+                type="button"
+                className={btn}
+                disabled={busy}
+                onClick={() => remove(f.id)}
+                aria-label={`Remove ${f.filename}`}
+              >
+                Remove
+              </button>
+            )}
+          </li>
+        ))}
+      </ul>
+      {editable && (
+        <label className={`${btn} inline-flex min-h-11 cursor-pointer items-center`}>
+          {busy ? 'Working...' : 'Add receipt photo'}
+          <input
+            type="file"
+            accept="image/*,application/pdf"
+            className="sr-only"
+            disabled={busy}
+            onChange={(e) => {
+              const f = e.target.files?.[0]
+              e.target.value = ''
+              if (f) upload(f)
+            }}
+          />
+        </label>
+      )}
+      {editable && <p className="text-[12px] text-muted">Images or PDF, up to 10 MB each.</p>}
+    </section>
   )
 }
 
@@ -239,12 +344,13 @@ function Detail({
               Rejected: {x.decision_reason}
             </p>
           )}
+          <Receipts id={x.id} editable={mine && (x.status === 'draft' || x.status === 'rejected')} />
           <ApprovalBanner ws={ws} noteId={x.id} />
           <p className="text-[13px]">
             <Link href={`/w/${ws}/n/${x.id}`} className="underline">
               Open the claim page
             </Link>{' '}
-            <span className="text-muted">for the receipt photo, comments and history.</span>
+            <span className="text-muted">for comments and history.</span>
           </p>
           <ErrorText error={err} />
           {mode === 'reject' && (

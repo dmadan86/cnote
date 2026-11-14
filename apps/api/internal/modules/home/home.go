@@ -308,6 +308,16 @@ func summary(c *command.Ctx, input json.RawMessage) (any, error) {
 		tiles["approvals"] = map[string]any{"count": confirmations + quotes + decisions, "confirmations": confirmations, "quotes_awaiting": quotes, "to_approve": decisions}
 	}
 
+	// ---- tickets past their SLA due time (live tickets only) ----
+	if on("crm") && role >= command.Member {
+		var cnt int64
+		if err := c.Tx.QueryRow(c.Context, `select count(*) from crm.tickets t join core.notes n on n.id = t.note_id
+			where t.status in ('open','pending') and t.sla_due_at < now() and`+vis, base[:3]...).Scan(&cnt); err != nil {
+			return nil, command.DB(err)
+		}
+		tiles["tickets_breaching"] = map[string]any{"count": cnt}
+	}
+
 	// ---- people present today (IST): the owner's view only, everyone counted ----
 	if role >= command.Admin {
 		n, err := hr.PeoplePresent(c)

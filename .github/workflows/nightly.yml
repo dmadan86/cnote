@@ -1,0 +1,92 @@
+name: Nightly performance and recovery
+
+# CN-QA-001 performance (section 6) and recovery (section 4) on one runner. Not part of the PR gate.
+on:
+  schedule:
+    - cron: "17 2 * * *"
+  workflow_dispatch:
+    inputs:
+      rate:
+        description: Load test arrival rate (requests per second)
+        default: "100"
+      duration:
+        description: Load test measured duration
+        default: 120s
+
+concurrency:
+  group: nightly
+  cancel-in-progress: false
+
+# Same shape as ci.yml: throwaway trust-auth Postgres, per-run app-role password, no stored credentials.
+env:
+  CARGO_TERM_COLOR: always
+  DATABASE_ADMIN_URL: postgres://postgres@localhost:5432/cnote
+
+jobs:
+  nightly:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_DB: cnote
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: apps/api/go.mod
+          cache-dependency-path: apps/api/go.sum
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Generate throwaway DB credentials
+        run: |
+          PW=$(openssl rand -hex 16)
+          echo "::add-mask::$PW"
+          echo "DB_APP_PASSWORD=$PW" >> "$GITHUB_ENV"
+          echo "DATABASE_URL=postgres://cnote_app:$PW@localhost:5432/cnote" >> "$GITHUB_ENV"
+      - name: Build Rust server, migrate and start it
+        run: |
+          cargo build -p cnote-server
+          ./target/debug/cnote migrate
+          echo "alter role cnote_app password :'pw';" | psql "$DATABASE_ADMIN_URL" -v pw="$DB_APP_PASSWORD"
+          CNOTE_MASTER_KEY=$(openssl rand -base64 32) ./target/debug/cnote serve --port 4000 --with-worker > rust-api.log 2>&1 &
+          npx --yes wait-on -t 120000 http://localhost:4000/healthz
+      - name: Start the Go API
+        run: |
+          (cd apps/api && go build -o ../../cnote-api ./cmd/api && go build -o ../../loadtest ./cmd/loadtest)
+          PORT=4100 RUST_API_URL=http://localhost:4000 ./cnote-api > go-api.log 2>&1 &
+          npx --yes wait-on -t 60000 http://localhost:4100/healthz
+      # Thresholds are for a shared 4-core runner; they fail the job, so tune them from the nightly history.
+      - name: Load test
+        run: ./loadtest -api http://localhost:4100 -rate "$RATE" -duration "$DURATION" -p95 400ms -p99 1500ms -max-errors 0.01 | tee loadtest.txt
+        env:
+          RATE: ${{ inputs.rate || '100' }}
+          DURATION: ${{ inputs.duration || '120s' }}
+      - name: Recovery tests (Postgres drop, Rust down, worker crash)
+        working-directory: apps/api
+        run: go test -tags recovery -run TestRecovery -count=1 -timeout 10m -v ./internal/server
+        env:
+          RUST_API_URL: http://localhost:4000
+      - run: pnpm install --frozen-lockfile
+      - name: Collab recovery (kill and restart, database unreachable, offline clients) with a larger property-test budget
+        run: pnpm --filter @cnote/collab exec vitest run test/resilience.test.ts
+        env:
+          FC_RUNS: "300"
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-results
+          path: |
+            loadtest.txt
+            go-api.log
+            rust-api.log

@@ -14,6 +14,7 @@ export default function CrmLayout({ children }: { children: React.ReactNode }) {
           [`/w/${ws}/crm/deals`, 'Deals'],
           [`/w/${ws}/crm/inbox`, 'Inbox'],
           [`/w/${ws}/crm/follow-ups`, 'Follow-ups'],
+          [`/w/${ws}/crm/tickets`, 'Tickets'],
           [`/w/${ws}/crm/form`, 'Inquiry form'],
         ]}
       />

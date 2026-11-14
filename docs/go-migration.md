@@ -468,6 +468,41 @@ Go integration tests against real Postgres as the app role (`apps/api/internal/s
   two API keys, agent key) and compared with Rust; SEC-007 guest share revocation; SEC-014 agent escalation.
 - `qa_api_test.go`: API-002, API-007, API-009, API-012, API-013.
 
+Performance and recovery (WP17, single machine; `.github/workflows/nightly.yml` runs them nightly and on demand, not on PRs):
+
+- `apps/api/cmd/loadtest`: open-loop load generator (stdlib only) against a running Go API. Creates workspaces through
+  signup, then drives note edits, command calls (`space.list`, `note.get`), `invoice.create_draft` and `search.notes`
+  (weights `-mix`) at `-rate` req/s for `-duration` after a `-warmup`. Prints per-operation count, error % and
+  p50/p95/p99/max; exits 1 when any operation breaks `-p95`/`-p99` (`-p50` optional) or the error rate (including
+  arrivals dropped at `-max-inflight`) breaks `-max-errors`. It spreads load over `rate/10` workspaces because the
+  fair-use limit is per seat. Example: `go run ./cmd/loadtest -api http://localhost:4100 -rate 100 -duration 60s`.
+- `internal/server/qa_recovery_test.go` (build tag `recovery`, `go test -tags recovery -run TestRecovery ./internal/server`;
+  fixed ports 4672-4675, Rust is only used for fixtures): Postgres connection drop through a TCP forwarder (500
+  `database error` promptly, no cause leaked, `/healthz` stays up, pool reconnects when the database returns);
+  every app-role backend terminated (pool heals); Rust upstream down (502 for proxied paths as documented above,
+  native commands and `/healthz` keep working, recovery when it returns; unreachable upstream fails fast); worker crash
+  mid-job (no partial effect, job stays `running`, after a requeue the effect lands once and a finished job cannot
+  complete twice).
+- Collab restart without losing updates is `apps/collab/test/resilience.test.ts` (DU-003 kill -9 and restart replays
+  `core.note_updates`, DU-001 database unreachable, CO-006 offline clients reconnect); nightly runs it with `FC_RUNS=300`.
+
+Not covered, needs real infrastructure or product work:
+
+- Multi-node: several Go API or collab instances behind a load balancer, cross-instance note ownership (DU-008 is
+  only tested with two processes on one host), rolling deploys, sticky WebSocket routing.
+- A real Postgres outage or failover (primary restart, replica promotion, PgBouncer): the tests drop the TCP path and
+  kill backends, they cannot stop the shared database.
+- Large datasets: the load test seeds 20 notes per workspace. Search and list latency at 100k+ notes, big
+  `core.events`/`core.note_updates` tables, many workspaces, and index/vacuum behaviour need a seeded dataset and a
+  dedicated database host.
+- Sustained and soak load (hours), many concurrent WebSocket editors through the Go front, and runner-independent
+  absolute SLOs: thresholds in the workflow are provisional for a shared runner.
+- Worker crash recovery is a product gap, not a test gap: `core.claim_jobs` sets `running` and nothing requeues a job
+  whose worker died (no lease expiry), and `worker.rs` applies the effect and the done mark in separate
+  transactions, so a crash between them repeats the effect on retry. Needs a stale-lease reaper and idempotent or
+  same-transaction handlers; the Go worker port (branch `port/worker`) has the same gap. The test pins the contract
+  such a fix must meet.
+
 Findings fixed in this pass:
 
 - **Cross-workspace references.** Every FK was single-column, and Postgres checks FKs as the table owner, so RLS did

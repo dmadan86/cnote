@@ -111,6 +111,11 @@ test('customer opens a quote link on a phone, accepts it; owner sees views and t
 
   await page.reload()
   await expect(page.getByTestId('decided-by')).toContainText('Accepted by Ravi Kumar on the shared link')
+  await page.getByRole('button', { name: /^Notifications/ }).click() // the owner was told in-app
+  await expect(page.getByRole('list', { name: 'Notifications' })).toContainText(
+    'Ravi Kumar accepted quote QT/',
+  )
+  await page.keyboard.press('Escape')
   await expect(page.getByRole('button', { name: 'Convert to invoice' })).toBeVisible()
   await page.getByRole('button', { name: 'Share with customer' }).click()
   const links = page.getByRole('dialog', { name: 'Share quotation' }).getByLabel('Links')

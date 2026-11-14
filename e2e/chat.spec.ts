@@ -8,7 +8,9 @@ test('channels, DMs, mentions, unread, edit/delete and page chips', async ({ bro
   const b = await (await browser.newContext()).newPage()
   const ub = await signup(b)
   expect(
-    (await a.request.post(`/api/w/${ws}/commands/member.add`, { data: { email: ub.email, role: 'member' } })).ok(),
+    (
+      await a.request.post(`/api/w/${ws}/commands/member.add`, { data: { email: ub.email, role: 'member' } })
+    ).ok(),
   ).toBe(true)
   // a page to link to
   const space = (await (await a.request.post(`/api/w/${ws}/commands/space.list`, { data: {} })).json())[0].id
@@ -58,7 +60,10 @@ test('channels, DMs, mentions, unread, edit/delete and page chips', async ({ bro
   await ed.fill('Plan is final')
   await a.getByRole('button', { name: 'Save' }).click()
   await expect(a.getByText('(edited)')).toBeVisible()
-  await a.getByRole('button', { name: /^Delete message/ }).first().click()
+  await a
+    .getByRole('button', { name: /^Delete message/ })
+    .first()
+    .click()
   await a.getByRole('button', { name: 'Confirm delete' }).click()
   await expect(a.getByText('Message deleted')).toBeVisible()
   await expect(b.getByText('Message deleted')).toBeVisible({ timeout: 15_000 })
