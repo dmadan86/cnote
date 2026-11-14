@@ -25,16 +25,17 @@ func Commands() []command.Command {
 	get.MinRole = command.Admin
 	upd := command.NewCommand("security.update", command.GroupAdmin, update)
 	upd.MinRole, upd.Confirm = command.Owner, true
-	dom := func(name string, g command.Group, h command.Handler, confirm bool) command.Command {
+	// Domains decide who SSO admits and enforces on, so changing them is owner-only like security.update.
+	dom := func(name string, g command.Group, h command.Handler, min command.Role, confirm bool) command.Command {
 		c := command.NewCommand(name, g, h)
-		c.MinRole, c.Confirm = command.Admin, confirm
+		c.MinRole, c.Confirm = min, confirm
 		return c
 	}
 	return []command.Command{get, upd,
-		dom("security.domain_list", command.GroupRead, domainList, false),
-		dom("security.domain_add", command.GroupAdmin, domainAdd, true),
-		dom("security.domain_verify", command.GroupAdmin, domainVerify, true),
-		dom("security.domain_remove", command.GroupAdmin, domainRemove, true)}
+		dom("security.domain_list", command.GroupRead, domainList, command.Admin, false),
+		dom("security.domain_add", command.GroupAdmin, domainAdd, command.Owner, true),
+		dom("security.domain_verify", command.GroupAdmin, domainVerify, command.Owner, true),
+		dom("security.domain_remove", command.GroupAdmin, domainRemove, command.Owner, true)}
 }
 
 type policy struct {

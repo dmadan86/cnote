@@ -490,6 +490,16 @@ func TestSSODomainVerificationAgainstDNS(t *testing.T) {
 	if r := e.run(e.session(member), owner.ws, "security.domain_add", map[string]any{"domain": "x-" + rnd() + ".test"}); r.status != 403 {
 		t.Fatalf("member: %d", r.status)
 	}
+	admin := e.newAcct("Adm", false)
+	e.run(ck, owner.ws, "member.add", map[string]any{"email": admin.email, "role": "admin"})
+	for _, cmd := range []string{"security.domain_add", "security.domain_verify", "security.domain_remove"} {
+		if r := e.run(e.session(admin), owner.ws, cmd, map[string]any{"domain": d.Domain}); r.status != 403 {
+			t.Fatalf("admin %s: %d %s", cmd, r.status, r.body)
+		}
+	}
+	if r := e.run(e.session(admin), owner.ws, "security.domain_list", map[string]any{}); r.status != 200 {
+		t.Fatalf("admin domain_list: %d %s", r.status, r.body)
+	}
 	k := e.run(ck, owner.ws, "apikey.create", map[string]any{"name": "ci"})
 	var kv struct {
 		APIKey string `json:"api_key"`
