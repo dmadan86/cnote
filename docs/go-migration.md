@@ -515,3 +515,12 @@ behalf of the link creator (their current role and page access; a removed or dem
 Rate limits (in-process): `PUBLIC_IP_BURST/PER_SEC`, `PUBLIC_FAIL_BURST/PER_SEC` (misses per IP),
 `PUBLIC_TOKEN_BURST/PER_SEC`; `PUBLIC_TRUST_PROXY=1` takes the client IP from the right-most `X-Forwarded-For`.
 Email uses `SMTP_URL` + `EMAIL_FROM`; the link origin comes from the request's `origin` or `PUBLIC_WEB_URL`.
+
+## Go-only commands: advance receipts (WP4)
+`receipt.create|apply|refund|get|list` (migration `1030_receipts.sql`, module `modules/receipts`) are Go-only and absent
+from the Rust `/mcp` list. A receipt or refund voucher is a typed note `['receipt_voucher']` plus a `billing.receipts` row,
+immutable except its running totals. Postings (CA review): receive Dr bank / Cr 2300 customer advances, services also
+Dr 1310 GST paid on advances / Cr output GST; apply Dr 2300 / Cr receivables and Dr output GST / Cr 1310 for the applied
+share; refund reverses the unapplied part. Accounts are seeded lazily and can be changed in workspace settings
+(`advance_account`, `advance_gst_account`). `report.gstr1` adds `advances_11a` / `advances_adjusted_11b` only in months
+that have advances. `receipt.refund` can be held by an approval rule. Receipts can be shared with `share.create`.

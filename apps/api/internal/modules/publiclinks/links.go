@@ -107,10 +107,14 @@ func loadDoc(c *command.Ctx, noteID string) (doc, error) {
 		       i.total_minor - i.paid_minor - i.credited_minor - i.written_off_minor,
 		       coalesce(cn.title,''), coalesce(ct.phone,'')
 		from billing.invoices i left join core.notes cn on cn.id = i.contact_id left join crm.contacts ct on ct.note_id = i.contact_id
-		where i.note_id = $1::uuid and i.kind = 'invoice'`, noteID).
+		where i.note_id = $1::uuid and i.kind = 'invoice'
+		union all
+		select 'receipt', r.number, r.status, 'INR', r.amount_minor, 0::bigint, coalesce(cn.title,''), coalesce(ct.phone,'')
+		from billing.receipts r left join core.notes cn on cn.id = r.contact_id left join crm.contacts ct on ct.note_id = r.contact_id
+		where r.note_id = $1::uuid and r.kind = 'receipt'`, noteID).
 		Scan(&d.kind, &d.number, &d.status, &d.currency, &d.total, &d.due, &d.contactName, &d.phone)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return d, command.ErrInvalid("only quotations and invoices can be shared")
+		return d, command.ErrInvalid("only quotations, invoices and receipts can be shared")
 	}
 	if err != nil {
 		return d, command.DB(err)

@@ -16,7 +16,7 @@ type Line = {
   taxable_minor: number
 }
 type Doc = {
-  kind: 'quotation' | 'invoice'
+  kind: 'quotation' | 'invoice' | 'receipt'
   number: string | null
   status: string
   currency: string
@@ -104,7 +104,8 @@ function Document({ doc, token, onChange }: { doc: Doc; token: string; onChange:
   const intra = doc.igst_minor === 0
   const [step, setStep] = useState<'accept' | 'decline'>()
   const due = doc.amount_due_minor ?? 0
-  const label = isInvoice ? 'Tax invoice' : 'Quotation'
+  const isReceipt = doc.kind === 'receipt'
+  const label = isInvoice ? 'Tax invoice' : isReceipt ? 'Receipt voucher' : 'Quotation'
   const cur = (n: number) => (doc.currency === 'INR' ? money(n) : `${doc.currency} ${(n / 100).toFixed(2)}`)
   return (
     <div className="space-y-5">
@@ -151,7 +152,9 @@ function Document({ doc, token, onChange }: { doc: Doc; token: string; onChange:
             {doc.seller.gstin && <p className="font-mono text-[12px]">GSTIN {doc.seller.gstin}</p>}
           </div>
           <div>
-            <p className="text-[12px] text-muted">{isInvoice ? 'Billed to' : 'Prepared for'}</p>
+            <p className="text-[12px] text-muted">
+              {isInvoice ? 'Billed to' : isReceipt ? 'Received from' : 'Prepared for'}
+            </p>
             <p className="font-medium">{doc.buyer.name}</p>
             {doc.buyer.gstin && <p className="font-mono text-[12px]">GSTIN {doc.buyer.gstin}</p>}
             {doc.place_of_supply && <p className="text-muted">Place of supply: {doc.place_of_supply}</p>}

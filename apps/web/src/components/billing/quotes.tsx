@@ -12,6 +12,7 @@ import { Confirm, run } from './bits'
 import { Totals } from './editor'
 import { FilterBanner } from './filter'
 import { type Contact, type Line, money, parseMinor, toRupees } from './fmt'
+import { RecordAdvanceButton } from './receipts'
 import { ShareButton } from './share-panel'
 
 type Quote = {
@@ -458,6 +459,9 @@ export function QuoteView({ params }: { params: Promise<{ id: string }> }) {
           )}
           <div className="flex flex-wrap gap-2">
             <ShareButton noteId={q.id} kind="quotation" />
+            {(q.status === 'accepted' || q.status === 'converted') && q.contact_id && (
+              <RecordAdvanceButton contactId={q.contact_id} quotationId={q.id} contactName={q.contact_name} />
+            )}
             {q.status === 'sent' && (
               <>
                 <button type="button" className={btnPrimary} onClick={() => act('quote.accept')}>
