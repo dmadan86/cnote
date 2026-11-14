@@ -304,4 +304,38 @@ describe('collab gateway', () => {
     x.p.destroy()
     y.p.destroy()
   })
+  it('an API edit wins over a room holding older edits, on persist and on reconnect', async () => {
+    const f = await fixture()
+    const g = await gw(3_600_000) // only the final snapshot on disconnect writes
+    const a = new Y.Doc()
+    const ca = await open(g.port, f, { cookie: f.owner.cookie })
+    await ca.sync(a)
+    ca.send(2, append(a, ', typ'))
+    await sleep(300) // logged in the room, not snapshotted
+    await cmdOk(f.ws, f.owner, 'note.update', { id: f.note, content_md: 'api text' })
+    ca.close() // the room's final snapshot must not overwrite the API write
+    await sleep(800)
+    expect((await noteRow(f)).md).toBe('api text')
+    const b = new Y.Doc()
+    const cb = await open(g.port, f, { cookie: f.owner.cookie })
+    await cb.sync(b)
+    expect(text(b)).toContain('api text')
+    cb.close()
+  })
+
+  it('an editor saving through the API while connected is not fenced out', async () => {
+    const f = await fixture()
+    const g = await gw(400)
+    const a = new Y.Doc()
+    const ca = await open(g.port, f, { cookie: f.owner.cookie })
+    await ca.sync(a)
+    ca.send(2, append(a, ', team'))
+    await cmdOk(f.ws, f.owner, 'note.update', { id: f.note, content_md: 'hello world, team' })
+    await sleep(1000) // the room's own snapshot runs after the API write
+    ca.send(2, append(a, ' more'))
+    await sleep(1000)
+    expect((await noteRow(f)).md).toBe('hello world, team more')
+    expect(ca.closed).toBeNull()
+    ca.close()
+  })
 })
