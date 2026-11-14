@@ -264,9 +264,14 @@ func parseLines(in []lineIn) ([]ln, error) {
 }
 
 func loadLines(c *command.Ctx, invoiceID string) ([]ln, error) {
+	return loadLinesOf(c, "billing.invoice_lines", "invoice_id", invoiceID)
+}
+
+// loadLinesOf reads lines from an invoice-shaped line table (table and col are constants, never user input).
+func loadLinesOf(c *command.Ctx, table, col, id string) ([]ln, error) {
 	rows, err := c.Tx.Query(c.Context,
 		`select description, hsn_sac, quantity::text, unit_price_minor, gst_rate_bp, item_note_id::text
-		 from billing.invoice_lines where invoice_id = $1::uuid order by position`, invoiceID)
+		 from `+table+` where `+col+` = $1::uuid order by position`, id)
 	if err != nil {
 		return nil, command.DB(err)
 	}
@@ -291,7 +296,11 @@ func loadLines(c *command.Ctx, invoiceID string) ([]ln, error) {
 
 // writeLines replaces an invoice's lines. With tax the computed GST is stored; without, only taxable amounts (drafts).
 func writeLines(c *command.Ctx, invoiceID string, lines []ln, tax *invoiceTax) (int64, error) {
-	if _, err := c.Tx.Exec(c.Context, "delete from billing.invoice_lines where invoice_id = $1::uuid", invoiceID); err != nil {
+	return writeLinesTo(c, "billing.invoice_lines", "invoice_id", invoiceID, lines, tax)
+}
+
+func writeLinesTo(c *command.Ctx, table, col, invoiceID string, lines []ln, tax *invoiceTax) (int64, error) {
+	if _, err := c.Tx.Exec(c.Context, "delete from "+table+" where "+col+" = $1::uuid", invoiceID); err != nil {
 		return 0, command.DB(err)
 	}
 	var subtotal int64
@@ -308,7 +317,7 @@ func writeLines(c *command.Ctx, invoiceID string, lines []ln, tax *invoiceTax) (
 		}
 		subtotal += t.taxable
 		if _, err := c.Tx.Exec(c.Context,
-			`insert into billing.invoice_lines (workspace_id, invoice_id, position, description, hsn_sac, quantity,
+			`insert into `+table+` (workspace_id, `+col+`, position, description, hsn_sac, quantity,
 			   unit_price_minor, gst_rate_bp, taxable_minor, cgst_minor, sgst_minor, igst_minor, item_note_id)
 			 values ($1::uuid,$2::uuid,$3,$4,$5,$6::numeric,$7,$8,$9,$10,$11,$12,$13::uuid)`,
 			c.WorkspaceID(), invoiceID, int32(pos+1), l.description, l.g.hsn, l.g.qtyText, l.g.price, int32(l.g.rateBP),
