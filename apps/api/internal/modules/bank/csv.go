@@ -23,6 +23,8 @@ type mapping struct {
 	Type      string `json:"type"` // Dr/Cr marker beside a single Amount column
 	Balance   string `json:"balance"`
 	Reference string `json:"reference"`
+	// DateFormat is the order of day, month and year in numeric dates: "dmy" (the default, Indian), "mdy" or "ymd".
+	DateFormat string `json:"date_format,omitempty"`
 }
 
 // Keywords are tried in order against the normalised header; the first column containing one wins.
@@ -111,6 +113,8 @@ type parsedLine struct {
 type parseResult struct {
 	Lines   []parsedLine
 	Used    mapping
+	Header  int      // 1-based header row, 0 when none was found
+	Source  string   // "given" when the supplied or saved mapping fitted, "detected" when the header was auto-detected
 	Skipped int      // rows that are not transactions (preamble, totals, separators)
 	Errors  []string // rows that look like transactions but could not be read
 }
@@ -132,9 +136,7 @@ func sniffDelimiter(text string) rune {
 	return best
 }
 
-// parseStatement reads a bank CSV. given (an explicit or saved mapping) is tried first, then auto-detection.
-func parseStatement(text string, given *mapping) (parseResult, error) {
-	var res parseResult
+func readRecords(text string) ([][]string, error) {
 	text = strings.ReplaceAll(strings.TrimPrefix(text, bom), "\r\n", "\n")
 	r := csv.NewReader(strings.NewReader(text))
 	r.Comma = sniffDelimiter(text)
@@ -143,25 +145,62 @@ func parseStatement(text string, given *mapping) (parseResult, error) {
 	r.TrimLeadingSpace = true
 	recs, err := r.ReadAll()
 	if err != nil {
-		return res, fmt.Errorf("not a readable CSV: %v", err)
+		return nil, fmt.Errorf("not a readable CSV: %v", err)
+	}
+	return recs, nil
+}
+
+var validFormats = map[string]bool{"": true, "dmy": true, "mdy": true, "ymd": true}
+
+// whyNoHeader says, in words for the mapping editor, why no header row was usable.
+func whyNoHeader(recs [][]string) string {
+	if len(recs) == 0 {
+		return "The file is empty."
+	}
+	dateRow, dateName := 0, ""
+	for i := 0; i < len(recs) && i < 40; i++ {
+		if d := detect(recs[i]); d.Date != "" {
+			dateRow, dateName = i+1, d.Date
+			break
+		}
+	}
+	if dateRow > 0 {
+		return fmt.Sprintf("Found a date column (%q, row %d) but no debit, credit or amount column. Pick the amount columns below.", dateName, dateRow)
+	}
+	return "No header cell in the first 40 rows looks like a date (Date, Txn Date, Value Date, Posting Date...). Pick the columns below."
+}
+
+// parseStatement reads a bank CSV. given (an explicit or saved mapping) is tried first, then auto-detection.
+func parseStatement(text string, given *mapping) (parseResult, error) {
+	var res parseResult
+	recs, err := readRecords(text)
+	if err != nil {
+		return res, err
+	}
+	format := ""
+	if given != nil {
+		format = given.DateFormat
 	}
 	var c cols
 	hdr := -1
 	for i := 0; i < len(recs) && i < 40 && hdr < 0; i++ {
-		tries := []mapping{detect(recs[i])}
+		d := detect(recs[i])
+		d.DateFormat = format
+		tries, srcs := []mapping{d}, []string{"detected"}
 		if given != nil && *given != (mapping{}) {
-			tries = []mapping{*given, tries[0]}
+			tries, srcs = []mapping{*given, d}, []string{"given", "detected"}
 		}
-		for _, m := range tries {
+		for k, m := range tries {
 			if cc, ok := resolve(recs[i], m); ok {
-				c, hdr, res.Used = cc, i, m
+				c, hdr, res.Used, res.Source = cc, i, m, srcs[k]
 				break
 			}
 		}
 	}
 	if hdr < 0 {
-		return res, fmt.Errorf("no header row with a date and a debit/credit or amount column in the first 40 rows; send a mapping")
+		return res, fmt.Errorf("%s", whyNoHeader(recs))
 	}
+	res.Header = hdr + 1
 	cell := func(rec []string, i int) string {
 		if i < 0 || i >= len(rec) {
 			return ""
@@ -171,11 +210,11 @@ func parseStatement(text string, given *mapping) (parseResult, error) {
 	seen := map[string]int{}
 	for i := hdr + 1; i < len(recs); i++ {
 		rec := recs[i]
-		d, ok := parseDate(cell(rec, c.date))
+		d, ok := parseDate(cell(rec, c.date), format)
 		amt, err := rowAmount(rec, c, cell)
 		if !ok {
 			if err == nil && amt != 0 && cell(rec, c.date) != "" && len(res.Errors) < 20 { // a readable amount with no date; anything else is a separator or total
-				res.Errors = append(res.Errors, fmt.Sprintf("row %d: date %q not recognised (use DD/MM/YYYY)", i+1, cell(rec, c.date)))
+				res.Errors = append(res.Errors, fmt.Sprintf("row %d: date %q not recognised (expected %s)", i+1, cell(rec, c.date), formatName(format)))
 			} else {
 				res.Skipped++
 			}
@@ -246,13 +285,25 @@ func rowAmount(rec []string, c cols, cell func([]string, int) string) (int64, er
 
 var timeTail = regexp.MustCompile(`(?i)[ T]+\d{1,2}:\d{2}(:\d{2})?\s*([ap]m)?$`)
 
-var dateLayouts = []string{"2/1/2006", "2/1/06", "2-1-2006", "2-1-06", "2006-01-02", "2.1.2006", "2-Jan-2006", "2-Jan-06", "2 Jan 2006", "2 Jan 06",
-	"2 January 2006", "2-January-2006", "Jan 2, 2006"}
+var commonLayouts = []string{"2006-01-02", "2-Jan-2006", "2-Jan-06", "2 Jan 2006", "2 Jan 06", "2 January 2006", "2-January-2006", "Jan 2, 2006"}
 
-// parseDate reads Indian day-first dates; "03/04/2024" is 3 April, never March 4.
-func parseDate(s string) (time.Time, bool) {
+var numericLayouts = map[string][]string{
+	"dmy": {"2/1/2006", "2/1/06", "2-1-2006", "2-1-06", "2.1.2006"},
+	"mdy": {"1/2/2006", "1/2/06", "1-2-2006", "1-2-06", "1.2.2006"},
+	"ymd": {"2006/1/2", "2006-1-2", "2006.1.2"},
+}
+
+func formatName(f string) string {
+	return map[string]string{"mdy": "MM/DD/YYYY", "ymd": "YYYY-MM-DD"}[f] + map[bool]string{true: "DD/MM/YYYY"}[f == "" || f == "dmy"]
+}
+
+// parseDate reads numeric dates in the given order; the default is Indian day-first, so "03/04/2024" is 3 April, never March 4.
+func parseDate(s, format string) (time.Time, bool) {
 	s = timeTail.ReplaceAllString(strings.TrimSpace(s), "")
-	for _, l := range dateLayouts {
+	if format == "" {
+		format = "dmy"
+	}
+	for _, l := range append(append([]string{}, numericLayouts[format]...), commonLayouts...) {
 		if t, err := time.Parse(l, s); err == nil {
 			return t, true
 		}

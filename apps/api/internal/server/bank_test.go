@@ -3,6 +3,7 @@ package server_test
 import (
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -274,10 +275,11 @@ func TestBankFinanceGateRolesKeysAndOtherWorkspace(t *testing.T) {
 	a := b.bankAcct("HDFC")
 	b.imp(a, hdfc(fmt.Sprintf("%s,CHARGES,,%s,\"20.00\",,\"980.00\"", dmy(0), dmy(0))))
 	line := b.lines(a, "")[0].(map[string]any)["id"].(string)
-	reads := map[string]map[string]any{"bank.account_list": {}, "bank.line_list": {}, "bank.summary": {"account_id": a}}
+	reads := map[string]map[string]any{"bank.account_list": {}, "bank.line_list": {}, "bank.summary": {"account_id": a}, "bank.csv_preview": {"csv": "x,y\n1,2"}}
 	writes := map[string]map[string]any{"bank.account_create": {"name": "X"}, "bank.import": {"account_id": a, "csv": "Date,Debit\n"}, "bank.unmatch": {"line_id": line},
 		"bank.match": {"line_id": line, "match_kind": "payment", "match_id": line}, "bank.record_expense": {"line_id": line, "category": "other"},
-		"bank.record_receipt": {"line_id": line, "contact_id": b.contact, "supply_type": "services"}, "bank.account_update": {"id": a, "name": "Y"}}
+		"bank.record_receipt": {"line_id": line, "contact_id": b.contact, "supply_type": "services"}, "bank.account_update": {"id": a, "name": "Y"},
+		"bank.ignore": {"line_id": line, "reason": "bank charge"}, "bank.unignore": {"line_id": line}}
 	for cmd, in := range reads {
 		b.errAs(g, cmd, in, 403, "forbidden") // guests have no finance
 		b.okAs(m, cmd, in)
@@ -314,7 +316,7 @@ func TestBankFinanceGateRolesKeysAndOtherWorkspace(t *testing.T) {
 	// another workspace sees nothing of this one
 	other := b.env.signup("Zed", true)
 	for cmd, in := range map[string]map[string]any{"bank.summary": {"account_id": a}, "bank.import": {"account_id": a, "csv": "Date,Debit\n"},
-		"bank.unmatch": {"line_id": line}, "bank.account_update": {"id": a, "name": "Z"}} {
+		"bank.unmatch": {"line_id": line}, "bank.account_update": {"id": a, "name": "Z"}, "bank.ignore": {"line_id": line, "reason": "x"}} {
 		if r := b.cmd(b.gosv.URL, other, other.ws, cmd, in, nil); r.status != 404 {
 			t.Fatalf("%s from another workspace: %d %s", cmd, r.status, r.body)
 		}
@@ -332,4 +334,259 @@ func TestBankFinanceGateRolesKeysAndOtherWorkspace(t *testing.T) {
 	if r := b.call(who{ws: b.owner.ws}, "bank.account_list", map[string]any{}); r.status != 401 {
 		t.Fatalf("no auth: %d", r.status)
 	}
+}
+
+// bankPayments records n bank payments (each on its own invoice) of the given amounts and returns their payment ids via a statement credit.
+func (b *bt) bankPayments(amounts ...int64) {
+	for _, a := range amounts {
+		inv := b.issuedInvoice(b.contact, 1_000_000)["id"].(string)
+		b.ok("payment.record", map[string]any{"invoice_id": inv, "amount_minor": a, "method": "bank"})
+	}
+}
+
+func parts(l any) []map[string]any {
+	var out []map[string]any
+	for _, c := range l.(map[string]any)["combos"].([]any)[0].([]any) {
+		out = append(out, c.(map[string]any))
+	}
+	return out
+}
+
+func refs(ps []map[string]any) []any {
+	var out []any
+	for _, p := range ps {
+		out = append(out, map[string]any{"kind": p["kind"], "id": p["id"]})
+	}
+	return out
+}
+
+func lineWith(b *bt, a, narr string) map[string]any {
+	for _, status := range []string{"unmatched", "matched", "ignored"} {
+		for _, l := range b.lines(a, status) {
+			if strings.Contains(l.(map[string]any)["narration"].(string), narr) {
+				return l.(map[string]any)
+			}
+		}
+	}
+	b.t.Fatalf("no line %q", narr)
+	return nil
+}
+
+func TestBankSplitMatchSumInvariantUnmatchAndDoubleUse(t *testing.T) {
+	b := newBT(t, false)
+	a := b.bankAcct("HDFC")
+	b.bankPayments(50_000, 30_000, 20_000, 7_000)
+	b.payBill(func() string {
+		bill := b.bill(b.vendor("29", "Hosting Co"), "H-9")
+		b.bq("bill.record", bill)
+		return bill
+	}(), 12_300)
+	b.imp(a, hdfc(
+		fmt.Sprintf("%s,NEFT BULK ACME,,%s,,\"1,000.00\",\"1,000.00\"", dmy(0), dmy(0)),   // 50000 + 30000 + 20000
+		fmt.Sprintf("%s,NEFT NO SUM,,%s,,\"1,234.00\",\"2,234.00\"", dmy(0), dmy(0)),      // nothing adds up
+		fmt.Sprintf("%s,NEFT DEBIT BULK,,%s,\"1,000.00\",,\"1,234.00\"", dmy(0), dmy(0)))) // a debit never takes credits
+	bulk := lineWith(b, a, "BULK ACME")
+	eq(t, len(sugg(bulk)), 0)
+	ps := parts(bulk)
+	var sum int64
+	for _, p := range ps {
+		sum += n(p["amount_minor"])
+	}
+	eq(t, sum, int64(100_000))
+	eq(t, len(lineWith(b, a, "NO SUM")["combos"].([]any)), 0)
+	eq(t, len(lineWith(b, a, "DEBIT BULK")["combos"].([]any)), 0)
+
+	// every refusal leaves the line unmatched
+	id := bulk["id"].(string)
+	b.errIs("bank.match", map[string]any{"line_id": id, "matches": refs(ps[:2])}, 409, "conflict")                      // short of the amount
+	b.errIs("bank.match", map[string]any{"line_id": id, "matches": append(refs(ps), refs(ps[:1])[0])}, 409, "conflict") // a part repeated
+	b.errIs("bank.match", map[string]any{"line_id": id, "matches": []any{map[string]any{"kind": "payment", "id": "nope"}}}, 400, "invalid")
+	b.errIs("bank.match", map[string]any{"line_id": id, "matches": []any{map[string]any{"kind": "payment", "id": "00000000-0000-0000-0000-000000000000"}, map[string]any{"kind": "payment", "id": "00000000-0000-0000-0000-000000000001"}}}, 409, "conflict")
+	eq(t, lineWith(b, a, "BULK ACME")["status"], "unmatched")
+
+	m := b.ok("bank.match", map[string]any{"line_id": id, "matches": refs(ps)})
+	eq(t, m["status"], "matched")
+	eq(t, m["split"], true)
+	ms := m["matches"].([]any)
+	eq(t, len(ms), 3)
+	sum = 0
+	for _, x := range ms {
+		sum += n(x.(map[string]any)["amount_minor"])
+	}
+	eq(t, sum, n(m["amount_minor"]))                                                           // the parts add up to the line exactly
+	b.errIs("bank.match", map[string]any{"line_id": id, "matches": refs(ps)}, 409, "conflict") // already matched
+
+	// a payment in a split is used: it is no single suggestion and no part of another split
+	b.imp(a, hdfc(fmt.Sprintf("%s,SECOND 50K,,%s,,\"500.00\",\"1,500.00\"", dmy(0), dmy(0))))
+	second := lineWith(b, a, "SECOND 50K")
+	for _, s := range sugg(second) {
+		for _, p := range ps {
+			if s.(map[string]any)["id"] == p["id"] {
+				t.Fatal("a payment in a split is offered again")
+			}
+		}
+	}
+	b.errIs("bank.match", map[string]any{"line_id": second["id"], "match_kind": ps[0]["kind"], "match_id": ps[0]["id"]}, 409, "conflict")
+	b.assertTBZero()
+
+	// unmatch removes the whole split; the parts are free again
+	b.ok("bank.unmatch", map[string]any{"line_id": id})
+	back := lineWith(b, a, "BULK ACME")
+	eq(t, back["status"], "unmatched")
+	eq(t, back["split"], false)
+	eq(t, len(back["matches"].([]any)), 0)
+	eq(t, len(parts(back)), len(ps))
+	b.ok("bank.match", map[string]any{"line_id": second["id"], "match_kind": ps[0]["kind"], "match_id": ps[0]["id"]}) // a freed payment matches alone
+	b.errIs("bank.match", map[string]any{"line_id": id, "matches": refs(ps)}, 409, "conflict")                        // but the split now misses it
+	b.assertTBZero()
+}
+
+func TestBankSplitConcurrentDoubleUse(t *testing.T) {
+	b := newBT(t, false)
+	a := b.bankAcct("HDFC")
+	b.bankPayments(50_000, 30_000, 20_000)
+	b.imp(a, hdfc(
+		fmt.Sprintf("%s,BULK ONE,,%s,,\"1,000.00\",\"1,000.00\"", dmy(0), dmy(0)),
+		fmt.Sprintf("%s,BULK TWO,,%s,,\"1,000.00\",\"2,000.00\"", dmy(0), dmy(0))))
+	one, two := lineWith(b, a, "BULK ONE"), lineWith(b, a, "BULK TWO")
+	ps := refs(parts(one))
+	for round := 0; round < 1; round++ {
+		var wg sync.WaitGroup
+		codes := make([]int, 6)
+		for i := range codes {
+			wg.Add(1)
+			go func(i int) {
+				defer wg.Done()
+				l := one
+				if i%2 == 1 {
+					l = two
+				}
+				codes[i] = b.call(b.owner, "bank.match", map[string]any{"line_id": l["id"], "matches": ps}).status
+			}(i)
+		}
+		wg.Wait()
+		wins := 0
+		for _, c := range codes {
+			if c == 200 {
+				wins++
+			} else if c != 409 {
+				t.Fatalf("unexpected status %v", codes)
+			}
+		}
+		eq(t, wins, 1) // one line takes the three payments, however many race for them
+	}
+	ml := b.lines(a, "matched")
+	eq(t, len(ml), 1)
+	eq(t, len(ml[0].(map[string]any)["matches"].([]any)), 3)
+	eq(t, len(b.lines(a, "unmatched")), 1)
+
+	// the same race for one payment between two single lines
+	b.bankPayments(9_900)
+	b.imp(a, hdfc(
+		fmt.Sprintf("%s,SINGLE A,,%s,,\"99.00\",\"3,000.00\"", dmy(0), dmy(0)),
+		fmt.Sprintf("%s,SINGLE B,,%s,,\"99.00\",\"3,099.00\"", dmy(0), dmy(0))))
+	sa, sb := lineWith(b, a, "SINGLE A"), lineWith(b, a, "SINGLE B")
+	pay := sugg(sa)[0].(map[string]any)
+	var wg sync.WaitGroup
+	codes := make([]int, 2)
+	for i, l := range []map[string]any{sa, sb} {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			codes[i] = b.call(b.owner, "bank.match", map[string]any{"line_id": l["id"], "match_kind": pay["kind"], "match_id": pay["id"]}).status
+		}()
+	}
+	wg.Wait()
+	if !(codes[0] == 200 && codes[1] == 409) && !(codes[0] == 409 && codes[1] == 200) {
+		t.Fatalf("one payment, two lines: %v", codes)
+	}
+}
+
+func TestBankIgnoreCountsAsReconciled(t *testing.T) {
+	b := newBT(t, false)
+	a := b.bankAcct("HDFC")
+	b.bankPayments(50_000)
+	b.imp(a, hdfc(
+		fmt.Sprintf("%s,CUSTOMER,,%s,,\"500.00\",\"500.00\"", dmy(0), dmy(0)),
+		fmt.Sprintf("%s,SMS CHARGES,,%s,\"11.80\",,\"488.20\"", dmy(0), dmy(0))))
+	charge, cust := lineWith(b, a, "SMS CHARGES"), lineWith(b, a, "CUSTOMER")
+	before := b.tb()
+	b.errIs("bank.ignore", map[string]any{"line_id": charge["id"]}, 400, "invalid")
+	b.errIs("bank.ignore", map[string]any{"line_id": charge["id"], "reason": "  "}, 400, "invalid")
+	b.errIs("bank.ignore", map[string]any{"line_id": charge["id"], "reason": strings.Repeat("x", 201)}, 400, "invalid")
+	b.errIs("bank.ignore", map[string]any{"reason": "x"}, 400, "invalid")
+	b.errIs("bank.unignore", map[string]any{"line_id": charge["id"]}, 409, "conflict") // not ignored yet
+	s := b.ok("bank.summary", map[string]any{"account_id": a})
+	eq(t, s["reconciled"], false)
+
+	r := b.ok("bank.ignore", map[string]any{"line_id": charge["id"], "reason": "  Bank charge, not recorded "})
+	eq(t, r["status"], "ignored")
+	eq(t, r["ignore_reason"], "Bank charge, not recorded")
+	b.errIs("bank.ignore", map[string]any{"line_id": charge["id"], "reason": "again"}, 409, "conflict")
+	b.errIs("bank.match", map[string]any{"line_id": charge["id"], "match_kind": "payment", "match_id": cust["id"]}, 409, "conflict")
+	b.errIs("bank.unmatch", map[string]any{"line_id": charge["id"]}, 409, "conflict")
+	b.errIs("bank.record_expense", map[string]any{"line_id": charge["id"], "category": "other"}, 409, "conflict")
+	eq(t, len(b.lines(a, "ignored")), 1)
+	eq(t, len(b.lines(a, "unmatched")), 1)
+
+	b.ok("bank.match", map[string]any{"line_id": cust["id"], "match_kind": "payment", "match_id": sugg(cust)[0].(map[string]any)["id"]})
+	b.errIs("bank.ignore", map[string]any{"line_id": cust["id"], "reason": "x"}, 409, "conflict") // a matched line is unmatched first
+	s = b.ok("bank.summary", map[string]any{"account_id": a})
+	eq(t, s["reconciled"], true)
+	eq(t, n(s["unmatched"]), int64(0))
+	eq(t, n(s["ignored"]), int64(1))
+	eq(t, n(s["ignored_debits_minor"]), int64(1_180))
+	eq(t, n(b.okList("bank.account_list", map[string]any{})[0].(map[string]any)["unmatched_lines"]), int64(0))
+	eq(t, b.tb(), before) // ignoring posts nothing
+
+	b.ok("bank.unignore", map[string]any{"line_id": charge["id"]})
+	eq(t, lineWith(b, a, "SMS CHARGES")["status"], "unmatched")
+	eq(t, b.ok("bank.summary", map[string]any{"account_id": a})["reconciled"], false)
+	b.errIs("bank.line_list", map[string]any{"status": "bogus"}, 400, "invalid")
+}
+
+func TestBankMappingPreviewSaveAndApply(t *testing.T) {
+	b := newBT(t, false)
+	a := b.bankAcct("Odd Bank")
+	// US-style dates, odd headers: auto-detect cannot find a date or an amount
+	odd := "Statement\nWhen,What,In,Out\n" + "03/04/2024,Salary,\"1,000.00\",\n03/05/2024,Fee,,10.00\n"
+	p := b.ok("bank.csv_preview", map[string]any{"csv": odd})
+	eq(t, p["ok"], false)
+	eq(t, strings.Contains(p["reason"].(string), "date"), true)
+	eq(t, p["header_row"], float64(2))
+	eq(t, len(p["headers"].([]any)), 4)
+	eq(t, len(p["rows"].([]any)), 4)
+	b.errIs("bank.import", map[string]any{"account_id": a, "csv": odd}, 400, "invalid")
+
+	// only a date: the reason names the missing amount
+	p = b.ok("bank.csv_preview", map[string]any{"csv": "Date,What\n03/04/2024,x\n"})
+	eq(t, p["ok"], false)
+	eq(t, strings.Contains(p["reason"].(string), "amount"), true)
+
+	mp := map[string]any{"date": "When", "narration": "What", "credit": "In", "debit": "Out", "date_format": "mdy"}
+	p = b.ok("bank.csv_preview", map[string]any{"csv": odd, "mapping": mp})
+	eq(t, p["ok"], true)
+	eq(t, p["source"], "given")
+	sample := p["sample"].([]any)
+	eq(t, sample[0].(map[string]any)["date"], "2024-03-04") // month first: 4 March, not 3 April
+	eq(t, sample[1].(map[string]any)["date"], "2024-03-05")
+	eq(t, n(sample[0].(map[string]any)["amount_minor"]), int64(100_000))
+	eq(t, n(sample[1].(map[string]any)["amount_minor"]), int64(-1_000))
+	b.errIs("bank.csv_preview", map[string]any{"csv": odd, "mapping": map[string]any{"date": "When", "date_format": "xyz"}}, 400, "invalid")
+	b.errIs("bank.csv_preview", map[string]any{"csv": ""}, 400, "invalid")
+
+	// save per account, then a plain import uses it; the preview of the account shows the saved mapping in use
+	b.errIs("bank.account_update", map[string]any{"id": a, "mapping": map[string]any{"date": "When", "date_format": "dd"}}, 400, "invalid")
+	acct := b.ok("bank.account_update", map[string]any{"id": a, "mapping": mp})
+	eq(t, acct["csv_mapping"].(map[string]any)["date_format"], "mdy")
+	eq(t, b.ok("bank.csv_preview", map[string]any{"csv": odd, "account_id": a})["source"], "given")
+	r := b.imp(a, odd)
+	eq(t, n(r["imported"]), int64(2))
+	ls := b.lines(a, "")
+	eq(t, ls[0].(map[string]any)["date"], "2024-03-05")
+	eq(t, ls[1].(map[string]any)["date"], "2024-03-04")
+	// a clear of the mapping goes back to detection and day-first dates
+	b.ok("bank.account_update", map[string]any{"id": a, "mapping": map[string]any{}})
+	eq(t, b.ok("bank.csv_preview", map[string]any{"csv": odd, "account_id": a})["ok"], false)
+	b.errIs("bank.import", map[string]any{"account_id": a, "csv": odd}, 400, "invalid")
 }

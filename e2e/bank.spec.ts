@@ -131,3 +131,97 @@ test('Import an HDFC-style statement, match a payment, record the rest, unmatch;
     await mc.close()
   }
 })
+
+const mdy = (offset: number) => {
+  const d = new Date(Date.now() + offset * 86400000 + 5.5 * 3600000)
+  return `${String(d.getUTCMonth() + 1).padStart(2, '0')}/${String(d.getUTCDate()).padStart(2, '0')}/${d.getUTCFullYear()}`
+}
+
+test('Split one deposit across two receipts, ignore a charge, and map columns of an odd CSV', async ({
+  page,
+}) => {
+  await signup(page)
+  await createSpace(page)
+  const ws = new URL(page.url()).pathname.match(/^\/w\/([0-9a-f-]+)/)?.[1] as string
+  const call = async (name: string, data: unknown) => {
+    const r = await page.request.post(`/api/w/${ws}/commands/${name}`, { data })
+    expect(r.ok(), `${name}: ${await r.text()}`).toBeTruthy()
+    return r.json()
+  }
+  await call('workspace.update', { settings: { gstin: gstin('29', 'ABCDE1234F'), state_code: '29' } })
+  const space = (await call('space.list', {}))[0].id
+  const contact = await call('contact.create', {
+    space_id: space,
+    name: `Buyer ${uniq()}`,
+    kind: 'company',
+    gstin: gstin('27', 'AAAAA0000A'),
+  })
+  for (const amount_minor of [50000, 30000]) {
+    await call('receipt.create', {
+      contact_id: contact.id,
+      amount_minor,
+      supply_type: 'services',
+      method: 'upi',
+      reference: `UTR${amount_minor}`,
+    })
+  }
+
+  await page.goto(`/w/${ws}/billing/bank`)
+  await page.getByLabel('Create your first bank account').fill('Split Bank')
+  await page.getByRole('button', { name: 'Add account' }).click()
+
+  // an odd layout auto-detect cannot read: the editor opens and says why
+  const odd = [
+    'Statement',
+    'When,What,In,Out',
+    `${mdy(0)},NEFT BULK DEPOSIT,"800.00",`,
+    `${mdy(0)},SMS CHARGES,,11.80`,
+  ].join('\n')
+  await page
+    .getByLabel('Import a statement (CSV)')
+    .setInputFiles({ name: 'odd.csv', mimeType: 'text/csv', buffer: Buffer.from(odd) })
+  const dlg = page.getByRole('dialog', { name: 'Map statement columns' })
+  await expect(dlg.getByRole('alert')).toContainText('Automatic detection failed')
+  await expect(dlg.getByRole('alert')).toContainText('date')
+  await dlg.getByLabel('Date (required)').selectOption('When')
+  await dlg.getByLabel('Date order').selectOption('mdy')
+  await dlg.getByLabel('Amounts come as').selectOption('split')
+  await dlg.getByLabel('Debit (money out) (required)').selectOption('Out')
+  await dlg.getByLabel('Credit (money in) (required)').selectOption('In')
+  await dlg.getByLabel('Narration').selectOption('What')
+  await expect(dlg.getByText('2 lines would be read')).toBeVisible()
+  await dlg.getByRole('button', { name: 'Save mapping and import' }).click()
+  await expect(page.getByRole('status').filter({ hasText: '2 lines imported' })).toBeVisible()
+
+  // the two receipts add up to the deposit: tick, see the total, match as one split
+  const deposit = page.getByRole('listitem').filter({ hasText: 'NEFT BULK DEPOSIT' })
+  await expect(deposit.getByText('2 payments together equal this line')).toBeVisible()
+  await expect(deposit.getByRole('button', { name: 'Match 2 selected payments' })).toBeEnabled()
+  await deposit.getByRole('checkbox').first().uncheck()
+  await expect(deposit.getByRole('button', { name: /selected payments/ })).toBeDisabled()
+  await deposit.getByRole('checkbox').first().check()
+  await deposit.getByRole('button', { name: 'Match 2 selected payments' }).click()
+
+  // ignore the charge with a reason
+  const charge = page.getByRole('listitem').filter({ hasText: 'SMS CHARGES' })
+  await charge.getByRole('button', { name: 'Ignore' }).click()
+  const ig = page.getByRole('dialog', { name: 'Ignore this line' })
+  await expect(ig.getByText('nothing is posted')).toBeVisible()
+  await ig.getByRole('button', { name: 'Ignore line' }).click()
+  await expect(page.getByText('All statement lines are matched')).toBeVisible()
+
+  await page.getByRole('tab', { name: 'Matched', exact: true }).click()
+  const matched = page.getByRole('list', { name: 'matched statement lines' }).getByRole('listitem')
+  await expect(matched).toHaveCount(1)
+  await expect(matched.getByText(/2 records/)).toBeVisible()
+  await page.getByRole('tab', { name: /^Ignored/ }).click()
+  await expect(page.getByText('Bank charge, not recorded')).toBeVisible()
+
+  // unmatch removes the whole split
+  await page.getByRole('tab', { name: 'Matched', exact: true }).click()
+  await matched.getByRole('button', { name: 'Unmatch' }).click()
+  await page.getByRole('tab', { name: 'Unmatched', exact: true }).click()
+  await expect(
+    page.getByRole('listitem').filter({ hasText: 'NEFT BULK DEPOSIT' }).getByText('2 payments together'),
+  ).toBeVisible()
+})
