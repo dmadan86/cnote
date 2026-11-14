@@ -62,7 +62,7 @@ func mentionEmail(c *command.Ctx, ev jobs.Event) error {
 		who = *actor
 	}
 	body := fmt.Sprintf("%s mentioned you in %s\n\n%s/w/%s/n/%s\n", who, title, strings.TrimRight(base, "/"), ev.WorkspaceID, noteID)
-	if err := SendMail(c.Context, smtpURL, os.Getenv("EMAIL_FROM"), to, "You were mentioned in "+title, body); err != nil {
+	if err := SendMail(c.Context, smtpURL, os.Getenv("EMAIL_FROM"), to, "You were mentioned in "+title, body, fmt.Sprintf("<cnote-mention-%d@cnote>", ev.ID)); err != nil {
 		slog.Warn("mention email failed", "error", err)
 	}
 	return nil
@@ -81,7 +81,7 @@ func (a plainAuth) Next([]byte, bool) ([]byte, error) {
 
 // SendMail delivers one plain-text message. smtp_url follows lettre's from_url: smtps:// is implicit TLS (port
 // 465), smtp:// is cleartext (port 25) unless ?tls=required (STARTTLS, mandatory) or ?tls=opportunistic.
-func SendMail(ctx context.Context, smtpURL, from, to, subject, body string) error {
+func SendMail(ctx context.Context, smtpURL, from, to, subject, body, messageID string) error {
 	fa, err := mail.ParseAddress(from)
 	if err != nil {
 		return err
@@ -150,7 +150,7 @@ func SendMail(ctx context.Context, smtpURL, from, to, subject, body string) erro
 	if err != nil {
 		return err
 	}
-	if _, err := w.Write([]byte(buildMessage(fa, ta, subject, body))); err != nil {
+	if _, err := w.Write([]byte(buildMessage(fa, ta, subject, body, messageID))); err != nil {
 		return err
 	}
 	if err := w.Close(); err != nil {
@@ -159,13 +159,14 @@ func SendMail(ctx context.Context, smtpURL, from, to, subject, body string) erro
 	return cl.Quit()
 }
 
-func buildMessage(from, to *mail.Address, subject, body string) string {
+func buildMessage(from, to *mail.Address, subject, body, messageID string) string {
 	subject = strings.NewReplacer("\r", " ", "\n", " ").Replace(subject) // no header injection from note titles
 	var b strings.Builder
 	b.WriteString("From: " + from.String() + "\r\n")
 	b.WriteString("To: " + to.String() + "\r\n")
 	b.WriteString("Subject: " + mime.QEncoding.Encode("utf-8", subject) + "\r\n")
 	b.WriteString("Date: " + time.Now().UTC().Format(time.RFC1123Z) + "\r\n")
+	b.WriteString("Message-ID: " + messageID + "\r\n") // per event: a re-sent mail is recognisable
 	b.WriteString("MIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\n")
 	ascii := true
 	for _, r := range body {

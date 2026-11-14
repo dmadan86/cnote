@@ -596,3 +596,16 @@ run the same scenario on a Rust workspace (the real Rust worker reacts) and a Go
 bindings, flags, jobs, automation runs, comments and usage with ids and timestamps normalised. Ports of the Rust
 tests: automations (`projects.rs`), freshness lapses and graveyard (`living_pages.rs`), IRN window sweep
 (`finance.rs`), hook delivery (`hooks.rs`), importer tests (`import.rs`).
+
+### Worker recovery (leases, atomic done mark, at-least-once outbound)
+
+- Lease: the claim sets `core.jobs.updated_at`; a heartbeat refreshes it every lease/3 (lease 10 min) while a job runs.
+  Sweep `jobs.reclaim` (60s) requeues running jobs of the Go kinds whose lease expired, or marks them `failed` when
+  `attempts >= max_attempts` (the claim counts each attempt, so a job that kills its worker repeatedly is capped). It
+  also rescues jobs a dead Rust worker left running. No schema change: Rust ignores it and keeps working alongside.
+- A successful job commits its DB effects and `status = 'done'` in ONE transaction, so a crash cannot repeat an effect
+  that committed. Failures roll the effect back and are recorded in a second transaction (retry with 2^attempts backoff).
+- Outbound effects (hook POST, mention email) cannot be atomic with the database: they are at-least-once. A crash after
+  the request leaves the job running; after the lease it is re-run and re-sent with the same key: header
+  `x-cnote-delivery-id: job-<core.jobs.id>` on hooks, `Message-ID: <cnote-mention-<event id>@cnote>` on email.
+  Receivers can dedupe on these. Tests: `internal/worker/recovery_test.go`.

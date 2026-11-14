@@ -3,6 +3,7 @@
 package jobs
 
 import (
+	"context"
 	"encoding/json"
 	"time"
 )
@@ -30,3 +31,13 @@ type Job struct {
 	Attempts    int32
 	MaxAttempts int32
 }
+
+type jobIDKey struct{}
+
+// WithJobID tags ctx with the core.jobs id being run, so outbound effects can send a per-job idempotency key.
+func WithJobID(ctx context.Context, id int64) context.Context {
+	return context.WithValue(ctx, jobIDKey{}, id)
+}
+
+// JobID returns the id set by WithJobID.
+func JobID(ctx context.Context) (int64, bool) { id, ok := ctx.Value(jobIDKey{}).(int64); return id, ok }

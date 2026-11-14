@@ -271,6 +271,9 @@ func postSigned(ctx context.Context, url, secret string, body json.RawMessage) e
 	}
 	req.Header.Set("content-type", "application/json")
 	req.Header.Set("x-cnote-timestamp", strconv.FormatInt(ts, 10))
+	if id, ok := jobs.JobID(ctx); ok { // same job re-run after a crash => same key; receivers can dedupe
+		req.Header.Set("x-cnote-delivery-id", "job-"+strconv.FormatInt(id, 10))
+	}
 	req.Header.Set("x-cnote-signature", Signature(secret, ts, raw))
 	res, err := netguard.Client().Do(req)
 	if err != nil {

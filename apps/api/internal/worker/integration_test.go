@@ -121,6 +121,9 @@ func TestMentionEmail(t *testing.T) {
 	if !strings.Contains(body, "Content-Transfer-Encoding: quoted-printable") {
 		t.Fatal(body)
 	}
+	if !strings.Contains(body, "Message-ID: <cnote-mention-") {
+		t.Fatal("missing per-event Message-ID")
+	}
 	// decoded text part
 	raw := strings.SplitN(body, "\n\n", 2)[1]
 	raw = strings.ReplaceAll(raw, "=\n", "")
@@ -214,6 +217,9 @@ func TestHookDeliveryThroughTheWorker(t *testing.T) {
 	_ = json.Unmarshal([]byte(ts), &tsn)
 	if r.hdr.Get("x-cnote-signature") != hooks.Signature(secret, tsn, string(r.body)) || r.hdr.Get("content-type") != "application/json" {
 		t.Fatalf("bad signature or content type: %v", r.hdr)
+	}
+	if d := r.hdr.Get("x-cnote-delivery-id"); !strings.HasPrefix(d, "job-") {
+		t.Fatalf("missing per-job idempotency key: %q", d)
 	}
 	var st string
 	_ = g.c.Tx.QueryRow(g.c.Context, "select last_status from core.hooks where id = $1::uuid", hook).Scan(&st)

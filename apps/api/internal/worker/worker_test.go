@@ -131,6 +131,7 @@ func TestDifferentialBindingsAndFreshness(t *testing.T) {
 		sp := str(s.cmd("space.create", map[string]any{"key": "ENG", "name": "Engineering", "template": "software"}), "id")
 		item := s.cmd("item.create", map[string]any{"space_id": sp, "title": "Ship it"})
 		target := str(s.cmd("note.create", map[string]any{"space_id": sp, "title": "Pricing", "content_md": "v1"}), "id")
+		e.sync(s) // the page must exist after these events are handled, as it does in the Go run
 		page := str(s.cmd("note.create", map[string]any{"space_id": sp, "title": "Guide", "content_md": "Tracks ENG-1 and [[Pricing]] cnote://x/note/" + target +
 			" see https://github.com/acme/api/pull/9 and https://example.com/x. repo:acme/api/deploy.md ünïcödeENG-2 ENG-3 [[Missing]]"}), "id")
 		e.sync(s)
@@ -210,10 +211,6 @@ func TestDifferentialAutomations(t *testing.T) {
 		s.cmd("item.create", map[string]any{"space_id": sp, "title": "second crash", "item_type": "bug"})
 		e.sync(s)
 		s.cmd("automation.update", map[string]any{"id": draft, "enabled": false})
-		s.cmd("automation.create", mk("noisy", map[string]any{"kind": "event", "event": "item.created"}, []any{}, comment, false))
-		for n := 0; n < 12; n++ {
-			s.cmd("item.create", map[string]any{"space_id": sp, "title": fmt.Sprintf("n%d", n), "item_type": "story"})
-		}
 		e.sync(s)
 	}
 	run(r)
@@ -233,7 +230,7 @@ func TestDifferentialAutomations(t *testing.T) {
 		counts[n+"/"+st] = c
 	}
 	rows.Close()
-	for k, want := range map[string]int{"bug comment/success": 2, "imported/success": 1, "urgent only/success": 1, "bad target/failed": 10, "noisy/success": 10, "noisy/loop_blocked": 2, "auto start/success": 1} {
+	for k, want := range map[string]int{"bug comment/success": 2, "imported/success": 1, "urgent only/success": 1, "bad target/failed": 1, "auto start/success": 1} {
 		if counts[k] != want {
 			t.Errorf("%s = %d, want %d (all: %v)", k, counts[k], want, counts)
 		}
@@ -241,6 +238,27 @@ func TestDifferentialAutomations(t *testing.T) {
 	var actor string
 	if err := g.c.Tx.QueryRow(g.c.Context, "select actor_type from core.events where kind = 'item.transitioned' order by id desc limit 1").Scan(&actor); err != nil || actor != "system" {
 		t.Fatalf("automation changes are attributed to the system, got %q %v", actor, err)
+	}
+}
+
+// An automation that keeps firing is blocked after 10 runs in a minute (Go only: the cut-off depends on timing, so
+// it cannot be compared row by row with the Rust worker).
+func TestAutomationLoopProtection(t *testing.T) {
+	e := newEnv(t)
+	w := e.signup("Tess")
+	e.settle(w.ws)
+	g := e.newGoSide(w)
+	sp := str(g.cmd("space.create", map[string]any{"key": "ENG", "name": "Engineering", "template": "software"}), "id")
+	a := str(g.cmd("automation.create", map[string]any{"space_id": sp, "name": "noisy", "trigger": map[string]any{"kind": "event", "event": "item.created"},
+		"actions": []any{map[string]any{"type": "comment", "body": "x"}}}), "id")
+	for n := 0; n < 12; n++ {
+		g.cmd("item.create", map[string]any{"space_id": sp, "title": fmt.Sprintf("n%d", n), "item_type": "story"})
+	}
+	g.drain(500)
+	var ok, blocked int
+	_ = g.c.Tx.QueryRow(g.c.Context, "select count(*) filter (where status = 'success'), count(*) filter (where status = 'loop_blocked') from projects.automation_runs where automation_id = $1::uuid", a).Scan(&ok, &blocked)
+	if ok != 10 || blocked != 2 {
+		t.Fatalf("success %d blocked %d", ok, blocked)
 	}
 }
 

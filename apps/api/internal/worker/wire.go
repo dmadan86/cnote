@@ -8,6 +8,7 @@ import (
 
 	"github.com/cnote/api/internal/command"
 	"github.com/cnote/api/internal/hooks"
+	"github.com/cnote/api/internal/importers"
 	"github.com/cnote/api/internal/jobs"
 )
 
@@ -35,12 +36,14 @@ func New(pool *pgxpool.Pool, reg *command.Registry) *Worker {
 	w.OnEvent("note.updated", aiIndexOnNoteEvent)
 	w.OnEvent("", hooks.OnEvent)
 	w.OnJob("hook.deliver", hooks.DeliverJob)
+	w.OnJob("import.run", importers.RunJob)
 	day := 24 * time.Hour
 	w.AddSweep(Sweep{"docs.freshness_sweep", day, FreshnessSweep})
 	w.AddSweep(Sweep{"finance.irn_window", day, func(ctx context.Context, w *Worker) error {
 		_, err := IRNWindowSweep(ctx, w, todayIST())
 		return err
 	}})
+	w.AddSweep(Sweep{"jobs.reclaim", time.Minute, ReclaimStale})
 	w.AddSweep(Sweep{"projects.automations", time.Minute, AutomationsSweep})
 	w.AddSweep(Sweep{"hooks.schedule", time.Minute, func(ctx context.Context, w *Worker) error { return hooks.Sweep(ctx, w.Pool) }})
 	return w

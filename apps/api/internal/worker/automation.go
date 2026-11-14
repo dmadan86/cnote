@@ -446,6 +446,9 @@ func AutomationsSweep(ctx context.Context, w *Worker) error {
 		return err
 	}
 	for _, ws := range ids {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		if _, err := AutomationsSweepWorkspace(ctx, w, ws); err != nil {
 			slog.Warn("automation sweep failed", "workspace", ws, "error", err)
 		}

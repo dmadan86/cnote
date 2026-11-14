@@ -48,10 +48,11 @@ type Worker struct {
 	sweeps   []Sweep
 	Limit    int           // jobs claimed per poll (Rust: 20)
 	Idle     time.Duration // sleep when the queue is empty (Rust: 500ms)
+	Lease    time.Duration // a running job not heartbeated for this long is reclaimed (see ReclaimStale)
 }
 
 func newWorker(pool *pgxpool.Pool, reg *command.Registry) *Worker {
-	return &Worker{Pool: pool, Registry: reg, jobs: map[string]JobHandler{}, Limit: 20, Idle: 500 * time.Millisecond}
+	return &Worker{Pool: pool, Registry: reg, jobs: map[string]JobHandler{}, Limit: 20, Idle: 500 * time.Millisecond, Lease: 10 * time.Minute}
 }
 
 func (w *Worker) OnEvent(prefix string, h EventHandler) {
@@ -156,7 +157,12 @@ func (w *Worker) DrainOnce(ctx context.Context, limit int) (int, error) {
 // RunClaimed runs one already-claimed job and records the outcome (done, or retry with exponential backoff,
 // or failed once attempts reach max_attempts).
 func (w *Worker) RunClaimed(ctx context.Context, j jobs.Job) error {
-	result := w.safeRun(ctx, j)
+	stop := w.heartbeat(ctx, j)
+	done, result := w.safeRun(ctx, j)
+	stop()
+	if result == nil && done {
+		return nil // the effect and the done mark committed together
+	}
 	var tx pgx.Tx
 	var err error
 	if j.WorkspaceID != nil {
@@ -186,23 +192,100 @@ func (w *Worker) RunClaimed(ctx context.Context, j jobs.Job) error {
 	return tx.Commit(ctx)
 }
 
-func (w *Worker) safeRun(ctx context.Context, j jobs.Job) (err error) {
+// heartbeat keeps the job's lease (core.jobs.updated_at, set by the claim) fresh while it runs, so ReclaimStale
+// only takes jobs whose worker died. The returned func stops it.
+func (w *Worker) heartbeat(ctx context.Context, j jobs.Job) func() {
+	hb, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	finished := make(chan struct{})
+	go func() {
+		defer close(finished)
+		t := time.NewTicker(w.Lease / 3)
+		defer t.Stop()
+		for {
+			select {
+			case <-hb.Done():
+				return
+			case <-t.C:
+				var tx pgx.Tx
+				var err error
+				if j.WorkspaceID != nil {
+					tx, err = db.BeginTenant(hb, w.Pool, *j.WorkspaceID)
+				} else {
+					tx, err = w.Pool.Begin(hb)
+				}
+				if err != nil {
+					continue
+				}
+				if _, err = tx.Exec(hb, "update core.jobs set updated_at = now() where id = $1 and status = 'running'", j.ID); err == nil {
+					_ = tx.Commit(hb)
+				} else {
+					_ = tx.Rollback(hb)
+				}
+			}
+		}
+	}()
+	return func() { cancel(); <-finished }
+}
+
+// ReclaimWorkspace requeues (or fails, once attempts are used up) running jobs of this worker's kinds whose lease
+// expired: the worker that claimed them died. The claim already counted that attempt, so max_attempts caps
+// crash loops. Rust never reclaims; this also rescues jobs a dead Rust worker left running.
+func (w *Worker) ReclaimWorkspace(c *command.Ctx, lease time.Duration) (int64, error) {
+	tag, err := c.Tx.Exec(c.Context,
+		`update core.jobs set status = case when attempts >= max_attempts then 'failed' else 'queued' end,
+		   last_error = 'lease expired: the worker stopped before finishing', run_at = now(), updated_at = now()
+		 where status = 'running' and updated_at < now() - make_interval(secs => $1::float8) and kind = any($2::text[])`,
+		lease.Seconds(), w.Kinds())
+	return tag.RowsAffected(), err
+}
+
+// ReclaimStale is the jobs.reclaim sweep.
+func ReclaimStale(ctx context.Context, w *Worker) error {
+	ids, err := allWorkspaceIDs(ctx, w.Pool)
+	if err != nil {
+		return err
+	}
+	for _, ws := range ids {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		c, err := w.systemCtx(ctx, ws)
+		if err != nil {
+			return err
+		}
+		n, err := w.ReclaimWorkspace(c, w.Lease)
+		if err == nil {
+			err = c.Tx.Commit(ctx)
+		} else {
+			_ = c.Tx.Rollback(ctx)
+		}
+		if err != nil {
+			return err
+		}
+		if n > 0 {
+			slog.Warn("reclaimed jobs with an expired lease", "workspace", ws, "jobs", n)
+		}
+	}
+	return nil
+}
+
+func (w *Worker) safeRun(ctx context.Context, j jobs.Job) (done bool, err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			err = fmt.Errorf("panic: %v", r)
+			done, err = false, fmt.Errorf("panic: %v", r)
 		}
 	}()
 	return w.runJob(ctx, j)
 }
 
-func (w *Worker) runJob(ctx context.Context, j jobs.Job) error {
+func (w *Worker) runJob(ctx context.Context, j jobs.Job) (bool, error) {
 	if j.WorkspaceID == nil {
-		return errors.New("job without workspace")
+		return false, errors.New("job without workspace")
 	}
 	ws := *j.WorkspaceID
 	tx, err := db.BeginTenant(ctx, w.Pool, ws)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	c := &command.Ctx{Context: ctx, Tx: tx, Principal: command.Principal{Kind: command.KindSystem, WorkspaceID: ws, Role: command.Owner}}
@@ -210,14 +293,21 @@ func (w *Worker) runJob(ctx context.Context, j jobs.Job) error {
 		w.Registry.Bind(c)
 	}
 	if err := w.Handle(c, j); err != nil {
-		return err
+		return false, err
 	}
-	return tx.Commit(ctx)
+	// DB effects and the done mark commit atomically: a crash cannot repeat an effect that already committed.
+	// Outbound effects (hooks, email) are at-least-once: a crash after the request leaves the job running, it is
+	// reclaimed and re-sent, carrying the same per-job key (x-cnote-delivery-id, Message-ID).
+	if _, err := tx.Exec(ctx, "update core.jobs set status = 'done', updated_at = now() where id = $1", j.ID); err != nil {
+		return false, err
+	}
+	return true, tx.Commit(ctx)
 }
 
 // Handle runs the job inside an open tenant transaction (system principal, role owner). Tests drive it directly
 // so nothing is committed to the shared queue.
 func (w *Worker) Handle(c *command.Ctx, j jobs.Job) error {
+	c.Context = jobs.WithJobID(c.Context, j.ID)
 	if j.Kind == "event.dispatch" {
 		return w.dispatch(c, j.Payload)
 	}
