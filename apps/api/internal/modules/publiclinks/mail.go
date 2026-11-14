@@ -3,6 +3,7 @@ package publiclinks
 import (
 	"crypto/tls"
 	"fmt"
+	"mime"
 	"net"
 	"net/smtp"
 	"net/url"
@@ -64,7 +65,7 @@ func sendMail(smtpURL, from, to, subject, body string) error {
 	if err != nil {
 		return err
 	}
-	msg := "From: " + from + "\r\nTo: " + to + "\r\nSubject: " + strings.NewReplacer("\r", " ", "\n", " ").Replace(subject) +
+	msg := "From: " + from + "\r\nTo: " + to + "\r\nSubject: " + mime.QEncoding.Encode("utf-8", strings.NewReplacer("\r", " ", "\n", " ").Replace(subject)) +
 		"\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n" + strings.ReplaceAll(body, "\n", "\r\n")
 	if _, err := w.Write([]byte(msg)); err != nil {
 		return err
