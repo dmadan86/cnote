@@ -10,6 +10,7 @@ import { ago, useCmd } from '@/lib/hooks'
 
 export type Ticket = {
   id: string
+  ref: string
   title: string
   status: 'open' | 'pending' | 'resolved' | 'closed'
   priority: 'low' | 'normal' | 'high' | 'urgent'
@@ -173,9 +174,12 @@ export function TicketList({ initialBreached = false }: { initialBreached?: bool
         {list.data?.map((t) => (
           <li key={t.id} className="rounded-lg border border-line p-3">
             <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-              <Link href={`/w/${ws}/crm/tickets/${t.id}`} className="font-medium hover:underline">
-                {t.title}
-              </Link>
+              <span>
+                <span className="mr-2 font-mono text-[12px] text-muted">{t.ref}</span>
+                <Link href={`/w/${ws}/crm/tickets/${t.id}`} className="font-medium hover:underline">
+                  {t.title}
+                </Link>
+              </span>
               <Sla t={t} />
             </div>
             <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-muted">
@@ -303,13 +307,47 @@ function NewTicket({ onClose, onSaved }: { onClose: () => void; onSaved: () => v
 }
 
 type Comment = { id: string; author_name: string; body: string; created_at: string }
+type Message = {
+  id: string
+  origin: 'customer_email' | 'customer_portal' | 'agent'
+  body: string
+  author_name: string
+  emailed: boolean
+  created_at: string
+}
 
 export function TicketDetail({ id }: { id: string }) {
   const { ws, members, spaces } = useShell()
   const tk = useCmd<Ticket>(ws, 'ticket.get', { id })
   const thread = useCmd<Comment[]>(ws, 'comment.list', { note_id: id })
+  const msgs = useCmd<Message[]>(ws, 'ticket.messages', { id })
   const [err, setErr] = useState<string>()
   const [reply, setReply] = useState('')
+  const [mode, setMode] = useState<'note' | 'public'>('note') // never public by default
+  const [sending, setSending] = useState(false)
+  const items = [
+    ...(thread.data ?? []).map((c) => ({
+      key: `c${c.id}`,
+      kind: 'note' as const,
+      who: c.author_name,
+      body: c.body,
+      at: c.created_at,
+    })),
+    ...(msgs.data ?? []).map((m) => ({
+      key: `m${m.id}`,
+      kind: m.origin === 'agent' ? ('sent' as const) : ('customer' as const),
+      who: m.origin === 'agent' ? m.author_name || 'Support' : (tk.data?.contact_name ?? 'Customer'),
+      body: m.body,
+      at: m.created_at,
+      emailed: m.emailed,
+    })),
+  ].sort((a, b) => a.at.localeCompare(b.at))
+  const KIND = { note: 'Internal note', sent: 'Sent to customer', customer: 'Customer' }
+  const STYLE = {
+    note: 'border-dashed border-line bg-surface',
+    sent: 'border-line',
+    customer: 'border-line bg-surface',
+  }
   const [saved, setSaved] = useState('')
   const t = tk.data
   const patch = async (p: Record<string, unknown>) => {
@@ -333,14 +371,17 @@ export function TicketDetail({ id }: { id: string }) {
         <div className="grid gap-6 md:grid-cols-[1fr_16rem]">
           <div className="space-y-4">
             <div>
-              <h2 className="text-lg font-semibold">{t.title}</h2>
+              <h2 className="text-lg font-semibold">
+                <span className="mr-2 select-all font-mono text-[13px] font-medium text-muted">{t.ref}</span>
+                {t.title}
+              </h2>
               <div className="mt-1 flex flex-wrap items-center gap-2 text-[12px] text-muted">
                 <Pill>{label(t.status)}</Pill>
                 <Pill tone={tones[t.priority]}>{label(t.priority)}</Pill>
                 <Sla t={t} />
                 <span>
                   Raised {ago(t.created_at)}
-                  {t.source === 'form' ? ' through the public form' : ''}
+                  {t.source === 'form' ? ' through the public form' : t.source === 'email' ? ' by email' : ''}
                 </span>
               </div>
             </div>
@@ -350,16 +391,21 @@ export function TicketDetail({ id }: { id: string }) {
               <p className="text-muted">No details given.</p>
             )}
             <div>
-              <h3 className="mb-2 text-[13px] font-medium">Replies</h3>
-              {thread.data?.length === 0 && <p className="text-[13px] text-muted">No replies yet.</p>}
+              <h3 className="mb-2 text-[13px] font-medium">Conversation</h3>
+              {items.length === 0 && <p className="text-[13px] text-muted">No messages yet.</p>}
               <ol className="space-y-3">
-                {thread.data?.map((c) => (
-                  <li key={c.id} className="rounded-lg border border-line p-3 text-[14px]">
-                    <div className="flex justify-between text-[12px] text-muted">
-                      <span className="font-medium text-fg">{c.author_name}</span>
-                      <time dateTime={c.created_at}>{ago(c.created_at)}</time>
+                {items.map((c) => (
+                  <li key={c.key} className={`rounded-lg border p-3 text-[14px] ${STYLE[c.kind]}`}>
+                    <div className="flex justify-between gap-2 text-[12px] text-muted">
+                      <span>
+                        <span className="font-medium text-fg">{c.who}</span> · {KIND[c.kind]}
+                        {c.kind === 'sent' && 'emailed' in c && !c.emailed
+                          ? ' (not emailed: email is not set up)'
+                          : ''}
+                      </span>
+                      <time dateTime={c.at}>{ago(c.at)}</time>
                     </div>
-                    <p className="whitespace-pre-wrap">{c.body}</p>
+                    <p className="whitespace-pre-wrap break-words">{c.body}</p>
                   </li>
                 ))}
               </ol>
@@ -367,17 +413,38 @@ export function TicketDetail({ id }: { id: string }) {
                 className="mt-3 space-y-2"
                 onSubmit={async (e) => {
                   e.preventDefault()
+                  setSending(true)
                   try {
-                    await cmd(ws, 'comment.add', { note_id: id, body: reply })
+                    if (mode === 'public') await cmd(ws, 'ticket.reply', { id, body: reply })
+                    else await cmd(ws, 'comment.add', { note_id: id, body: reply })
                     setReply('') // the draft stays when the call fails
                     setErr(undefined)
                     thread.reload()
+                    msgs.reload()
                   } catch (x) {
                     setErr((x as Error).message)
                   }
+                  setSending(false)
                 }}
               >
-                <Field label="Reply">
+                <fieldset className="flex flex-wrap gap-2">
+                  <legend className="sr-only">Reply type</legend>
+                  {(['note', 'public'] as const).map((m) => (
+                    <label
+                      key={m}
+                      className={`inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border px-3 text-[14px] ${mode === m ? 'border-fg font-medium' : 'border-line text-muted'}`}
+                    >
+                      <input
+                        type="radio"
+                        name="reply-type"
+                        checked={mode === m}
+                        onChange={() => setMode(m)}
+                      />
+                      {m === 'public' ? 'Public reply' : 'Internal note'}
+                    </label>
+                  ))}
+                </fieldset>
+                <Field label="Message">
                   {(fid) => (
                     <textarea
                       id={fid}
@@ -388,8 +455,13 @@ export function TicketDetail({ id }: { id: string }) {
                     />
                   )}
                 </Field>
-                <button type="submit" disabled={!reply.trim()} className={`${btnPrimary} ${big}`}>
-                  Send reply
+                <p className="text-[12px] text-muted">
+                  {mode === 'public'
+                    ? `Emailed to ${t.contact_name} with ${t.ref} in the subject, and shown on their portal.`
+                    : 'Only your team sees internal notes.'}
+                </p>
+                <button type="submit" disabled={!reply.trim() || sending} className={`${btnPrimary} ${big}`}>
+                  {mode === 'public' ? 'Send to customer' : 'Add note'}
                 </button>
               </form>
             </div>
@@ -554,6 +626,7 @@ export function TicketSettings() {
           </p>
         </form>
       )}
+      {admin && <Channels />}
       {admin && cfg.data && (
         <div className="space-y-2 rounded-lg border border-line p-4">
           {cfg.data.configured && cfg.data.enabled ? (
@@ -578,6 +651,150 @@ export function TicketSettings() {
             </p>
           )}
         </div>
+      )}
+    </section>
+  )
+}
+
+type Channels = {
+  portal_enabled: boolean
+  inbound_enabled: boolean
+  inbound_space_id: string | null
+  inbound_rotated_at: string | null
+  inbound_path: string
+  portal_path: string
+}
+
+/** Email-in and the customer portal. The signing secret is shown once, right after create or rotate. */
+function Channels() {
+  const { ws, spaces } = useShell()
+  const ch = useCmd<Channels>(ws, 'ticket_channels.get')
+  const [err, setErr] = useState<string>()
+  const [secret, setSecret] = useState<string>()
+  const [busy, setBusy] = useState(false)
+  const [space, setSpace] = useState('')
+  const c = ch.data
+  const run = async (f: () => Promise<unknown>) => {
+    setBusy(true)
+    try {
+      await f()
+      setErr(undefined)
+      ch.reload()
+    } catch (x) {
+      setErr((x as Error).message)
+    }
+    setBusy(false)
+  }
+  const ro = (id: string, v: string) => (
+    <input id={id} readOnly value={v} className={`${inputCls} text-[16px]`} />
+  )
+  return (
+    <section aria-label="Email and portal" className="space-y-4 rounded-lg border border-line p-4">
+      <h2 className="text-[15px] font-semibold">Email and portal</h2>
+      <ErrorText error={err ?? ch.error} />
+      {c && (
+        <>
+          <div className="space-y-2">
+            <label className="flex min-h-11 items-center gap-2 text-[14px]">
+              <input
+                type="checkbox"
+                checked={c.portal_enabled}
+                disabled={busy}
+                onChange={(e) =>
+                  run(() => cmd(ws, 'ticket_channels.set', { portal_enabled: e.target.checked }))
+                }
+              />
+              Customer portal
+            </label>
+            <p className="text-[12px] text-muted">
+              Customers sign in with an emailed one-time link (no password) and see their tickets and your
+              public replies. Turning it off ends every portal session.
+            </p>
+            {c.portal_enabled && (
+              <Field label="Portal link">{(id) => ro(id, `${window.location.origin}${c.portal_path}`)}</Field>
+            )}
+          </div>
+          <div className="space-y-2">
+            <h3 className="text-[14px] font-medium">Email to ticket</h3>
+            <p className="text-[12px] text-muted">
+              Your mail provider posts each inbound email as JSON to the endpoint below, signed with a secret
+              (HMAC-SHA256 of timestamp, a dot and the body). Replies thread by In-Reply-To or the ticket
+              reference in the subject. See docs/support-email-in.md for Postmark, Mailgun and SendGrid.
+            </p>
+            {c.inbound_enabled && (
+              <Field label="Email endpoint">
+                {(id) => ro(id, `${window.location.origin}${c.inbound_path}`)}
+              </Field>
+            )}
+            {!c.inbound_enabled && !c.inbound_space_id && (
+              <Field label="File new email tickets in">
+                {(id) => (
+                  <select
+                    id={id}
+                    value={space}
+                    onChange={(e) => setSpace(e.target.value)}
+                    className={`${inputCls} min-h-11 text-[16px]`}
+                  >
+                    <option value="">Choose a space</option>
+                    {spaces.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.name}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </Field>
+            )}
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                disabled={busy || (!c.inbound_space_id && !space)}
+                className={`${btn} ${big}`}
+                onClick={() => {
+                  if (
+                    c.inbound_enabled &&
+                    !window.confirm('Rotate the secret? The current one stops working immediately.')
+                  )
+                    return
+                  run(async () => {
+                    const r = await cmd<{ secret: string }>(
+                      ws,
+                      'ticket_inbound.rotate',
+                      space ? { space_id: space } : {},
+                    )
+                    setSecret(r.secret)
+                  })
+                }}
+              >
+                {c.inbound_enabled ? 'Rotate secret' : 'Turn on email to ticket'}
+              </button>
+              {c.inbound_enabled && (
+                <button
+                  type="button"
+                  disabled={busy}
+                  className={`${btn} ${big}`}
+                  onClick={() =>
+                    run(() =>
+                      cmd(ws, 'ticket_channels.set', { inbound_enabled: false }).then(() =>
+                        setSecret(undefined),
+                      ),
+                    )
+                  }
+                >
+                  Turn off
+                </button>
+              )}
+            </div>
+            {secret && (
+              <div role="status" className="space-y-1 rounded-lg border border-line p-3">
+                <Field label="Signing secret">{(id) => ro(id, secret)}</Field>
+                <p className="text-[12px] text-muted">
+                  Copy it now: it cannot be shown again. Any earlier secret no longer works.
+                </p>
+              </div>
+            )}
+          </div>
+        </>
       )}
     </section>
   )

@@ -105,11 +105,16 @@ var mcpMeta = map[string]meta{
 		"id": id, "status": props{"type": "string", "enum": ticketStatus}, "priority": props{"type": "string", "enum": ticketPrio}, "assignee_id": id, "invoice_id": id, "project_id": id})},
 	"ticket.list": {"List tickets (default filter: open and pending), breached ones first. breached=true lists only tickets past their SLA due time.", schema(nil, props{
 		"status": props{"type": "string", "enum": append([]string{"active", "all"}, ticketStatus...)}, "priority": props{"type": "string", "enum": ticketPrio}, "assignee_id": props{"type": "string", "description": "UUID or me"}, "contact_id": id, "breached": flag})},
-	"ticket.get":       {"Read one ticket with its contact, links, SLA due time and breach flag.", idOnly},
-	"ticket.sla_get":   {"Read the hours to resolve per priority (workspace setting; defaults urgent 4, high 8, normal 24, low 72).", schema(nil, props{})},
-	"ticket.sla_set":   {"Set the hours to resolve per priority, e.g. {\"hours\": {\"urgent\": 2}} (admins). Applies to new tickets and when a ticket's priority changes.", schema([]string{"hours"}, props{"hours": props{"type": "object"}})},
-	"inquiry_form.get": {"Read the workspace's public inquiry form settings and link (admins).", schema(nil, props{})},
-	"inquiry_form.set": {"Configure the public inquiry form: target space, owner, on/off, or rotate its link (admins).", schema(nil, props{"space_id": id, "owner_id": id, "enabled": flag, "rotate": flag})},
+	"ticket.get":            {"Read one ticket with its contact, links, SLA due time and breach flag.", idOnly},
+	"ticket.sla_get":        {"Read the hours to resolve per priority (workspace setting; defaults urgent 4, high 8, normal 24, low 72).", schema(nil, props{})},
+	"ticket.sla_set":        {"Set the hours to resolve per priority, e.g. {\"hours\": {\"urgent\": 2}} (admins). Applies to new tickets and when a ticket's priority changes.", schema([]string{"hours"}, props{"hours": props{"type": "object"}})},
+	"ticket.reply":          {"Send a customer-visible reply on a ticket: it is emailed to the contact with the ticket reference (TKT-000123) in the subject and shown on the customer portal. Internal notes are comments (comment.add) and never reach the customer.", schema([]string{"id", "body"}, props{"id": id, "body": str})},
+	"ticket.messages":       {"List the customer-visible conversation of a ticket (customer emails and portal replies, and agent replies sent to the customer), oldest first. Internal comments are not included.", idOnly},
+	"ticket_channels.get":   {"Read the support channel settings (admins): customer portal on/off and the email-in endpoint, space and rotation time. The signing secret is never returned.", schema(nil, props{})},
+	"ticket_channels.set":   {"Turn the customer portal on or off (portal_enabled) or turn email-in off (inbound_enabled=false). Email-in is turned on with ticket_inbound.rotate.", schema(nil, props{"portal_enabled": flag, "inbound_enabled": flag})},
+	"ticket_inbound.rotate": {"Create or replace the email-in signing secret (admins) and return it once. space_id is where new email tickets are filed (required the first time).", schema(nil, props{"space_id": id})},
+	"inquiry_form.get":      {"Read the workspace's public inquiry form settings and link (admins).", schema(nil, props{})},
+	"inquiry_form.set":      {"Configure the public inquiry form: target space, owner, on/off, or rotate its link (admins).", schema(nil, props{"space_id": id, "owner_id": id, "enabled": flag, "rotate": flag})},
 	"quote.create_draft": {"Create a draft quotation (estimate) for a contact. Never posts to the ledger.", schema([]string{"space_id", "contact_id", "lines"}, props{
 		"space_id": id, "contact_id": id, "lines": lines, "quote_date": date, "valid_until": date, "place_of_supply": str, "reverse_charge": flag, "notes": str})},
 	"quote.update_draft": {"Update a draft quotation; sending `lines` replaces all lines.", schema([]string{"id"}, props{
