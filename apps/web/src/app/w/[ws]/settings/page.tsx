@@ -1,5 +1,6 @@
 'use client'
 import { useState } from 'react'
+import { BusinessTypePicker } from '@/components/business-type'
 import { HooksTab } from '@/components/hooks-settings'
 import { Secret } from '@/components/secret'
 import { useShell } from '@/components/shell'
@@ -21,7 +22,7 @@ const TABS = [
 ] as const
 type TabName = (typeof TABS)[number]
 
-type Ws = { name: string; settings: { agent_tool_groups?: string[] } }
+type Ws = { name: string; settings: { agent_tool_groups?: string[]; business_type?: string } }
 type Key = {
   id: string
   name: string
@@ -41,30 +42,49 @@ function WorkspaceTab({ ws }: { ws: string }) {
   const [msg, setMsg] = useState<string>()
   if (!data) return null
   return (
-    <form
-      className="max-w-sm space-y-3"
-      onSubmit={async (e) => {
-        e.preventDefault()
-        try {
-          await cmd(ws, 'workspace.update', { name: new FormData(e.currentTarget).get('name'), settings: {} })
-          setMsg('Saved')
-          reload()
-          shell.reload()
-        } catch (x) {
-          setMsg((x as Error).message)
-        }
-      }}
-    >
-      <Field label="Workspace name">
-        {(id) => <input id={id} name="name" defaultValue={data.name} required className={inputCls} />}
-      </Field>
-      <button type="submit" className={btnPrimary}>
-        Save
-      </button>
-      <p role="status" className="text-[13px] text-muted">
-        {msg}
-      </p>
-    </form>
+    <div className="space-y-8">
+      <form
+        className="max-w-sm space-y-3"
+        onSubmit={async (e) => {
+          e.preventDefault()
+          try {
+            await cmd(ws, 'workspace.update', {
+              name: new FormData(e.currentTarget).get('name'),
+              settings: {},
+            })
+            setMsg('Saved')
+            reload()
+            shell.reload()
+          } catch (x) {
+            setMsg((x as Error).message)
+          }
+        }}
+      >
+        <Field label="Workspace name">
+          {(id) => <input id={id} name="name" defaultValue={data.name} required className={inputCls} />}
+        </Field>
+        <button type="submit" className={btnPrimary}>
+          Save
+        </button>
+        <p role="status" className="text-[13px] text-muted">
+          {msg}
+        </p>
+      </form>
+      <section className="max-w-2xl space-y-2">
+        <h2 className="text-[14px] font-semibold">Business type</h2>
+        <p className="text-[13px] text-muted">
+          Changing this re-applies the modules shown in the sidebar and the CRM deal stage names.
+        </p>
+        <BusinessTypePicker
+          ws={ws}
+          current={data.settings.business_type}
+          onDone={() => {
+            reload()
+            shell.reload()
+          }}
+        />
+      </section>
+    </div>
   )
 }
 

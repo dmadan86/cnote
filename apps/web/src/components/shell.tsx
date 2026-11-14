@@ -5,6 +5,7 @@ import { usePathname, useRouter } from 'next/navigation'
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { auth, cmd, type Me, type Member, type Note, type SharedNote, type Space } from '@/lib/api'
 import { MODULES, moduleOn } from '@/lib/modules'
+import { BusinessTypeChooser } from './business-type'
 import { NotificationBell } from './notifications'
 import { Palette } from './palette'
 import { PersonHoverLayer } from './person'
@@ -20,6 +21,8 @@ type Shell = {
   members: Member[]
   /** settings.modules; null = all enabled. */
   modules: string[] | null
+  /** settings.deal_stage_labels: display labels for the fixed deal stage keys. */
+  dealLabels: Record<string, string> | null
   reload: () => void
   newPage: (opts?: { spaceId?: string; parentId?: string }) => Promise<void>
   openSpaceDialog: () => void
@@ -251,6 +254,9 @@ export function ShellView({ ws, children }: { ws: string; children: React.ReactN
   const [members, setMembers] = useState<Member[]>([])
   const [shared, setShared] = useState<SharedNote[]>([])
   const [modules, setModules] = useState<string[] | null>(null)
+  const [dealLabels, setDealLabels] = useState<Record<string, string> | null>(null)
+  const [needType, setNeedType] = useState(false)
+  const [skipType, setSkipType] = useState(false)
   const [denied, setDenied] = useState(false)
   const [tick, setTick] = useState(0)
   const [spaceDialog, setSpaceDialog] = useState(false)
@@ -271,10 +277,14 @@ export function ShellView({ ws, children }: { ws: string; children: React.ReactN
       cmd<Note[]>(ws, 'note.list', { limit: 500 }),
       cmd<Member[]>(ws, 'member.list'),
       loadShared(ws),
-      cmd<{ settings: { modules?: string[] } }>(ws, 'workspace.get'),
+      cmd<{
+        settings: { modules?: string[]; business_type?: string; deal_stage_labels?: Record<string, string> }
+      }>(ws, 'workspace.get'),
     ]).then(
       ([s, n, m, sh, w]) => {
         setModules(w.settings.modules ?? null)
+        setDealLabels(w.settings.deal_stage_labels ?? null)
+        setNeedType(!w.settings.business_type)
         setSpaces(s)
         setNotes([...n, ...sh.roots, ...sh.extra])
         setMembers(m)
@@ -338,12 +348,14 @@ export function ShellView({ ws, children }: { ws: string; children: React.ReactN
     shared,
     members,
     modules,
+    dealLabels,
     reload,
     newPage,
     openSpaceDialog: () => setSpaceDialog(true),
     togglePalette: () => setPalette((p) => !p),
   }
   const current = me.workspaces.find((w) => w.id === ws)
+  const isAdmin = current?.role === 'owner' || current?.role === 'admin'
   const base = `/w/${ws}`
   const hrefFor = (key: string) =>
     key === 'docs' ? (spaces[0] ? `${base}/s/${spaces[0].id}` : base) : key ? `${base}/${key}` : base
@@ -541,6 +553,9 @@ export function ShellView({ ws, children }: { ws: string; children: React.ReactN
         <SpaceDialog open={spaceDialog} onClose={() => setSpaceDialog(false)} />
         <Palette open={palette} onClose={() => setPalette(false)} />
         <PersonHoverLayer />
+        {needType && isAdmin && !skipType && (
+          <BusinessTypeChooser ws={ws} onDone={reload} onClose={() => setSkipType(true)} />
+        )}
       </FoldCtx.Provider>
     </Ctx.Provider>
   )

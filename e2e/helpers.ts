@@ -13,7 +13,8 @@ export function newUser() {
   }
 }
 
-export async function signup(page: Page, u = newUser()) {
+/** The first-run business-type chooser is skipped unless a test wants it. */
+export async function signup(page: Page, u = newUser(), { skipPicker = true } = {}) {
   await page.goto('/signup')
   await page.getByLabel('Your name').fill(u.name)
   await page.getByLabel('Email').fill(u.email)
@@ -21,6 +22,13 @@ export async function signup(page: Page, u = newUser()) {
   await page.getByLabel('Workspace name').fill(`WS ${uniq()}`)
   await page.getByRole('button', { name: 'Sign up' }).click()
   await expect(page).toHaveURL(/\/w\/[0-9a-f-]+$/)
+  if (skipPicker) {
+    await page
+      .getByRole('dialog', { name: /What kind of business/ })
+      .getByRole('button', { name: 'Skip' })
+      .click()
+    await expect(page.getByRole('dialog')).toHaveCount(0)
+  }
   return u
 }
 
