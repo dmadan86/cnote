@@ -102,3 +102,9 @@ only after Lost is chosen and Cancel changes nothing; 44px targets and 16px inpu
 ## Approvals (WP1)
 
 Mobbin refs: Canva "Designs to review" table (https://mobbin.com/screens/476563dd-d2bd-418e-8ddf-8ba75b6130c8), Remote expense approval rule builder (https://mobbin.com/screens/5b8c1fc5-a2a0-4064-9eec-3e22ee6b6596), Square rules cards (https://mobbin.com/screens/89b02f1d-3d90-481c-b8aa-1f0859bc7f16). Codex consult applied: plain action labels, count on "Waiting for me", explicit approve label, labelled rejection field, one-sentence rule summary, per-row switch labels, stacked cards on phones, distinct empty states.
+
+## Company and people (WP5)
+
+- Company settings as sectioned cards with a live preview: HoneyBook company brand page (https://mobbin.com/screens/f5bf6243-f402-43a8-ade4-9e359a7b33a3), Klaviyo company details (https://mobbin.com/screens/af8b74a2-f90f-4a03-a150-dc6e61352ae2).
+- People directory with search and filters: Meetup members (https://mobbin.com/screens/2b3b50f7-c02c-4905-9ffc-b78786087a4d), Square team members with a detail panel (https://mobbin.com/screens/42858659-a933-4138-8494-a62a18d078d3).
+- Design review points applied: names are links (rows are not click targets), edit and confirm in dialogs, Inactive badge plus dimming, "Include inactive" filter, derived state shown beside GSTIN, unsaved-changes indicator, format checks that do not claim to verify registration.

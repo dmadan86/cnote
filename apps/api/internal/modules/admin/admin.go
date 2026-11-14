@@ -176,7 +176,7 @@ func listing(sql string) command.Handler {
 	}
 }
 
-var memberList = listing("select m.user_id::text, u.email, u.name, m.role from core.memberships m join core.users u on u.id=m.user_id order by u.name")
+var memberList = listing("select m.user_id::text, u.email, u.name, m.role from core.memberships m join core.users u on u.id=m.user_id where m.deactivated_at is null order by u.name")
 var agentList = listing("select id::text,name,kind,owner_user_id::text,scopes,created_at from core.agents order by name")
 var keyList = listing("select id::text,name,prefix,agent_id::text,scopes,last_used_at,revoked_at from core.api_keys order by created_at desc")
 var confirmationList = listing("select id::text,command,input,requested_by,status,created_at from core.confirmations where status='pending' and kind='agent' order by created_at desc")

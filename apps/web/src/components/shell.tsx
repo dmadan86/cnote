@@ -9,6 +9,7 @@ import {
   Search,
   Settings,
   Store,
+  UsersRound,
 } from 'lucide-react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
@@ -402,11 +403,20 @@ export function ShellView({ ws, children }: { ws: string; children: React.ReactN
               <Store size={18} />
             </Link>
             <Link
+              href={`${base}/people`}
+              aria-label="People"
+              title="People"
+              aria-current={active('people') ? 'page' : undefined}
+              className="mt-auto rounded-md p-2 text-muted hover:bg-hover aria-[current=page]:bg-hover aria-[current=page]:text-fg"
+            >
+              <UsersRound size={18} />
+            </Link>
+            <Link
               href={`${base}/approvals`}
               aria-label="Approvals"
               title="Approvals"
               aria-current={active('approvals') ? 'page' : undefined}
-              className="mt-auto rounded-md p-2 text-muted hover:bg-hover aria-[current=page]:bg-hover aria-[current=page]:text-fg"
+              className="rounded-md p-2 text-muted hover:bg-hover aria-[current=page]:bg-hover aria-[current=page]:text-fg"
             >
               <ClipboardCheck size={18} />
             </Link>

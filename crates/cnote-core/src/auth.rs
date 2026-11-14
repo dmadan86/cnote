@@ -155,11 +155,12 @@ pub async fn user_principal(
     workspace_id: Uuid,
 ) -> CmdResult<Principal> {
     let mut tx = cnote_db::begin_tenant(pool, workspace_id).await?;
-    let role: Option<String> =
-        sqlx::query_scalar("select role from core.memberships where user_id = $1")
-            .bind(user_id)
-            .fetch_optional(&mut *tx)
-            .await?;
+    let role: Option<String> = sqlx::query_scalar(
+        "select role from core.memberships where user_id = $1 and deactivated_at is null",
+    )
+    .bind(user_id)
+    .fetch_optional(&mut *tx)
+    .await?;
     tx.commit().await?;
     let role = role.ok_or_else(|| CmdError::forbidden("not a member of this workspace"))?;
     Ok(Principal::user(user_id, workspace_id, Role::parse(&role)))
