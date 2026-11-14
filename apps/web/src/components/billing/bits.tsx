@@ -9,7 +9,7 @@ import { cmd } from '@/lib/api'
 export function SubNav({ label, items }: { label: string; items: [href: string, text: string][] }) {
   const path = usePathname()
   return (
-    <nav aria-label={label} className="mb-4 flex gap-1 border-b border-line">
+    <nav aria-label={label} className="mb-4 flex gap-1 overflow-x-auto border-b border-line">
       {items.map(([href, text], i) => {
         const on = i === 0 ? path === href : path.startsWith(href)
         return (
@@ -17,7 +17,7 @@ export function SubNav({ label, items }: { label: string; items: [href: string, 
             key={href}
             href={href}
             aria-current={on ? 'page' : undefined}
-            className="px-3 py-2 text-[13px] text-muted hover:text-fg aria-[current=page]:border-b-2 aria-[current=page]:border-accent aria-[current=page]:font-medium aria-[current=page]:text-fg"
+            className="shrink-0 whitespace-nowrap px-3 py-2 text-[13px] text-muted hover:text-fg aria-[current=page]:border-b-2 aria-[current=page]:border-accent aria-[current=page]:font-medium aria-[current=page]:text-fg"
           >
             {text}
           </Link>

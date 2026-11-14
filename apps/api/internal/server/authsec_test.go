@@ -371,6 +371,9 @@ func (e *env) mfaOn(a acct) bool {
 
 func TestTOTPWindowAndReplay(t *testing.T) {
 	e := sec(t)
+	if time.Now().Unix()%30 > 20 { // the +-2 checks below must not straddle a step boundary
+		time.Sleep(time.Duration(31-time.Now().Unix()%30) * time.Second)
+	}
 	m := e.enrol(e.newAcct("Window", false))
 	cur := nowStep()
 	// the code that confirmed enrolment is spent: the same step cannot sign in

@@ -155,7 +155,7 @@ test('SSO sign-in against a provider configured in workspace settings', async ({
     await page.getByRole('button', { name: 'Add domain' }).click()
     await expect(page.getByTestId('txt-record')).toContainText('cnote-verification=')
     await page.getByRole('button', { name: 'Verify e2e-sso.test' }).click()
-    await expect(page.getByText(/TXT record was not found/)).toBeVisible()
+    await expect(page.getByText(/TXT record was not found/)).toBeVisible({ timeout: 15_000 }) // a real DNS lookup, up to 5s on its own
     // there is no real DNS in this test: publish the proof by marking the domain verified in the database
     execFileSync(
       'psql',

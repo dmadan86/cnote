@@ -5,6 +5,7 @@ import {
   ClipboardCheck,
   FileText,
   Lock,
+  PanelLeft,
   Plus,
   Search,
   Settings,
@@ -270,6 +271,10 @@ export function ShellView({ ws, children }: { ws: string; children: React.ReactN
   const [needType, setNeedType] = useState(false)
   const [skipType, setSkipType] = useState(false)
   const [denied, setDenied] = useState(false)
+  // Phones: the Spaces column is a drawer (closed on every navigation) so pages get the full width.
+  const [spacesOpen, setSpacesOpen] = useState(false)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: close whenever the route changes
+  useEffect(() => setSpacesOpen(false), [path])
   const [tick, setTick] = useState(0)
   const [spaceDialog, setSpaceDialog] = useState(false)
   const [palette, setPalette] = useState(false)
@@ -382,6 +387,16 @@ export function ShellView({ ws, children }: { ws: string; children: React.ReactN
             aria-label="Modules"
             className="flex w-12 shrink-0 flex-col items-center gap-1 border-r border-line bg-side py-2"
           >
+            <button
+              type="button"
+              aria-label="Spaces"
+              aria-expanded={spacesOpen}
+              aria-controls="spaces-panel"
+              onClick={() => setSpacesOpen((o) => !o)}
+              className="grid h-11 w-11 place-items-center rounded-md text-muted hover:bg-hover hover:text-fg md:hidden"
+            >
+              <PanelLeft size={18} aria-hidden />
+            </button>
             {MODULES.filter((m) => moduleOn(modules, m.key)).map((m) => (
               <Link
                 key={m.key}
@@ -435,7 +450,11 @@ export function ShellView({ ws, children }: { ws: string; children: React.ReactN
             </Link>
           </nav>
 
-          <aside aria-label="Spaces" className="flex w-60 shrink-0 flex-col border-r border-line bg-side">
+          <aside
+            id="spaces-panel"
+            aria-label="Spaces"
+            className={`${spacesOpen ? 'fixed inset-y-0 left-12 z-40 flex shadow-lg' : 'hidden'} w-60 shrink-0 flex-col border-r border-line bg-side md:static md:flex md:shadow-none`}
+          >
             <div className="p-2">
               <Menu
                 label="Switch workspace"
