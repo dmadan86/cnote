@@ -182,7 +182,7 @@ func PortalTickets(ctx context.Context, pool *pgxpool.Pool, ws, session string) 
 	if err := tx.QueryRow(ctx, `select name from core.workspaces where id=$1::uuid`, ws).Scan(&name); err != nil {
 		return "", nil, command.DB(err)
 	}
-	rows, err := tx.Query(ctx, `select t.note_id::text, t.number, n.title, t.status, t.created_at, t.description from crm.tickets t join core.notes n on n.id=t.note_id
+	rows, err := tx.Query(ctx, `select t.note_id::text, t.number, n.title, t.status, t.created_at, case when t.source='form' then t.description else '' end from crm.tickets t join core.notes n on n.id=t.note_id
 		where t.contact_id=$1::uuid and n.deleted_at is null order by t.created_at desc limit 50`, contact)
 	if err != nil {
 		return "", nil, command.DB(err)
@@ -198,7 +198,7 @@ func PortalTickets(ctx context.Context, pool *pgxpool.Pool, ws, session string) 
 			return "", nil, command.DB(err)
 		}
 		p.Ref, p.CreatedAt, p.Messages = Ref(p.Number), command.Ts(at), []PortalMessage{}
-		if desc != "" { // what the customer typed into the public form
+		if desc != "" { // only a form ticket's description is the customer's own words; staff-written ones stay internal
 			p.Messages = append(p.Messages, PortalMessage{From: "you", Body: desc, CreatedAt: p.CreatedAt})
 		}
 		byID[id] = len(out)

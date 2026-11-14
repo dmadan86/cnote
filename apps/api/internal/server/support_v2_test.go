@@ -374,6 +374,7 @@ func TestPortalMagicLinkTicketsAndIsolation(t *testing.T) {
 	t.Setenv("SMTP_URL", "smtp://"+sink.ln.Addr().String())
 	t.Setenv("EMAIL_FROM", "support@acme.example.test")
 	b.ok("comment.add", map[string]any{"note_id": mine["id"], "body": "INTERNAL: do not show"})
+	b.sqlArgs("update crm.tickets set description='STAFFNOTE: margin is thin' where note_id=$1::uuid", mine["id"]) // staff-written, source internal
 
 	// off by default: nothing is sent, nothing is revealed
 	r, _ := p.do(ws, "POST", "request", map[string]any{"email": "cust@example.test"}, "")
@@ -418,7 +419,7 @@ func TestPortalMagicLinkTicketsAndIsolation(t *testing.T) {
 			t.Fatalf("%q missing in %s", want, body)
 		}
 	}
-	for _, bad := range []string{"INTERNAL", "Not yours", "TKT-000002", "sla_due_at", "assignee"} {
+	for _, bad := range []string{"INTERNAL", "STAFFNOTE", "Not yours", "TKT-000002", "sla_due_at", "assignee"} {
 		if strings.Contains(body, bad) {
 			t.Fatalf("portal leaks %q: %s", bad, body)
 		}
