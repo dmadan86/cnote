@@ -399,7 +399,7 @@ func sprintComplete(c *command.Ctx, raw json.RawMessage) (any, error) {
 	}
 
 	if _, err := c.Tx.Exec(c.Context,
-		"update projects.sprints set state = 'closed', end_date = coalesce(end_date, current_date) where id = $1::uuid",
+		"update projects.sprints set state = 'closed', end_date = coalesce(end_date, (now() at time zone 'UTC')::date) where id = $1::uuid",
 		s.ID); err != nil {
 		return nil, command.DB(err)
 	}
@@ -559,7 +559,7 @@ func versionRelease(c *command.Ctx, raw json.RawMessage) (any, error) {
 		return nil, err
 	}
 	v, err := scanVersion(c.Tx.QueryRow(c.Context,
-		"update projects.versions set released = true, release_date = coalesce($2::date, current_date)"+
+		"update projects.versions set released = true, release_date = coalesce($2::date, (now() at time zone 'UTC')::date)"+
 			" where id = $1::uuid and not released returning "+versionCols,
 		id, releaseDate))
 	if err == pgx.ErrNoRows {

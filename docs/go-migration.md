@@ -772,7 +772,7 @@ every refusal identical except the tagged-enum commands the test skips, see belo
 
 **Known differences (all in error wording or exotic input, never in status or JSON shape)**
 
-- Tagged enums (automation triggers, workflow definitions): Rust says `expected internally tagged enum Trigger`; Go
+- Tagged and untagged enums (automation triggers, workflow definitions: guards, post actions, `from`): Rust says `expected internally tagged enum Trigger`; Go
   reports the first problem it can see in the other fields, or `invalid input`.
 - The sequence form of a struct (`["<uuid>"]` instead of `{"id": ...}`) works on Rust for every struct; Go accepts it
   only for the endpoints above that declare all-default fields.
@@ -795,3 +795,10 @@ involve the API). New env var: `COLLAB_INTERNAL_SECRET` (API and collab).
 **Still needs Rust:** nothing at run time. Build time: `cnote migrate` runs the SQL migrations (`migrations/`); a Go or
 SQL-only runner is the only thing to write before `crates/` can go. The WebSocket for live editing is the TypeScript
 service. `/collab/*` is forwarded to `RUST_API_URL` only when `COLLAB_URL` is unset.
+
+**Test status at the end of the wave** (full `go test ./internal/server` against the shared Rust server): everything
+passes except `TestSubjectExportCoversEveryReference` (a table added by another branch's migration in the shared
+database) and two kinds of run-dependent noise: date-only differences when a run crosses midnight (IST vs UTC "today")
+in `TestDifferentialBillingWrites` / `TestDifferentialPlanningWrites` / `TestDifferentialProjectItems`.
+The fallback to Rust used to hide handler gaps (for example `Ctx.Call` marshaled a `[]byte` as base64, so approving a
+doc proposal never worked natively); the differential suites found and fixed them, others may remain for inputs no test sends.
