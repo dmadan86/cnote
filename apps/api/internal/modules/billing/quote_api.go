@@ -100,3 +100,9 @@ func NextNumber(c *command.Ctx, series, prefix, fy string) (string, error) {
 
 func FinancialYear(d time.Time) string { return financialYear(d) }
 func TodayIST() time.Time              { return todayIST() }
+
+// WriteRecurringLines shares the validated invoice line representation with recurring templates.
+func WriteRecurringLines(c *command.Ctx, id string, l Lines) error {
+	_, err := writeLinesTo(c, "billing.recurring_invoice_lines", "recurring_invoice_id", id, l.l, nil)
+	return err
+}
