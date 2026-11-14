@@ -42,6 +42,7 @@ func rnd() string {
 
 func newEnv(t *testing.T, extra ...command.Command) *env {
 	t.Helper()
+	t.Setenv("PUBLIC_TRUST_PROXY", "1") // tests pick a client address per request through X-Forwarded-For
 	// Every test client is 127.0.0.1: the per-IP sign-in throttle (WP18) would otherwise lock the whole suite. The
 	// throttle tests set their own values before calling newEnv.
 	for _, k := range []string{"AUTH_IP_FREE", "AUTH_SIGNUP_FREE"} {

@@ -34,8 +34,6 @@ const MaxMailBody = 256 << 10
 
 const sigWindow = 5 * time.Minute
 
-var refRe = regexp.MustCompile(`(?i)\bTKT-(\d{1,9})\b`)
-
 // Sign is the signature a sender (or a provider adapter) computes: hex HMAC-SHA256 over "<unix seconds>.<body>".
 func Sign(secret, ts string, body []byte) string {
 	h := hmac.New(sha256.New, []byte(secret))
@@ -183,7 +181,7 @@ func ReceiveEmail(ctx context.Context, pool *pgxpool.Pool, ws, ts, sig string, b
 		return res, command.DB(err)
 	}
 
-	ticket, number, status, err := threadOf(c, sender, refs, subject)
+	ticket, number, status, err := threadOf(c, sender, refs)
 	if err != nil {
 		return res, err
 	}
@@ -220,9 +218,9 @@ func ReceiveEmail(ctx context.Context, pool *pgxpool.Pool, ws, ts, sig string, b
 	return res, command.DB(tx.Commit(ctx))
 }
 
-// threadOf finds the live ticket this email continues: by a Message-ID it quotes, else by the TKT tag. The sender
-// must be that ticket's contact, so nobody can write into a stranger's ticket by guessing its number.
-func threadOf(c *command.Ctx, sender string, refs []string, subject string) (id string, number int, status string, err error) {
+// threadOf finds the live ticket this email continues by a Message-ID it quotes. The sender must be that ticket's
+// contact. The subject's TKT tag is deliberately not used: From is forgeable and the tag is guessable.
+func threadOf(c *command.Ctx, sender string, refs []string) (id string, number int, status string, err error) {
 	const q = `select t.note_id::text, t.number, t.status from crm.tickets t join core.notes n on n.id=t.note_id join crm.contacts ct on ct.note_id=t.contact_id
 		where n.deleted_at is null and lower(ct.email)=$1 and `
 	scan := func(row pgx.Row) error {
@@ -236,10 +234,6 @@ func threadOf(c *command.Ctx, sender string, refs []string, subject string) (id 
 		if err = scan(c.Tx.QueryRow(c.Context, q+`t.note_id = (select ticket_id from crm.ticket_messages where message_id = any($2) order by created_at desc limit 1)`, sender, refs)); err != nil || id != "" {
 			return
 		}
-	}
-	if m := refRe.FindStringSubmatch(subject); m != nil {
-		n, _ := strconv.Atoi(m[1])
-		err = scan(c.Tx.QueryRow(c.Context, q+`t.number = $2`, sender, n))
 	}
 	return
 }

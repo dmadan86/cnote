@@ -5,7 +5,6 @@ import (
 	"errors"
 	"io"
 	"log/slog"
-	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -13,6 +12,7 @@ import (
 
 	"github.com/cnote/api/internal/command"
 	"github.com/cnote/api/internal/modules/leads"
+	"github.com/cnote/api/internal/modules/publiclinks"
 )
 
 // Public inquiry form: GET /api/public/inquiry/{token} (workspace name for the page) and POST (submit).
@@ -46,13 +46,8 @@ func inquiryLimited(ip string) bool {
 	return len(keep) >= 10
 }
 
-func clientIP(r *http.Request) string {
-	if f := r.Header.Get("X-Forwarded-For"); f != "" {
-		return strings.TrimSpace(strings.Split(f, ",")[0])
-	}
-	h, _, _ := net.SplitHostPort(r.RemoteAddr)
-	return h
-}
+// clientIP is the shared PUBLIC_TRUST_PROXY-aware helper: X-Forwarded-For is ignored unless a proxy is trusted.
+func clientIP(r *http.Request) string { return publiclinks.ClientIP(r) }
 
 func (s *Server) inquiry(w http.ResponseWriter, r *http.Request) {
 	token, ticket := strings.TrimPrefix(r.URL.Path, inquiryPrefix), strings.HasPrefix(r.URL.Path, ticketPrefix)

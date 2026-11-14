@@ -62,7 +62,7 @@ func (i *samlIdP) metadata() string {
 }
 
 // samlReq is what the IdP learns from the redirect.
-type samlReq struct{ ID, ACS, SPEntity string }
+type samlReq struct{ ID, ACS, SPEntity, Nonce string }
 
 type samlOpts struct {
 	sign        string // assertion, response, both, none
@@ -174,15 +174,24 @@ func (e *env) samlStart(slug string) (samlReq, *http.Response) {
 	if err := xml.Unmarshal(xmlb, &ar); err != nil || ar.ID == "" || ar.Dest != loc.Scheme+"://"+loc.Host+loc.Path {
 		e.t.Fatalf("authn request: %v %s", err, xmlb)
 	}
-	return samlReq{ID: ar.ID, ACS: ar.ACS, SPEntity: ar.Issuer}, res
+	return samlReq{ID: ar.ID, ACS: ar.ACS, SPEntity: ar.Issuer, Nonce: cookieOf(res, "cn_saml")}, res
 }
 
 func (e *env) samlPost(rq samlReq, resp string) *http.Response {
+	e.t.Helper()
+	return e.samlPostWith(rq, resp, rq.Nonce)
+}
+
+// samlPostWith is the IdP's form POST arriving from a browser holding this nonce cookie ("" = none).
+func (e *env) samlPostWith(rq samlReq, resp, nonce string) *http.Response {
 	e.t.Helper()
 	u, _ := url.Parse(rq.ACS)
 	req, _ := http.NewRequest("POST", e.gosv.URL+u.Path, strings.NewReader(url.Values{"SAMLResponse": {resp}}.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("X-Forwarded-For", fakeIP())
+	if nonce != "" {
+		req.Header.Set("Cookie", "cn_saml="+nonce)
+	}
 	res, err := noFollow.Do(req)
 	if err != nil {
 		e.t.Fatal(err)
@@ -543,4 +552,34 @@ func (e *env) tcount(ws, q string, args ...any) int {
 		e.t.Fatal(err)
 	}
 	return n
+}
+
+// A valid IdP response is good only in the browser that started the sign-in (login CSRF): no cookie or somebody else's
+// cookie is refused and does not burn the request, and the right one still completes.
+func TestSAMLResponseBoundToStartingBrowser(t *testing.T) {
+	e, idp, _, _, slug := samlWorkspace(t)
+	rq, start := e.samlStart(slug)
+	if rq.Nonce == "" {
+		t.Fatal("no nonce cookie set")
+	}
+	var sc string
+	for _, c := range start.Header.Values("Set-Cookie") {
+		if strings.HasPrefix(c, "cn_saml=") {
+			sc = c
+		}
+	}
+	for _, want := range []string{"HttpOnly", "Path=/api/auth/saml/" + slug + "/acs"} {
+		if !strings.Contains(sc, want) {
+			t.Errorf("cookie %q lacks %s", sc, want)
+		}
+	}
+	other, _ := e.samlStart(slug) // another browser's sign-in has its own nonce
+	resp := idp.response(t, rq, samlOpts{sign: "assertion", email: "bound-" + rnd() + "@corp.test"})
+	for name, nonce := range map[string]string{"no cookie": "", "another browser's cookie": other.Nonce} {
+		res := e.samlPostWith(rq, resp, nonce)
+		if cookieOf(res, "cn_session") != "" || res.StatusCode == 303 && res.Header.Get("Location") == "/" {
+			t.Fatalf("%s: signed in", name)
+		}
+	}
+	samlOK(t, e.samlPost(rq, resp))
 }

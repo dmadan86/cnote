@@ -362,6 +362,19 @@ func (s *Server) sessionRevokeOthers(w http.ResponseWriter, r *http.Request) {
 
 var samlPath = regexp.MustCompile(`^/api/auth/saml/([a-z0-9][a-z0-9-]{0,62})/(?:acs|metadata)$`)
 
+// samlCookie binds a sign-in to the browser that started it. The ACS is a cross-site POST from the IdP, so the cookie
+// needs SameSite=None, which browsers only accept with Secure. That is used when COOKIE_SECURE is set or the public
+// base is https or localhost (Chrome/Firefox accept Secure on http://localhost, which keeps local dev and e2e working).
+// On a plain-http real host the attribute is left out: Firefox/Safari then send it, Chrome only within 2 minutes.
+func samlCookie(base, slug, v string, maxAge int) string {
+	plain := strings.HasPrefix(base, "http://") && !strings.HasPrefix(base, "http://localhost") && !strings.HasPrefix(base, "http://127.0.0.1") && !strings.HasPrefix(base, "http://[::1]")
+	attrs := "; SameSite=None; Secure"
+	if plain && secureAttr() == "" {
+		attrs = ""
+	}
+	return auth.SAMLCookie + "=" + v + "; Path=/api/auth/saml/" + slug + "/acs; HttpOnly; Max-Age=" + strconv.Itoa(maxAge) + attrs
+}
+
 func (s *Server) samlStart(w http.ResponseWriter, r *http.Request) {
 	base, ok := auth.PublicBase(r.Host)
 	if !ok {
@@ -372,11 +385,13 @@ func (s *Server) samlStart(w http.ResponseWriter, r *http.Request) {
 		toLogin(w, r, "too many attempts, try again later")
 		return
 	}
-	to, err := s.Auth.SAMLStart(r.Context(), strings.TrimSpace(r.URL.Query().Get("workspace")), base)
+	slug := strings.TrimSpace(r.URL.Query().Get("workspace"))
+	to, nonce, err := s.Auth.SAMLStart(r.Context(), slug, base)
 	if err != nil {
 		toLogin(w, r, errText(err))
 		return
 	}
+	w.Header().Add("Set-Cookie", samlCookie(base, slug, nonce, 600))
 	w.Header().Set("Cache-Control", "no-store")
 	http.Redirect(w, r, to, http.StatusFound)
 }
@@ -403,7 +418,12 @@ func (s *Server) samlACS(w http.ResponseWriter, r *http.Request, slug string) {
 		toLogin(w, r, "the sign-in response is incomplete or expired")
 		return
 	}
-	_, _, token, err := s.Auth.SAMLFinish(r.Context(), slug, base, r.PostForm.Get("SAMLResponse"))
+	nonce := ""
+	if c, err := r.Cookie(auth.SAMLCookie); err == nil {
+		nonce = c.Value
+	}
+	_, _, token, err := s.Auth.SAMLFinish(r.Context(), slug, base, r.PostForm.Get("SAMLResponse"), nonce)
+	w.Header().Add("Set-Cookie", samlCookie(base, slug, "", 0)) // the nonce is single use, whatever the outcome
 	if err != nil {
 		toLogin(w, r, errText(err))
 		return
