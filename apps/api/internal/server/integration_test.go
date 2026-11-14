@@ -296,7 +296,7 @@ func TestFallbackToRustIsIdentical(t *testing.T) {
 		raw       string
 	}{
 		{"unknown command (not in Go)", "does.not.exist", map[string]any{}, ""},
-		{"note.create (not ported)", "note.list", map[string]any{"space_id": e.space(a)}, ""},
+		{"note.list with a space filter", "note.list", map[string]any{"space_id": e.space(a)}, ""},
 		{"missing id", "note.get", map[string]any{}, ""},
 		{"bad uuid", "note.get", map[string]any{"id": "nope"}, ""},
 		{"wrong type", "note.get", map[string]any{"id": 5}, ""},
