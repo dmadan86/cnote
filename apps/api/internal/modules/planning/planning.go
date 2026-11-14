@@ -1102,11 +1102,8 @@ func validateActions(c *command.Ctx, actions json.RawMessage) error {
 		case "comment":
 			// any body is valid
 		case "command":
-			if a.Name == nil {
-				return command.ErrFallback
-			}
-			// role check would require registry access; handled by Rust for now
-			// (the differential test proves correctness)
+			// shortcut: Rust checks the target command's role, confirmation and group; port that check before handling these in Go
+			return command.ErrFallback
 		default:
 			return command.ErrFallback
 		}

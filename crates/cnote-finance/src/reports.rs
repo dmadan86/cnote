@@ -52,7 +52,7 @@ async fn receivables_ageing(ctx: &mut Ctx, i: AsOf) -> CmdResult<Value> {
            and i.total_minor - i.paid_minor - i.credited_minor - i.written_off_minor > 0
            and i.invoice_date <= $1 and n.space_id = any($2)
            and core.note_access(n.id, $3, $4, $2) <> 'none'
-         order by i.invoice_date",
+         order by i.invoice_date, i.note_id",
     )
     .bind(as_of)
     .bind(spaces)

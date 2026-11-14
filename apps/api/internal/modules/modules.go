@@ -6,13 +6,13 @@ import (
 	"github.com/cnote/api/internal/command"
 	"github.com/cnote/api/internal/modules/admin"
 	"github.com/cnote/api/internal/modules/billing"
-	"github.com/cnote/api/internal/modules/docs"
 	"github.com/cnote/api/internal/modules/crm"
+	"github.com/cnote/api/internal/modules/docs"
 	"github.com/cnote/api/internal/modules/marketplace"
 	"github.com/cnote/api/internal/modules/notes"
 	"github.com/cnote/api/internal/modules/notifications"
-	"github.com/cnote/api/internal/modules/projects"
 	"github.com/cnote/api/internal/modules/planning"
+	"github.com/cnote/api/internal/modules/projects"
 	"github.com/cnote/api/internal/modules/sharing"
 )
 

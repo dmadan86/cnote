@@ -88,7 +88,7 @@ func receivablesAgeing(c *command.Ctx, input json.RawMessage) (any, error) {
 		   and i.total_minor - i.paid_minor - i.credited_minor - i.written_off_minor > 0
 		   and i.invoice_date <= $1::date and n.space_id = any($2::text[]::uuid[])
 		   and core.note_access(n.id, $3::uuid, $4, $2::text[]::uuid[]) <> 'none'
-		 order by i.invoice_date`, asOf, spaces, uid, admin)
+		 order by i.invoice_date, i.note_id`, asOf, spaces, uid, admin)
 	if err != nil {
 		return nil, command.DB(err)
 	}
