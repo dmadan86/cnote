@@ -20,6 +20,7 @@ import (
 	"github.com/cnote/api/internal/modules/marketplace"
 	"github.com/cnote/api/internal/modules/notes"
 	"github.com/cnote/api/internal/modules/notifications"
+	"github.com/cnote/api/internal/modules/oauthapps"
 	"github.com/cnote/api/internal/modules/planning"
 	"github.com/cnote/api/internal/modules/projects"
 	"github.com/cnote/api/internal/modules/publiclinks"
@@ -56,6 +57,7 @@ func Commands() []command.Command {
 	cmds = append(cmds, expenses.Commands()...)
 	cmds = append(cmds, timelog.Commands()...)
 	cmds = append(cmds, hr.Commands()...)
+	cmds = append(cmds, oauthapps.Commands()...)
 	return withMeta(markFinance(approvals.Wire(cmds)))
 }
 

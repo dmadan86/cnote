@@ -27,7 +27,12 @@ func envFloat(k string, def float64) float64 {
 }
 
 func checkRate(key string) error {
-	cap, refill := envFloat("FAIR_USE_BURST", 240), envFloat("FAIR_USE_PER_SEC", 20)
+	return CheckRateWith(key, envFloat("FAIR_USE_BURST", 240), envFloat("FAIR_USE_PER_SEC", 20))
+}
+
+// CheckRateWith is Rust's ratelimit::check_with: the same bucket store with explicit burst and refill per second, for
+// unauthenticated endpoints (OAuth). Returns a RateLimited error when the bucket is empty.
+func CheckRateWith(key string, burst, perSec float64) error {
 	if len(key) > 128 {
 		key = key[:128]
 	}
@@ -43,10 +48,10 @@ func checkRate(key string) error {
 	}
 	b, ok := buckets[key]
 	if !ok {
-		b = &bucket{tokens: cap, last: now}
+		b = &bucket{tokens: burst, last: now}
 		buckets[key] = b
 	}
-	b.tokens = min(b.tokens+now.Sub(b.last).Seconds()*refill, cap)
+	b.tokens = min(b.tokens+now.Sub(b.last).Seconds()*perSec, burst)
 	b.last = now
 	if b.tokens < 1 {
 		return NewError(RateLimited, "fair-use rate limit reached, retry shortly")
