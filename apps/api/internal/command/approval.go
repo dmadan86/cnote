@@ -23,11 +23,12 @@ func (r *Registry) approvalGate(c *Ctx, cmd Command, input json.RawMessage) ([]b
 		return nil, false, nil
 	}
 	var min int64
-	var approver, fallback, role *string
+	var fallback *string
 	var hours *int
+	var ruleSteps []ApprovalStep
 	err := c.Tx.QueryRow(c.Context,
-		`select min_amount_minor, approver_user_id::text, approver_role, fallback_user_id::text, escalate_after_hours
-		   from core.approval_rules where command = $1 and enabled`, cmd.Name).Scan(&min, &approver, &role, &fallback, &hours)
+		`select min_amount_minor, steps, fallback_user_id::text, escalate_after_hours
+		   from core.approval_rules where command = $1 and enabled`, cmd.Name).Scan(&min, &ruleSteps, &fallback, &hours)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, false, nil
 	}
@@ -41,6 +42,13 @@ func (r *Registry) approvalGate(c *Ctx, cmd Command, input json.RawMessage) ([]b
 	if amount < min {
 		return nil, false, nil
 	}
+	steps, err := snapshotSteps(c, ruleSteps, amount, *p.UserID)
+	if err != nil {
+		return nil, false, err
+	}
+	if len(steps) == 0 { // every step's own threshold is above this amount
+		return nil, false, nil
+	}
 	if machine {
 		return nil, false, ErrForbidden("this amount needs a person's approval; ask a workspace member to make the request in C Note")
 	}
@@ -50,18 +58,18 @@ func (r *Registry) approvalGate(c *Ctx, cmd Command, input json.RawMessage) ([]b
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = c.Tx.QueryRow(c.Context,
 			`insert into core.confirmations (workspace_id, command, input, requested_by, kind, note_id, amount_minor,
-			   approver_user_id, fallback_user_id, escalate_at)
+			   approver_user_id, fallback_user_id, escalate_at, steps)
 			 values ($1::uuid,$2,$3,$4,'approval',$5::uuid,$6,$7::uuid,$8::uuid,
-			   case when $9::int is null then null else now() + $9::int * interval '1 hour' end)
+			   case when $9::int is null then null else now() + $9::int * interval '1 hour' end, $10::jsonb)
 			 returning id::text`,
-			p.WorkspaceID, cmd.Name, input, *p.UserID, noteID, amount, approver, fallback, hours).Scan(&id)
+			p.WorkspaceID, cmd.Name, input, *p.UserID, noteID, amount, steps[0].FirstUser(), fallback, hours, steps).Scan(&id)
 		if err != nil {
 			return nil, false, DB(err)
 		}
 		if _, err := c.Emit("approval.requested", &noteID, map[string]any{"approval_id": id, "command": cmd.Name, "amount_minor": amount}); err != nil {
 			return nil, false, err
 		}
-		if err := NotifyApprovers(c, approver, role, "approval_requested", &noteID, *p.UserID); err != nil {
+		if err := steps[0].Notify(c, &noteID, *p.UserID); err != nil {
 			return nil, false, err
 		}
 	} else if err != nil {
@@ -70,6 +78,88 @@ func (r *Registry) approvalGate(c *Ctx, cmd Command, input json.RawMessage) ([]b
 	out, err := Marshal(map[string]any{"approval_required": true, "confirmation_id": id, "amount_minor": amount,
 		"message": cmd.Name + " needs approval; you will be notified when it is decided."})
 	return out, true, err
+}
+
+// ApprovalStep is one link of a chain: the step is done when one approver (mode any) or every approver slot
+// (mode all) has approved. An approver is a role (admin = admins and owners, owner = owners), a named member, or the
+// requester's department head (resolved into a user when the request is opened).
+type ApprovalStep struct {
+	Mode           string             `json:"mode"`
+	MinAmountMinor int64              `json:"min_amount_minor"`
+	Approvers      []ApprovalApprover `json:"approvers"`
+}
+
+type ApprovalApprover struct {
+	Kind   string `json:"kind"`
+	Role   string `json:"role,omitempty"`
+	UserID string `json:"user_id,omitempty"`
+}
+
+// Needed is how many approver slots must approve before the chain moves on.
+func (s ApprovalStep) Needed() int {
+	if s.Mode == "all" {
+		return len(s.Approvers)
+	}
+	return 1
+}
+
+// FirstUser is the named person of the step, shown as "the approver"; nil when it is a role.
+func (s ApprovalStep) FirstUser() *string {
+	for _, a := range s.Approvers {
+		if a.Kind == "user" {
+			return &a.UserID
+		}
+	}
+	return nil
+}
+
+// Notify tells whoever can decide this step, except actor.
+func (s ApprovalStep) Notify(c *Ctx, noteID *string, actor string) error {
+	for _, a := range s.Approvers {
+		var u, r *string
+		if a.Kind == "user" {
+			u = &a.UserID
+		} else {
+			r = &a.Role
+		}
+		if err := NotifyApprovers(c, u, r, "approval_requested", noteID, actor); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// snapshotSteps keeps the steps whose threshold the amount reaches and resolves who each approver is now, so a later
+// rule edit or department change never rewrites a request in flight. A department head who is missing, or is the
+// requester (nobody approves their own request), falls back to the admins.
+func snapshotSteps(c *Ctx, rule []ApprovalStep, amount int64, requester string) ([]ApprovalStep, error) {
+	var head *string
+	if err := c.Tx.QueryRow(c.Context,
+		`select d.head_user_id::text from core.memberships m join core.departments d on d.id = m.department_id
+		  where m.user_id = $1::uuid`, requester).Scan(&head); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return nil, DB(err)
+	}
+	out := []ApprovalStep{}
+	for _, st := range rule {
+		if amount < st.MinAmountMinor {
+			continue
+		}
+		step := ApprovalStep{Mode: st.Mode, MinAmountMinor: st.MinAmountMinor}
+		for _, a := range st.Approvers {
+			if a.Kind == "department_head" {
+				a = ApprovalApprover{Kind: "user"}
+				if head != nil {
+					a.UserID = *head
+				}
+			}
+			if a.Kind == "user" && (a.UserID == "" || a.UserID == requester) {
+				a = ApprovalApprover{Kind: "role", Role: "admin"}
+			}
+			step.Approvers = append(step.Approvers, a)
+		}
+		out = append(out, step)
+	}
+	return out, nil
 }
 
 // NotifyApprovers notifies the named approver, or every owner/admin (owners only for role 'owner'), except actor.

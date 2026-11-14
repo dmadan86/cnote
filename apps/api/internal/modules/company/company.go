@@ -23,7 +23,7 @@ func Commands() []command.Command {
 	member := func(c command.Command) command.Command { c.MinRole = command.Member; return c }
 	del := nc("department.delete", command.GroupDestructive, departmentDelete)
 	del.Confirm = true
-	return []command.Command{
+	return append(branchCommands(), []command.Command{
 		member(nc("company.get", command.GroupRead, companyGet)),
 		admin(nc("company.update", command.GroupAdmin, companyUpdate)),
 		member(nc("department.list", command.GroupRead, departmentList)),
@@ -34,7 +34,7 @@ func Commands() []command.Command {
 		admin(nc("member.update", command.GroupAdmin, memberUpdate)),
 		admin(nc("member.deactivate", command.GroupAdmin, memberDeactivate)),
 		admin(nc("member.reactivate", command.GroupAdmin, memberReactivate)),
-	}
+	}...)
 }
 
 var uuidRe = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
@@ -426,9 +426,11 @@ func peopleList(c *command.Ctx, b json.RawMessage) (any, error) {
 		return nil, err
 	}
 	rows, err := c.Tx.Query(c.Context, `select m.user_id::text, u.email, u.name, m.role, m.department_id::text, d.name,
-		m.manager_user_id::text, mu.name, m.designation, m.phone, m.joined_on::text, m.left_on::text, m.finance_access, m.deactivated_at
+		m.manager_user_id::text, mu.name, m.designation, m.phone, m.joined_on::text, m.left_on::text, m.finance_access, m.deactivated_at,
+		m.branch_id::text, br.name
 		from core.memberships m join core.users u on u.id = m.user_id
 		left join core.departments d on d.id = m.department_id
+		left join core.branches br on br.id = m.branch_id
 		left join core.users mu on mu.id = m.manager_user_id
 		order by (m.deactivated_at is not null), u.name`)
 	if err != nil {
@@ -438,10 +440,10 @@ func peopleList(c *command.Ctx, b json.RawMessage) (any, error) {
 	out := []map[string]any{}
 	for rows.Next() {
 		var uid, email, name, role string
-		var dep, depName, mgr, mgrName, desig, phone, joined, left *string
+		var dep, depName, mgr, mgrName, desig, phone, joined, left, branch, branchName *string
 		var fin bool
 		var deact *time.Time
-		if err := rows.Scan(&uid, &email, &name, &role, &dep, &depName, &mgr, &mgrName, &desig, &phone, &joined, &left, &fin, &deact); err != nil {
+		if err := rows.Scan(&uid, &email, &name, &role, &dep, &depName, &mgr, &mgrName, &desig, &phone, &joined, &left, &fin, &deact, &branch, &branchName); err != nil {
 			return nil, command.DB(err)
 		}
 		var d any
@@ -450,7 +452,7 @@ func peopleList(c *command.Ctx, b json.RawMessage) (any, error) {
 		}
 		out = append(out, map[string]any{"user_id": uid, "email": email, "name": name, "role": role, "department_id": dep, "department": depName,
 			"manager_user_id": mgr, "manager_name": mgrName, "designation": desig, "phone": phone, "joined_on": joined, "left_on": left,
-			"finance_access": fin, "deactivated_at": d})
+			"finance_access": fin, "deactivated_at": d, "branch_id": branch, "branch": branchName})
 	}
 	return out, command.DB(rows.Err())
 }
@@ -534,6 +536,20 @@ func memberUpdate(c *command.Ctx, b json.RawMessage) (any, error) {
 			}
 		}
 		add("department_id", nilIfEmpty(dep))
+	}
+	if br, ok, err := m.id("branch_id", false); err != nil {
+		return nil, err
+	} else if ok {
+		if br != "" {
+			var found bool
+			if err := c.Tx.QueryRow(c.Context, "select exists(select 1 from core.branches where id=$1::uuid)", br).Scan(&found); err != nil {
+				return nil, command.DB(err)
+			}
+			if !found {
+				return nil, command.ErrInvalid("branch not found")
+			}
+		}
+		add("branch_id", nilIfEmpty(br))
 	}
 	if mgr, ok, err := m.id("manager_user_id", false); err != nil {
 		return nil, err

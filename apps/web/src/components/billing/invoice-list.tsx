@@ -3,6 +3,7 @@ import { Plus } from 'lucide-react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useState } from 'react'
+import { BranchSelect, useBranches } from '@/components/company/branch-filter'
 import { NeedSpace } from '@/components/crm/contacts'
 import { useShell } from '@/components/shell'
 import { btn, btnPrimary, ErrorText, Field, inputCls, Modal, Pill } from '@/components/ui'
@@ -14,6 +15,27 @@ import { type Contact, type Invoice, money, STATUS_LABEL, STATUS_TONE } from './
 export const StatusPill = ({ status }: { status: string }) => (
   <Pill tone={STATUS_TONE[status]}>{STATUS_LABEL[status] ?? status}</Pill>
 )
+
+/** Which branch raises the invoice; its GSTIN and state apply. Hidden until a branch exists. */
+function BranchPick({ ws }: { ws: string }) {
+  const { branches } = useBranches(ws)
+  if (!branches.length) return null
+  return (
+    <Field label="Branch">
+      {(id) => (
+        <select id={id} name="branch" className={inputCls}>
+          <option value="">My branch or head office</option>
+          {branches.map((b) => (
+            <option key={b.id} value={b.id}>
+              {b.name}
+              {b.gstin ? ` (${b.gstin})` : ''}
+            </option>
+          ))}
+        </select>
+      )}
+    </Field>
+  )
+}
 
 function NewInvoice({ onClose }: { onClose: () => void }) {
   const { ws, spaces } = useShell()
@@ -35,6 +57,7 @@ function NewInvoice({ onClose }: { onClose: () => void }) {
                 description: 'Services',
                 unit_price_minor: 0,
               },
+              String(new FormData(e.currentTarget).get('branch') ?? '') || undefined,
             )
             router.push(`/w/${ws}/billing/${id}`)
           } catch (x) {
@@ -42,6 +65,7 @@ function NewInvoice({ onClose }: { onClose: () => void }) {
           }
         }}
       >
+        <BranchPick ws={ws} />
         <Field label="Customer">
           {(id) => (
             <select id={id} name="contact" required className={inputCls}>
@@ -80,7 +104,11 @@ function NewInvoice({ onClose }: { onClose: () => void }) {
 export function InvoiceList() {
   const { ws, spaces } = useShell()
   const [adding, setAdding] = useState(false)
-  const { data: all, error } = useCmd<Invoice[]>(ws, 'invoice.list', { limit: 500 })
+  const [branch, setBranch] = useState('')
+  const { data: all, error } = useCmd<Invoice[]>(ws, 'invoice.list', {
+    limit: 500,
+    ...(branch && { branch_id: branch }),
+  })
   // home tiles link here with ?filter=outstanding|overdue
   const filter = useSearchParams().get('filter')
   const data =
@@ -97,7 +125,8 @@ export function InvoiceList() {
   const names = new Map(contacts.data?.map((c) => [c.id, c.name]))
   return (
     <div>
-      <div className="mb-3 flex">
+      <div className="mb-3 flex items-center gap-2">
+        <BranchSelect ws={ws} value={branch} onChange={setBranch} />
         <button
           type="button"
           className={`${btnPrimary} ml-auto`}

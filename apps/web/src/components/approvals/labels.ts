@@ -15,6 +15,13 @@ export type Approval = {
   decided_at: string | null
   can_decide: boolean
   can_cancel: boolean
+  step: number
+  steps: {
+    mode: string
+    min_amount_minor: number
+    approvers: { kind: string; role?: string; user_id?: string }[]
+  }[]
+  decisions: { step: number; slot: number; user_id: string; name: string }[]
 }
 
 export const ACTION: Record<string, string> = {

@@ -56,7 +56,7 @@ func WriteQuoteLines(c *command.Ctx, quoteID string, l Lines, tax *QuoteTax) (in
 // ComputeQuoteTax needs the workspace GSTIN. The place of supply is the given one, else the contact's state,
 // else the state of the buyer GSTIN.
 func ComputeQuoteTax(c *command.Ctx, l Lines, place, contactID, buyer *string, reverse bool) (QuoteTax, error) {
-	s, err := loadSeller(c)
+	s, err := loadSeller(c, nil)
 	if err != nil {
 		return QuoteTax{}, err
 	}

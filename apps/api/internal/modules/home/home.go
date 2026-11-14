@@ -6,6 +6,7 @@ package home
 
 import (
 	"encoding/json"
+	"regexp"
 	"slices"
 	"sort"
 	"strconv"
@@ -97,6 +98,16 @@ func summary(c *command.Ctx, input json.RawMessage) (any, error) {
 	}
 	today := billing.TodayIST().Format("2006-01-02")
 	base := []any{spaces, uid, admin, today} // $4 = today (IST)
+	// Optional branch filter: only the invoice-based money tiles have a branch; everything else stays company-wide.
+	var branch *string
+	if raw, ok := o["branch_id"]; ok && string(raw) != "null" {
+		var b string
+		if json.Unmarshal(raw, &b) != nil || !regexp.MustCompile(`^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$`).MatchString(b) {
+			return nil, command.ErrInvalid("branch_id must be a uuid")
+		}
+		branch = &b
+	}
+	invBase := append(append([]any{}, base...), branch)
 	tiles := map[string]any{}
 	r := &run{c: c}
 	var overdueTasks, overdueInvoices int64
@@ -188,16 +199,16 @@ func summary(c *command.Ctx, input json.RawMessage) (any, error) {
 		// receivables outstanding, as report.receivables_ageing counts them
 		const out = `(i.total_minor - i.paid_minor - i.credited_minor - i.written_off_minor)`
 		const iw = ` from billing.invoices i join core.notes n on n.id = i.note_id
-			 where i.kind = 'invoice' and i.status in ('issued','irn_generated','sent','partly_paid') and ` + out + ` > 0 and`
+			 where i.kind = 'invoice' and i.status in ('issued','irn_generated','sent','partly_paid') and ` + out + ` > 0 and ($5::uuid is null or i.branch_id = $5::uuid) and`
 		var cnt, total, oc, om int64
 		if err := c.Tx.QueryRow(c.Context, `select count(*), coalesce(sum(`+out+`),0)::bigint, count(*) filter (where i.due_date < $4::date),
-			   coalesce(sum(`+out+`) filter (where i.due_date < $4::date),0)::bigint`+iw+vis, base...).Scan(&cnt, &total, &oc, &om); err != nil {
+			   coalesce(sum(`+out+`) filter (where i.due_date < $4::date),0)::bigint`+iw+vis, invBase...).Scan(&cnt, &total, &oc, &om); err != nil {
 			return nil, command.DB(err)
 		}
 		overdueInvoices = oc
 		tiles["payments_pending"] = map[string]any{"count": cnt, "total_minor": total, "overdue_count": oc, "overdue_minor": om}
 		if err := r.add(`select n.id::text, coalesce(i.number,'Draft'), coalesce((select title from core.notes where id = i.contact_id),''), i.due_date::text, `+out+`, ($4::date - i.due_date)`+
-			iw+` i.due_date < $4::date and`+vis+` order by i.due_date, `+out+` desc limit 10`, base,
+			iw+` i.due_date < $4::date and`+vis+` order by i.due_date, `+out+` desc limit 10`, invBase,
 			func(rs pgx.Rows) (Item, error) {
 				it := Item{Kind: "invoice", Severity: "overdue"}
 				var num, contact, d string
@@ -266,7 +277,8 @@ func summary(c *command.Ctx, input json.RawMessage) (any, error) {
 	}
 	// human approval requests this person can decide (WP1): admins every one, others those naming them; never their own unless owner
 	if role >= command.Member && uid != nil {
-		const dw = ` from core.confirmations f where f.status = 'pending' and f.kind = 'approval' and ($1 or f.approver_user_id = $2::uuid)
+		const dw = ` from core.confirmations f where f.status = 'pending' and f.kind = 'approval' and ($1 or f.approver_user_id = $2::uuid
+			   or exists (select 1 from jsonb_array_elements(f.steps -> f.step_idx -> 'approvers') a where a ->> 'user_id' = $2::text))
 			 and (f.requested_by <> $2::text or $3)`
 		args := []any{admin, uid, role == command.Owner}
 		if err := c.Tx.QueryRow(c.Context, "select count(*)"+dw, args...).Scan(&decisions); err != nil {

@@ -82,6 +82,7 @@ type in struct {
 	From        *string `json:"from"`
 	To          *string `json:"to"`
 	Limit       *int64  `json:"limit"`
+	BranchID    string  `json:"branch_id"`
 }
 
 func decode(raw json.RawMessage) (in, error) {
@@ -89,7 +90,7 @@ func decode(raw json.RawMessage) (in, error) {
 	if err := json.Unmarshal(raw, &v); err != nil {
 		return v, command.ErrInvalid("invalid input")
 	}
-	for _, id := range []string{v.ID, v.SpaceID} {
+	for _, id := range []string{v.ID, v.SpaceID, v.BranchID} {
 		if id != "" && !uuidRe.MatchString(id) {
 			return v, command.ErrInvalid("invalid id")
 		}
@@ -155,11 +156,12 @@ type row struct {
 	ReimbursedAt   *command.Ts `json:"reimbursed_at"`
 	SpaceID        string      `json:"space_id"`
 	CreatedAt      command.Ts  `json:"created_at"`
+	BranchID       *string     `json:"branch_id"`
 }
 
 const cols = `e.note_id::text, n.title, e.kind, e.status, e.spent_on::text, e.category, coalesce(a.name, e.category), e.account_code, e.amount_minor,
 	e.gst_minor, e.vendor_name, n.content_md, e.paid_by_user_id::text, u.name, e.method, e.reference, e.submitted_at, e.decided_by::text,
-	e.decided_at, e.decision_reason, e.reimbursed_at, n.space_id::text, e.created_at`
+	e.decided_at, e.decision_reason, e.reimbursed_at, n.space_id::text, e.created_at, e.branch_id::text`
 
 const from = ` from billing.expenses e join core.notes n on n.id = e.note_id left join core.users u on u.id = e.paid_by_user_id
 	left join billing.accounts a on a.code = e.account_code `
@@ -170,7 +172,7 @@ func scan(r pgx.Row) (row, error) {
 	var created time.Time
 	err := r.Scan(&x.ID, &x.Title, &x.Kind, &x.Status, &x.SpentOn, &x.Category, &x.CategoryLabel, &x.AccountCode, &x.AmountMinor, &x.GSTMinor,
 		&x.VendorName, &x.Description, &x.PaidByUserID, &x.PaidByName, &x.Method, &x.Reference, &sub, &x.DecidedBy, &dec, &x.DecisionReason,
-		&reimb, &x.SpaceID, &created)
+		&reimb, &x.SpaceID, &created, &x.BranchID)
 	x.SubmittedAt, x.DecidedAt, x.ReimbursedAt, x.CreatedAt = command.TsPtr(sub), command.TsPtr(dec), command.TsPtr(reimb), command.Ts(created)
 	return x, err
 }
@@ -325,6 +327,7 @@ type draftFields struct {
 	vendor, desc             *string
 	method                   string
 	reference                *string
+	branch                   string
 }
 
 func parseDraft(c *command.Ctx, v in) (draftFields, error) {
@@ -349,7 +352,7 @@ func parseDraft(c *command.Ctx, v in) (draftFields, error) {
 	if v.Method != nil && strings.TrimSpace(*v.Method) != "" {
 		d.method = strings.TrimSpace(*v.Method)
 	}
-	d.space = v.SpaceID
+	d.space, d.branch = v.SpaceID, v.BranchID
 	return d, nil
 }
 
@@ -360,6 +363,14 @@ func insertExpense(c *command.Ctx, kind, status string, d draftFields, claimant 
 			return "", err
 		}
 	}
+	var explicit *string
+	if d.branch != "" {
+		explicit = &d.branch
+	}
+	branch, err := billing.ResolveBranch(c, explicit)
+	if err != nil {
+		return "", err
+	}
 	label, _, _ := categoryOf(d.category)
 	note, err := notes.InsertNote(c, d.space, titleOf(label, d.amount, d.vendor), nil, d.desc, []string{"expense"})
 	if err != nil {
@@ -367,10 +378,10 @@ func insertExpense(c *command.Ctx, kind, status string, d draftFields, claimant 
 	}
 	if _, err := c.Tx.Exec(c.Context,
 		`insert into billing.expenses (note_id, workspace_id, kind, status, spent_on, category, account_code, amount_minor, gst_minor,
-		   vendor_name, paid_by_user_id, method, reference)
-		 values ($1::uuid,$2::uuid,$3,$4,$5::date,$6,$7,$8,$9,$10,$11::uuid,$12,$13)`,
+		   vendor_name, paid_by_user_id, method, reference, branch_id)
+		 values ($1::uuid,$2::uuid,$3,$4,$5::date,$6,$7,$8,$9,$10,$11::uuid,$12,$13,$14::uuid)`,
 		note.ID, c.WorkspaceID(), kind, status, d.spent.Format("2006-01-02"), d.category, d.account, d.amount, d.gst,
-		nilStr(d.vendor), claimant, d.method, nilStr(d.reference)); err != nil {
+		nilStr(d.vendor), claimant, d.method, nilStr(d.reference), nilStr(branch)); err != nil {
 		return "", command.DB(err)
 	}
 	if claimant != nil { // a claim is private to the claimant and the admins who decide it
@@ -684,8 +695,9 @@ func list(c *command.Ctx, input json.RawMessage) (any, error) {
 		   and ($1 or e.paid_by_user_id = $2::uuid or (e.kind = 'direct' and $3))
 		   and ($4::text is null or e.status = $4 or ($4 = 'open' and e.status in ('submitted','approved')))
 		   and ($5::text is null or e.kind = $5) and ($6::date is null or e.spent_on >= $6::date) and ($7::date is null or e.spent_on <= $7::date)
+		   and ($9::text = '' or e.branch_id = $9::uuid)
 		 order by e.spent_on desc, e.created_at desc, e.note_id limit $8`,
-		c.Principal.Role >= command.Admin, c.Principal.UserID, fin, nilStr(v.Status), nilStr(v.Kind), nilStr(v.From), nilStr(v.To), lim)
+		c.Principal.Role >= command.Admin, c.Principal.UserID, fin, nilStr(v.Status), nilStr(v.Kind), nilStr(v.From), nilStr(v.To), lim, v.BranchID)
 	if err != nil {
 		return nil, command.DB(err)
 	}

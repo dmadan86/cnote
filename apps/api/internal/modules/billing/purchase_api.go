@@ -31,7 +31,7 @@ func WriteLines(c *command.Ctx, table, col, id string, l Lines, tax *QuoteTax) (
 
 // WorkspaceState is the workspace's GSTIN and state: where input tax credit is claimed.
 func WorkspaceState(c *command.Ctx) (gstin, state string, err error) {
-	s, err := loadSeller(c)
+	s, err := loadSeller(c, nil)
 	return s.gstin, s.state, err
 }
 

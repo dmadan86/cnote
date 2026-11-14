@@ -44,10 +44,12 @@ export async function newDraft(
   spaceId: string,
   contactId: string,
   line: { description: string; unit_price_minor: number },
+  branchId?: string,
 ) {
   const d = await run<{ id: string }>(ws, 'invoice.create_draft', {
     space_id: spaceId,
     contact_id: contactId,
+    ...(branchId && { branch_id: branchId }),
     lines: [{ ...line, gst_rate_bp: 1800 }],
   })
   return d.id

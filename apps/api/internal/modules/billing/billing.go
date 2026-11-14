@@ -93,6 +93,7 @@ type invoiceRow struct {
 	IRNCancelledAt    *command.Ts `json:"irn_cancelled_at"`
 	IssuedAt          *command.Ts `json:"issued_at"`
 	CancelledAt       *command.Ts `json:"cancelled_at"`
+	BranchID          *string     `json:"branch_id"`
 	ackTime           *time.Time  // not serialized
 }
 
@@ -103,7 +104,7 @@ func (i invoiceRow) outstanding() int64 {
 const invCols = `i.note_id::text, i.kind, i.number, i.status, i.contact_id::text, i.original_invoice_id::text, i.currency::text,
 	i.supplier_gstin, i.supplier_state, i.buyer_gstin, i.place_of_supply, i.reverse_charge, i.invoice_date::text, i.due_date::text,
 	i.subtotal_minor, i.cgst_minor, i.sgst_minor, i.igst_minor, i.total_minor, i.paid_minor, i.credited_minor,
-	i.written_off_minor, i.irn, i.ack_no, i.ack_date, i.signed_qr, i.irn_cancelled_at, i.issued_at, i.cancelled_at`
+	i.written_off_minor, i.irn, i.ack_no, i.ack_date, i.signed_qr, i.irn_cancelled_at, i.issued_at, i.cancelled_at, i.branch_id::text`
 
 func scanInvoice(row pgx.Row) (invoiceRow, error) {
 	var r invoiceRow
@@ -111,7 +112,7 @@ func scanInvoice(row pgx.Row) (invoiceRow, error) {
 	err := row.Scan(&r.ID, &r.Kind, &r.Number, &r.Status, &r.ContactID, &r.OriginalInvoiceID, &r.Currency,
 		&r.SupplierGSTIN, &r.SupplierState, &r.BuyerGSTIN, &r.PlaceOfSupply, &r.ReverseCharge, &r.InvoiceDate, &r.DueDate,
 		&r.SubtotalMinor, &r.CGSTMinor, &r.SGSTMinor, &r.IGSTMinor, &r.TotalMinor, &r.PaidMinor, &r.CreditedMinor,
-		&r.WrittenOffMinor, &r.IRN, &r.AckNo, &ack, &r.SignedQR, &irnC, &issued, &canc)
+		&r.WrittenOffMinor, &r.IRN, &r.AckNo, &ack, &r.SignedQR, &irnC, &issued, &canc, &r.BranchID)
 	r.AckDate, r.IRNCancelledAt, r.IssuedAt, r.CancelledAt = command.TsPtr(ack), command.TsPtr(irnC), command.TsPtr(issued), command.TsPtr(canc)
 	r.ackTime = ack
 	return r, err
@@ -403,12 +404,21 @@ func (s settingsMap) boolean(k string) (bool, bool) {
 
 type settingsMap map[string]json.RawMessage
 
-func loadSeller(c *command.Ctx) (seller, error) {
+// loadSeller is the supplier on a document: the branch's own GSTIN and state when the document belongs to a branch
+// that has one, else the workspace's.
+func loadSeller(c *command.Ctx, branchID *string) (seller, error) {
 	m, err := workspaceSettings(c)
 	if err != nil {
 		return seller{}, err
 	}
 	s := settingsMap(m)
+	aato, _ := s.boolean("aato_above_10cr")
+	if branchID != nil {
+		var g, st *string
+		if err := c.Tx.QueryRow(c.Context, "select gstin, state_code from core.branches where id = $1::uuid", *branchID).Scan(&g, &st); err == nil && g != nil && st != nil {
+			return seller{*g, *st, aato}, nil
+		}
+	}
 	g, ok := s.str("gstin")
 	if !ok {
 		return seller{}, command.ErrInvalid("set the workspace GSTIN (workspace.update settings.gstin) before issuing invoices")
@@ -424,7 +434,6 @@ func loadSeller(c *command.Ctx) (seller, error) {
 	if err := validateState(state); err != nil {
 		return seller{}, gstErrToCmd(err)
 	}
-	aato, _ := s.boolean("aato_above_10cr")
 	return seller{g, state, aato}, nil
 }
 
@@ -511,6 +520,10 @@ func invoiceCreateDraft(c *command.Ctx, input json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	branchIn, err := o.optUUID("branch_id")
+	if err != nil {
+		return nil, err
+	}
 
 	lines, err := parseLines(rawLines)
 	if err != nil {
@@ -524,6 +537,10 @@ func invoiceCreateDraft(c *command.Ctx, input json.RawMessage) (any, error) {
 		if err := validateState(*place); err != nil {
 			return nil, gstErrToCmd(err)
 		}
+	}
+	branch, err := ResolveBranch(c, branchIn)
+	if err != nil {
+		return nil, err
 	}
 	date := fmtDate(todayIST())
 	if invDate != nil {
@@ -544,9 +561,9 @@ func invoiceCreateDraft(c *command.Ctx, input json.RawMessage) (any, error) {
 	}
 	if _, err := c.Tx.Exec(c.Context,
 		`insert into billing.invoices (note_id, workspace_id, kind, status, contact_id, buyer_gstin, place_of_supply,
-		   reverse_charge, invoice_date, due_date)
-		 values ($1::uuid,$2::uuid,'invoice','draft',$3::uuid,$4,$5,$6,$7::date,coalesce($8::date, $7::date + 30))`,
-		noteID, c.WorkspaceID(), contactID, nilStr(ci.gstin), nilStr(pos), rc, date, nilStr(dueDate)); err != nil {
+		   reverse_charge, invoice_date, due_date, branch_id)
+		 values ($1::uuid,$2::uuid,'invoice','draft',$3::uuid,$4,$5,$6,$7::date,coalesce($8::date, $7::date + 30),$9::uuid)`,
+		noteID, c.WorkspaceID(), contactID, nilStr(ci.gstin), nilStr(pos), rc, date, nilStr(dueDate), nilStr(branch)); err != nil {
 		return nil, command.DB(err)
 	}
 	subtotal, err := writeLines(c, noteID, lines, nil)
@@ -598,6 +615,10 @@ func invoiceUpdateDraft(c *command.Ctx, input json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	branchIn, err := o.optUUID("branch_id")
+	if err != nil {
+		return nil, err
+	}
 
 	if _, err := access.AssertNoteAccess(c, id, true); err != nil {
 		return nil, err
@@ -614,6 +635,12 @@ func invoiceUpdateDraft(c *command.Ctx, input json.RawMessage) (any, error) {
 			return nil, gstErrToCmd(err)
 		}
 	}
+	var branch *string
+	if branchIn != nil {
+		if branch, err = ResolveBranch(c, branchIn); err != nil {
+			return nil, err
+		}
+	}
 	var buyer, contactState *string
 	if contactID != nil {
 		ci, err := loadContact(c, *contactID)
@@ -625,8 +652,9 @@ func invoiceUpdateDraft(c *command.Ctx, input json.RawMessage) (any, error) {
 	if _, err := c.Tx.Exec(c.Context,
 		`update billing.invoices set contact_id = coalesce($2::uuid, contact_id), buyer_gstin = case when $2::uuid is null then buyer_gstin else $3::text end,
 		   place_of_supply = coalesce($4::text, $5::text, place_of_supply), reverse_charge = coalesce($6::boolean, reverse_charge),
-		   invoice_date = coalesce($7::date, invoice_date), due_date = coalesce($8::date, due_date) where note_id = $1::uuid`,
-		id, nilStr(contactID), nilStr(buyer), nilStr(place), nilStr(contactState), reverse, nilStr(invDate), nilStr(dueDate)); err != nil {
+		   invoice_date = coalesce($7::date, invoice_date), due_date = coalesce($8::date, due_date), branch_id = coalesce($9::uuid, branch_id)
+		 where note_id = $1::uuid`,
+		id, nilStr(contactID), nilStr(buyer), nilStr(place), nilStr(contactState), reverse, nilStr(invDate), nilStr(dueDate), nilStr(branch)); err != nil {
 		return nil, command.DB(err)
 	}
 	if haveLines {
@@ -747,6 +775,10 @@ func invoiceList(c *command.Ctx, input json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	branch, err := o.optUUID("branch_id")
+	if err != nil {
+		return nil, err
+	}
 	limit, err := o.optInt("limit", 64, false)
 	if err != nil {
 		return nil, err
@@ -765,8 +797,9 @@ func invoiceList(c *command.Ctx, input json.RawMessage) (any, error) {
 		 where n.deleted_at is null and n.space_id = any($1::text[]::uuid[]) and ($2::text is null or i.status = $2)
 		   and core.note_access(n.id, $6::uuid, $7, $1::text[]::uuid[]) <> 'none'
 		   and ($3::uuid is null or i.contact_id = $3::uuid) and ($4::text is null or i.kind = $4)
+		   and ($8::uuid is null or i.branch_id = $8::uuid)
 		 order by n.created_at desc limit $5`,
-		spaces, nilStr(status), nilStr(contact), nilStr(kind), lim, uid, admin)
+		spaces, nilStr(status), nilStr(contact), nilStr(kind), lim, uid, admin, nilStr(branch))
 	if err != nil {
 		return nil, command.DB(err)
 	}
@@ -847,7 +880,7 @@ func invoicePreview(c *command.Ctx, input json.RawMessage) (any, error) {
 	if inv.Status != "draft" {
 		return nil, command.ErrConflict("only a draft can be previewed")
 	}
-	s, err := loadSeller(c)
+	s, err := loadSeller(c, inv.BranchID)
 	if err != nil {
 		return nil, err
 	}
@@ -877,7 +910,7 @@ func invoiceIssue(c *command.Ctx, input json.RawMessage) (any, error) {
 	if inv.Kind != "invoice" || inv.Status != "draft" {
 		return nil, command.ErrConflict("only a draft invoice can be issued")
 	}
-	s, err := loadSeller(c)
+	s, err := loadSeller(c, inv.BranchID)
 	if err != nil {
 		return nil, err
 	}
@@ -960,7 +993,7 @@ func invoiceGenerateIRN(c *command.Ctx, input json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	s, err := loadSeller(c)
+	s, err := loadSeller(c, inv.BranchID)
 	if err != nil {
 		return nil, err
 	}
@@ -1066,10 +1099,10 @@ func issueCreditNote(c *command.Ctx, orig invoiceRow, lines []ln, reason string)
 	date := todayIST()
 	if _, err := c.Tx.Exec(c.Context,
 		`insert into billing.invoices (note_id, workspace_id, kind, status, contact_id, original_invoice_id, supplier_gstin,
-		   supplier_state, buyer_gstin, place_of_supply, reverse_charge, invoice_date)
-		 values ($1::uuid,$2::uuid,'credit_note','draft',$3::uuid,$4::uuid,$5,$6,$7,$8,$9,$10::date)`,
+		   supplier_state, buyer_gstin, place_of_supply, reverse_charge, invoice_date, branch_id)
+		 values ($1::uuid,$2::uuid,'credit_note','draft',$3::uuid,$4::uuid,$5,$6,$7,$8,$9,$10::date,$11::uuid)`,
 		noteID, c.WorkspaceID(), nilStr(orig.ContactID), orig.ID, nilStr(orig.SupplierGSTIN), sstate, nilStr(orig.BuyerGSTIN),
-		place, orig.ReverseCharge, fmtDate(date)); err != nil {
+		place, orig.ReverseCharge, fmtDate(date), nilStr(orig.BranchID)); err != nil {
 		return invoiceRow{}, command.DB(err)
 	}
 	if _, err := writeLines(c, noteID, lines, &tax); err != nil {
