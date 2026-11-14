@@ -41,7 +41,7 @@ func (o obj) str(k string, required bool) (*string, error) {
 		return nil, nil
 	}
 	var s string
-	if json.Unmarshal(v, &s) != nil || strings.ContainsRune(s, '�') {
+	if json.Unmarshal(v, &s) != nil {
 		return nil, command.ErrFallback
 	}
 	return &s, nil
@@ -138,11 +138,6 @@ func (o obj) types(k string) ([]string, error) {
 	if json.Unmarshal(v, &out) != nil || out == nil {
 		return nil, command.ErrFallback
 	}
-	for _, s := range out {
-		if strings.ContainsRune(s, '�') {
-			return nil, command.ErrFallback
-		}
-	}
 	return out, nil
 }
 
@@ -156,7 +151,7 @@ func (o obj) optValue(k string) (json.RawMessage, error) {
 	dec := json.NewDecoder(bytes.NewReader(v))
 	dec.UseNumber()
 	var any any
-	if dec.Decode(&any) != nil || !plainStrings(any) {
+	if dec.Decode(&any) != nil {
 		return nil, command.ErrFallback
 	}
 	if plainNumbers(any) {
@@ -169,34 +164,11 @@ func (o obj) optValue(k string) (json.RawMessage, error) {
 	return out, nil
 }
 
-// plainStrings: no U+FFFD anywhere (invalid UTF-8 never reaches a Rust String).
-func plainStrings(v any) bool {
-	switch x := v.(type) {
-	case string:
-		return !strings.ContainsRune(x, '\uFFFD')
-	case []any:
-		for _, e := range x {
-			if !plainStrings(e) {
-				return false
-			}
-		}
-	case map[string]any:
-		for k, e := range x {
-			if strings.ContainsRune(k, '\uFFFD') || !plainStrings(e) {
-				return false
-			}
-		}
-	}
-	return true
-}
-
 func plainNumbers(v any) bool {
 	switch x := v.(type) {
 	case json.Number:
 		n, err := strconv.ParseInt(x.String(), 10, 64)
 		return err == nil && x.String() != "-0" && (n != 0 || x.String() == "0")
-	case string:
-		return !strings.ContainsRune(x, '�')
 	case []any:
 		for _, e := range x {
 			if !plainNumbers(e) {
@@ -204,8 +176,8 @@ func plainNumbers(v any) bool {
 			}
 		}
 	case map[string]any:
-		for k, e := range x {
-			if strings.ContainsRune(k, '�') || !plainNumbers(e) {
+		for _, e := range x {
+			if !plainNumbers(e) {
 				return false
 			}
 		}

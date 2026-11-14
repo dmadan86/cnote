@@ -49,7 +49,7 @@ func EmptySequence(name string, input json.RawMessage) json.RawMessage {
 }
 
 // Generic is what Describe returns when it cannot tell.
-const Generic = "invalid input"
+const Generic = "unsupported value"
 
 type walker struct {
 	defs map[string]any
@@ -83,7 +83,10 @@ func Describe(name string, schema json.RawMessage, input json.RawMessage) string
 	obj, ok := v.(map[string]any)
 	if !ok {
 		if arr, isArr := v.([]any); isArr {
-			return w.sequence(sc, structName, nfields, arr)
+			if e, ok := table()[name]; ok && len(e) > 4 && e[4] == true { // #[serde(flatten)]: no sequence form
+				return fmt.Sprintf("invalid type: sequence, expected struct %s", structName)
+			}
+			return w.sequence(name, sc, structName, nfields, arr)
 		}
 		if structName == "" {
 			return Generic
@@ -98,7 +101,7 @@ func Describe(name string, schema json.RawMessage, input json.RawMessage) string
 
 // sequence is serde's positional form of a struct: element i is field i in declaration order. The required fields
 // are known in that order (the schema's `required`); optional ones follow alphabetically, which is a guess.
-func (w *walker) sequence(sc map[string]any, structName string, nfields int, arr []any) string {
+func (w *walker) sequence(name string, sc map[string]any, structName string, nfields int, arr []any) string {
 	props, _ := sc["properties"].(map[string]any)
 	var order []string
 	seen := map[string]bool{}
@@ -132,7 +135,13 @@ func (w *walker) sequence(sc map[string]any, structName string, nfields int, arr
 	case len(arr) > nfields:
 		return fmt.Sprintf("invalid length %d, expected fewer elements in array", len(arr))
 	case len(arr) < required && structName != "":
-		return fmt.Sprintf("invalid length %d, expected struct %s with %d element%s", len(arr), structName, nfields, plural(nfields))
+		n := len(arr)
+		if e, ok := table()[name]; ok && len(e) > 3 {
+			if k, ok := e[3].(float64); ok && n <= int(k) { // the first required field comes after defaulted ones
+				n = int(k)
+			}
+		}
+		return fmt.Sprintf("invalid length %d, expected struct %s with %d element%s", n, structName, nfields, plural(nfields))
 	}
 	return Generic
 }
@@ -390,7 +399,7 @@ func intCheck(format string, v any) string {
 	if !ok {
 		return fmt.Sprintf("invalid type: %s, expected %s", unexpected(v), t.name)
 	}
-	if strings.ContainsAny(string(n), ".eE") {
+	if strings.ContainsAny(string(n), ".eE") || string(n) == "-0" { // serde reads "-0" as the float -0.0
 		return fmt.Sprintf("invalid type: %s, expected %s", unexpected(v), t.name)
 	}
 	var err error
@@ -419,7 +428,7 @@ func unexpected(v any) string {
 		return fmt.Sprintf("boolean `%t`", x)
 	case json.Number:
 		s := string(x)
-		if !strings.ContainsAny(s, ".eE") {
+		if !strings.ContainsAny(s, ".eE") && s != "-0" {
 			if _, err := strconv.ParseInt(s, 10, 64); err == nil {
 				return "integer `" + s + "`"
 			}
@@ -467,7 +476,7 @@ func debugStr(s string) string {
 	return b.String()
 }
 
-// NormalizeUUIDs rewrites every uuid-format string of the input that is a valid but non-canonical spelling (upper
+// NormalizeUUIDs (and dates) rewrites every uuid-format string of the input that is a valid but non-canonical spelling (upper
 // case, simple, braced, urn) to the canonical lowercase hyphenated one, as serde's Uuid does while deserializing, so
 // handlers can match one spelling. Input that is not an object or has nothing to change is returned untouched.
 func NormalizeUUIDs(schema, input json.RawMessage) json.RawMessage {
@@ -518,8 +527,14 @@ func (w *walker) norm(s any, v *any, depth int) bool {
 	}
 	switch x := (*v).(type) {
 	case string:
-		if m["format"] == "uuid" {
+		switch m["format"] {
+		case "uuid":
 			if c, bad := uuidparse.Parse(x); bad == "" && c != x {
+				*v = c
+				return true
+			}
+		case "date": // chrono accepts 2031-2-3; handlers match YYYY-MM-DD
+			if c, bad := parseChronoDate(x); bad == "" && c != x {
 				*v = c
 				return true
 			}
@@ -551,6 +566,12 @@ func (w *walker) norm(s any, v *any, depth int) bool {
 
 // chronoDate is the error NaiveDate::from_str ("%Y-%m-%d") gives, "" for a valid date.
 func chronoDate(s string) string {
+	_, msg := parseChronoDate(s)
+	return msg
+}
+
+// parseChronoDate returns the date in YYYY-MM-DD form (years 0..9999 only; others come back unchanged) or chrono's error.
+func parseChronoDate(s string) (string, string) {
 	const (
 		invalid = "input contains invalid characters"
 		short   = "premature end of input"
@@ -589,33 +610,36 @@ func chronoDate(s string) string {
 	}
 	y, msg := number(1, maxYear)
 	if msg != "" {
-		return msg
+		return "", msg
 	}
 	if msg = dash(); msg != "" {
-		return msg
+		return "", msg
 	}
 	m, msg := number(1, 2)
 	if msg != "" {
-		return msg
+		return "", msg
 	}
 	if msg = dash(); msg != "" {
-		return msg
+		return "", msg
 	}
 	d, msg := number(1, 2)
 	if msg != "" {
-		return msg
+		return "", msg
 	}
 	if i < len(s) {
-		return "trailing input"
+		return "", "trailing input"
 	}
 	if neg {
 		y = -y
 	}
 	if m < 1 || m > 12 || d < 1 || d > 31 || y > 262143 || y < -262144 {
-		return "input is out of range"
+		return "", "input is out of range"
 	}
 	if d > time.Date(y, time.Month(m)+1, 0, 0, 0, 0, 0, time.UTC).Day() {
-		return "no possible date and time matching input"
+		return "", "input is out of range"
 	}
-	return ""
+	if y < 0 || y > 9999 {
+		return s, ""
+	}
+	return fmt.Sprintf("%04d-%02d-%02d", y, m, d), ""
 }

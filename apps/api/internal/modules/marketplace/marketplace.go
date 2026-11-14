@@ -60,7 +60,7 @@ func (i input) str(k string, optional, def bool) (*string, error) {
 		return nil, nil
 	}
 	var s string
-	if string(b) == "null" || json.Unmarshal(b, &s) != nil || strings.ContainsRune(s, '�') {
+	if string(b) == "null" || json.Unmarshal(b, &s) != nil {
 		return nil, command.ErrFallback
 	}
 	return &s, nil
@@ -400,9 +400,6 @@ func save(c *command.Ctx, i input) (any, error) {
 		return nil, command.ErrInvalid("scopes must include read")
 	}
 	for _, s := range scopes {
-		if strings.ContainsRune(s, '�') {
-			return nil, command.ErrFallback
-		}
 		if !slices.Contains([]string{"read", "write_notes", "write_items", "manage_crm", "manage_invoices", "send_messages"}, s) {
 			return nil, command.ErrInvalid("scope " + s + " cannot be granted to apps")
 		}

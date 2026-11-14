@@ -17,6 +17,7 @@ import (
 	"strings"
 	"sync"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -324,6 +325,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	m, ok := parseMessage(buf)
+	if !utf8.Valid(buf) {
+		ok = false // serde refuses invalid UTF-8; Go's decoder would repair it
+	}
 	if !ok {
 		s.decline(w, r, buf) // protocol corner cases: bad JSON, unrecognized messages, responses, unknown methods
 		return
@@ -334,9 +338,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	} else if len(vs) == 1 && m.method == "initialize" && vs[0] != m.initVersion {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
-		b, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": json.RawMessage(m.id), "error": map[string]any{"code": -32600,
-			"message": "Invalid Request: MCP-Protocol-Version header (" + vs[0] + ") does not match initialize params.protocolVersion (" + m.initVersion + ")"}})
-		_, _ = w.Write(b)
+		jsonRPCStatus400(w, m.id, -32600, "Invalid Request: MCP-Protocol-Version header ("+vs[0]+") does not match initialize params.protocolVersion ("+m.initVersion+")")
 		return
 	}
 	if m.notification {
@@ -746,11 +748,6 @@ func (s *Server) discover(w http.ResponseWriter, id json.RawMessage, args map[st
 
 func isObjectRaw(b json.RawMessage) bool { return len(b) > 0 && b[0] == '{' }
 
-func unsupportedVersion(w http.ResponseWriter) {
-	w.Header().Set("Connection", "close")
-	w.WriteHeader(http.StatusBadRequest)
-}
-
 // versionHeader answers a request whose MCP-Protocol-Version is not one of the legacy lifecycles: an unknown value
 // is refused like rmcp does; 2026-07-28 (request-metadata lifecycle, elicitation round trips) is not served here.
 func versionHeader(w http.ResponseWriter, r *http.Request, id json.RawMessage, vs []string) {
@@ -760,10 +757,7 @@ func versionHeader(w http.ResponseWriter, r *http.Request, id json.RawMessage, v
 		if r.Header.Get("Mcp-Method") != "" {
 			code, msg = -32600, "the 2026-07-28 request-metadata lifecycle is not supported; use MCP-Protocol-Version 2025-11-25"
 		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		b, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": json.RawMessage(id), "error": map[string]any{"code": code, "message": msg}})
-		_, _ = w.Write(b)
+		jsonRPCStatus400(w, id, code, msg)
 		return
 	}
 	text(w, http.StatusBadRequest, "Bad Request: Unsupported MCP-Protocol-Version: "+v)
@@ -825,13 +819,10 @@ func (s *Server) decline(w http.ResponseWriter, r *http.Request, buf []byte) {
 	}
 	if meta, has := params["_meta"]; has && bytes.Contains(meta, []byte("io.modelcontextprotocol/protocolVersion")) {
 		if len(r.Header.Values("MCP-Protocol-Version")) == 0 {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusBadRequest)
-			b, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": json.RawMessage(id), "error": map[string]any{"code": -32020, "message": "request _meta protocolVersion requires MCP-Protocol-Version header"}})
-			_, _ = w.Write(b)
+			jsonRPCStatus400(w, id, -32020, "request _meta protocolVersion requires MCP-Protocol-Version header")
 			return
 		}
-		unsupportedVersion(w)
+		versionHeader(w, r, id, r.Header.Values("MCP-Protocol-Version"))
 		return
 	}
 	respondErr(w, id, -32601, name)
@@ -841,4 +832,15 @@ func rpcStateless(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusBadRequest)
 	_, _ = io.WriteString(w, `{"jsonrpc":"2.0","error":{"code":-32600,"message":"stateless server does not accept JSON-RPC responses"}}`)
+}
+
+// jsonRPCStatus400 is a 400 JSON-RPC error with the member order rmcp writes (jsonrpc, id, error).
+func jsonRPCStatus400(w http.ResponseWriter, id json.RawMessage, code int, msg string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusBadRequest)
+	e, _ := json.Marshal(struct {
+		Code    int    `json:"code"`
+		Message string `json:"message"`
+	}{code, msg})
+	_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":` + string(id) + `,"error":` + string(e) + `}`))
 }

@@ -22,7 +22,7 @@ func TestDescribe(t *testing.T) {
 		`{"id":` + id + `,"source":"csv","batch":1.5}`:        "invalid type: floating point `1.5`, expected u32",
 		`{"id":` + id + `,"source":"csv","batch":1e20}`:       "invalid type: floating point `1e+20`, expected u32",
 		`{"id":` + id + `,"source":"csv","tags":["a",1]}`:     "invalid type: integer `1`, expected a string",
-		`{"id":` + id + `,"source":"csv","day":"2026-02-30"}`: "no possible date and time matching input",
+		`{"id":` + id + `,"source":"csv","day":"2026-02-30"}`: "input is out of range",
 		`{"id":` + id + `,"source":"csv","day":"x"}`:          "input contains invalid characters",
 		`{"id":` + id + `,"source":"csv","day":"2026-01"}`:    "premature end of input",
 		`{"id":` + id + `,"source":"csv","day":7}`:            "invalid type: integer `7`, expected a formatted date string",

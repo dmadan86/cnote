@@ -182,8 +182,9 @@ func (o jobj) optValue(k string) (json.RawMessage, error) {
 	if !ok {
 		return nil, nil
 	}
-	if !plainJSON(v) {
+	out, ok := serdeJSON(v)
+	if !ok {
 		return nil, command.ErrFallback
 	}
-	return v, nil
+	return out, nil
 }

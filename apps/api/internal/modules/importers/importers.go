@@ -7,7 +7,6 @@ package importers
 
 import (
 	"encoding/json"
-	"strings"
 
 	"github.com/cnote/api/internal/access"
 	"github.com/cnote/api/internal/command"
@@ -123,7 +122,7 @@ func csvMapping(o notes.Obj) (map[string]*string, error) {
 		out[k] = nil
 		if v, ok := m[k]; ok && string(v) != "null" {
 			var s string
-			if json.Unmarshal(v, &s) != nil || strings.ContainsRune(s, '�') {
+			if json.Unmarshal(v, &s) != nil {
 				return nil, command.ErrFallback
 			}
 			out[k] = &s
@@ -148,7 +147,7 @@ func jiraLive(o notes.Obj) (*[4]string, error) {
 	var out [4]string
 	for i, k := range []string{"base_url", "email", "api_token", "jql"} {
 		v, ok := m[k]
-		if !ok || json.Unmarshal(v, &out[i]) != nil || string(v) == "null" || strings.ContainsRune(out[i], '�') {
+		if !ok || json.Unmarshal(v, &out[i]) != nil || string(v) == "null" {
 			return nil, command.ErrFallback
 		}
 	}

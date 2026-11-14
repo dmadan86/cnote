@@ -41,7 +41,7 @@ func (o obj) optStr(k string) (*string, error) {
 		return nil, nil
 	}
 	var s string
-	if json.Unmarshal(v, &s) != nil || strings.ContainsRune(s, '�') {
+	if json.Unmarshal(v, &s) != nil {
 		return nil, command.ErrFallback
 	}
 	return &s, nil
@@ -164,36 +164,37 @@ func (o obj) reqDate(k string) (string, error) {
 	return *s, nil
 }
 
-var plainNumRe = regexp.MustCompile(`^-?\d+(\.\d+)?$`)
+var numRe = regexp.MustCompile(`^-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?$`)
 
-// quantity is Option<serde_json::Number> whose to_string() feeds rust_decimal. Integers print as written; any
-// fraction goes through f64 and ryu (2.50 -> "2.5", 1.0 -> "1.0"). Exponents, long mantissas and tiny values
-// fall back so the text stays identical.
+// quantityText is Option<serde_json::Number> whose to_string() feeds rust_decimal: integers print as written,
+// every other number goes through f64 and ryu, and rust_decimal reads the result back (2.50 -> "2.5", 1.0 ->
+// "1.0", 1e-7 -> "0.0000001", 1e16 -> "10000000000000000").
 func quantityText(raw json.RawMessage) (string, error) {
 	t := string(bytes.TrimSpace(raw))
-	if !plainNumRe.MatchString(t) {
+	if !numRe.MatchString(t) {
 		return "", command.ErrFallback
 	}
-	digits := strings.TrimLeft(strings.NewReplacer("-", "", ".", "").Replace(t), "0")
-	if len(digits) > 15 {
-		return "", command.ErrFallback
-	}
-	if !strings.Contains(t, ".") {
-		if t == "-0" {
-			return "-0.0", nil
+	if !strings.ContainsAny(t, ".eE") && t != "-0" {
+		if _, err := strconv.ParseInt(t, 10, 64); err == nil {
+			return t, nil
 		}
-		return t, nil
+		if _, err := strconv.ParseUint(t, 10, 64); err == nil {
+			return t, nil
+		}
 	}
 	f, err := strconv.ParseFloat(t, 64)
-	if err != nil || (f != 0 && math.Abs(f) < 1e-3) || math.Abs(f) >= 1e15 {
+	if err != nil || math.IsInf(f, 0) {
 		return "", command.ErrFallback
 	}
-	s := strconv.FormatFloat(f, 'f', -1, 64)
-	if !strings.Contains(s, ".") {
-		s += ".0"
+	if f == 0 {
+		if math.Signbit(f) {
+			return "-0.0", nil
+		}
+		return "0.0", nil
 	}
-	if f == 0 && math.Signbit(f) {
-		s = "-0.0"
+	s := strconv.FormatFloat(f, 'f', -1, 64)
+	if a := math.Abs(f); a < 1e16 && !strings.Contains(s, ".") {
+		s += ".0"
 	}
 	return s, nil
 }

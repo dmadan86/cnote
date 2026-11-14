@@ -326,15 +326,17 @@ func TestB2CLLimitSwitchesOn2024Aug1(t *testing.T) {
 }
 
 func TestQuantityText(t *testing.T) {
-	for in, w := range map[string]string{"2.5": "2.5", "2.50": "2.5", "1.0": "1.0", "10": "10", "-0": "-0.0", "0.5": "0.5", "10.00": "10.0"} {
+	for in, w := range map[string]string{"2.5": "2.5", "2.50": "2.5", "1.0": "1.0", "10": "10", "-0": "-0.0", "0.5": "0.5", "10.00": "10.0",
+		"1e2": "100.0", "2.5e0": "2.5", "1E2": "100.0", "0.00001": "0.00001", "1e-7": "0.0000001", "1e15": "1000000000000000.0", "1e16": "10000000000000000",
+		"12345678901234567890": "12345678901234567890", "0.1234567890123456789": "0.12345678901234568"} {
 		got, err := quantityText([]byte(in))
 		if err != nil || got != w {
 			t.Fatalf("%s: %q %v", in, got, err)
 		}
 	}
-	for _, in := range []string{"1e2", "0.00001", "0.1234567890123456", "12345678901234567890"} {
+	for _, in := range []string{`"2"`, "1e999", "x", "true"} { // not a number, or not a finite f64: serde refuses it
 		if _, err := quantityText([]byte(in)); err == nil {
-			t.Fatalf("%s should fall back", in)
+			t.Fatalf("%s should be refused", in)
 		}
 	}
 }
