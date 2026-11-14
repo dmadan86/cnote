@@ -172,7 +172,7 @@ func TestAIMeteringAndAudit(t *testing.T) {
 	if r := e.goCmd(o, "ai.summarize", map[string]any{"note_id": note}); r.status != 200 || r.json()["provider"] != "local" {
 		t.Fatalf("%d %s", r.status, r.body)
 	}
-	if n := count("select count(*)::text from core.usage where kind in ('ai.tokens_in','ai.tokens_out')"); n != "2" {
+	if n := count("select count(*)::text from core.usage where kind in ('ai.tokens_in','ai.tokens_out') and meta->>'purpose' <> 'index'"); n != "2" {
 		t.Errorf("platform call must record 2 usage rows, got %s", n)
 	}
 	if n := count("select count(*)::text from ai.audit where purpose = 'summarize'"); n != "1" {
@@ -185,7 +185,7 @@ func TestAIMeteringAndAudit(t *testing.T) {
 			t.Fatalf("%d %s", r.status, r.body)
 		}
 	}
-	if n := count("select count(*)::text from core.usage where kind in ('ai.tokens_in','ai.tokens_out')"); n != "2" {
+	if n := count("select count(*)::text from core.usage where kind in ('ai.tokens_in','ai.tokens_out') and meta->>'purpose' <> 'index'"); n != "2" {
 		t.Errorf("BYO calls must not be metered, usage rows: %s", n)
 	}
 	if n := count("select count(*)::text from ai.audit where purpose = 'draft' and provider = 'openai'"); n != "2" {

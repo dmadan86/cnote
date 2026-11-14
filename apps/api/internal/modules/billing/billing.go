@@ -94,7 +94,7 @@ type invoiceRow struct {
 	IRNCancelledAt    *command.Ts `json:"irn_cancelled_at"`
 	IssuedAt          *command.Ts `json:"issued_at"`
 	CancelledAt       *command.Ts `json:"cancelled_at"`
-	BranchID          *string     `json:"branch_id"`
+	BranchID          *string     `json:"branch_id,omitempty"`
 	ackTime           *time.Time  // not serialized
 }
 
