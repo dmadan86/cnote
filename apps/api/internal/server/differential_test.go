@@ -46,6 +46,9 @@ func TestDifferential(t *testing.T) {
 		_ = name
 		calls = append(calls, call{"note.get", map[string]any{"id": id}}, call{"note.history", map[string]any{"id": id}})
 	}
+	for _, name := range []string{"member.list", "agent.list", "apikey.list", "workspace.get", "confirmation.list"} {
+		calls = append(calls, call{name, map[string]any{}})
+	}
 	ran := 0
 	for cname, c := range callers {
 		for _, k := range calls {
