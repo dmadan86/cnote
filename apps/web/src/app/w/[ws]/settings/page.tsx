@@ -1,5 +1,6 @@
 'use client'
-import { useState } from 'react'
+import { useSearchParams } from 'next/navigation'
+import { useEffect, useState } from 'react'
 import { BusinessTypePicker } from '@/components/business-type'
 import { HooksTab } from '@/components/hooks-settings'
 import { Secret } from '@/components/secret'
@@ -387,6 +388,12 @@ function UsageTab({ ws }: { ws: string }) {
 export default function Settings() {
   const { ws } = useShell()
   const [tab, setTab] = useState<TabName>('Workspace')
+  // home tile: /settings?tab=Confirmations
+  const want = useSearchParams().get('tab')
+  useEffect(() => {
+    const t = TABS.find((x) => x === want)
+    if (t) setTab(t)
+  }, [want])
   return (
     <div className="mx-auto max-w-3xl px-6 py-8">
       <h1 className="mb-4 text-xl font-semibold">Settings</h1>
