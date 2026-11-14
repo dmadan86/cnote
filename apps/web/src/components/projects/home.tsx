@@ -1,7 +1,7 @@
 'use client'
 import { Plus } from 'lucide-react'
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { useState } from 'react'
 import { useShell } from '@/components/shell'
 import { btn, btnPrimary, ErrorText, Field, inputCls, Modal, Pill } from '@/components/ui'
@@ -75,6 +75,17 @@ export function ProjectsHome() {
   const mine = spaces.filter((s) => PROJECT_TEMPLATES.includes(s.template))
   // One query for all counts: items are few per workspace page, and the API caps at 200 anyway.
   const items = useCmd<Item[]>(ws, 'item.list', { limit: 200 })
+  // home tile: ?due=me lists my open items due today or earlier (the same rule as the tile)
+  const dueMe = useSearchParams().get('due') === 'me'
+  const mineDue = useCmd<Item[]>(
+    ws,
+    'item.list',
+    {
+      limit: 50,
+      cnql: `assignee = currentUser() AND statusCategory != "Done" AND due <= ${new Date().toISOString().slice(0, 10)} ORDER BY due ASC`,
+    },
+    dueMe,
+  )
   const count = (id: string, open: boolean) =>
     (items.data ?? []).filter(
       (i) => i.space_id === id && !i.triage && (!open || i.status_category !== 'done'),
@@ -94,6 +105,24 @@ export function ProjectsHome() {
           <Plus size={14} /> New project
         </button>
       </div>
+      {dueMe && (
+        <section aria-labelledby="due-me" className="rounded-lg border border-line p-4">
+          <h2 id="due-me" className="mb-2 text-[13px] font-semibold text-muted">
+            My tasks due or overdue
+          </h2>
+          {mineDue.data?.length === 0 && <p className="text-muted">Nothing due. You are caught up.</p>}
+          <ul className="space-y-1">
+            {mineDue.data?.map((i) => (
+              <li key={i.id} className="flex gap-2">
+                <Link href={`/w/${ws}/projects/${i.key}`} className="min-w-0 flex-1 truncate hover:underline">
+                  <span className="text-muted">{i.key}</span> {i.title}
+                </Link>
+                <span className="text-[13px] text-muted">{i.due_date}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
       {mine.length === 0 && (
         <p className="text-muted">No projects yet. Create one to start tracking items.</p>
       )}

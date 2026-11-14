@@ -1,7 +1,7 @@
 'use client'
 import { Plus, Trash2 } from 'lucide-react'
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { use, useState } from 'react'
 import { NeedSpace } from '@/components/crm/contacts'
 import { useShell } from '@/components/shell'
@@ -9,6 +9,7 @@ import { btn, btnPrimary, ErrorText, Field, inputCls, Modal, Pill } from '@/comp
 import { useCmd } from '@/lib/hooks'
 import { Confirm, run } from './bits'
 import { Totals } from './editor'
+import { FilterBanner } from './filter'
 import { type Contact, type Line, money, parseMinor, toRupees } from './fmt'
 
 type Quote = {
@@ -98,7 +99,8 @@ function NewQuote({ onClose }: { onClose: () => void }) {
 export function QuoteList() {
   const { ws, spaces } = useShell()
   const [adding, setAdding] = useState(false)
-  const { data, error } = useCmd<Quote[]>(ws, 'quote.list', { limit: 500 })
+  const status = useSearchParams().get('status') // home tile: ?status=sent
+  const { data, error } = useCmd<Quote[]>(ws, 'quote.list', { limit: 500, ...(status ? { status } : {}) })
   const contacts = useCmd<Contact[]>(ws, 'contact.list', { limit: 500 })
   const names = new Map(contacts.data?.map((c) => [c.id, c.name]))
   return (
@@ -113,10 +115,11 @@ export function QuoteList() {
           <Plus size={14} /> New quote
         </button>
       </div>
+      {status && <FilterBanner label={`${status} quotes`} href={`/w/${ws}/billing/quotes`} />}
       <ErrorText error={error} />
       {!spaces.length && <NeedSpace />}
       {data?.length === 0 && spaces.length > 0 && (
-        <p className="py-8 text-center text-muted">No quotes yet.</p>
+        <p className="py-8 text-center text-muted">{status ? 'Nothing matches.' : 'No quotes yet.'}</p>
       )}
       {!!data?.length && (
         <table className="w-full text-left text-[14px]">

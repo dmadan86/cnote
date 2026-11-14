@@ -1,4 +1,5 @@
 'use client'
+import { HomeDashboard } from '@/components/home/dashboard'
 import { PageList } from '@/components/page-list'
 import { useShell } from '@/components/shell'
 import { btnPrimary } from '@/components/ui'
@@ -16,7 +17,7 @@ export default function Home() {
         (n.verify_by && new Date(n.verify_by).getTime() - Date.now() < REVIEW_WINDOW_MS)),
   )
   return (
-    <div className="mx-auto max-w-3xl space-y-8 px-6 py-8">
+    <div className="mx-auto max-w-4xl space-y-8 px-6 py-8">
       <h1 className="text-xl font-semibold">Welcome back, {me.user.name.split(' ')[0]}</h1>
       {spaces.length === 0 && (
         <div className="rounded-md border border-dashed border-line p-6 text-center">
@@ -26,6 +27,7 @@ export default function Home() {
           </button>
         </div>
       )}
+      {spaces.length > 0 && <HomeDashboard />}
       <section aria-labelledby="review">
         <h2 id="review" className="mb-2 text-[13px] font-semibold text-muted">
           Needs your review

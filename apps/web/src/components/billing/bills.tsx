@@ -1,7 +1,7 @@
 'use client'
 import { Plus, Trash2 } from 'lucide-react'
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { use, useState } from 'react'
 import { NeedSpace } from '@/components/crm/contacts'
 import { useShell } from '@/components/shell'
@@ -9,6 +9,7 @@ import { btn, btnPrimary, ErrorText, Field, inputCls, Modal, Pill } from '@/comp
 import { useCmd } from '@/lib/hooks'
 import { Confirm, run } from './bits'
 import { Totals } from './editor'
+import { FilterBanner } from './filter'
 import { type Line, money, parseMinor, toRupees } from './fmt'
 
 type Vendor = { id: string; name: string; outstanding_minor: number }
@@ -114,12 +115,20 @@ export function BillList() {
   const [adding, setAdding] = useState(false)
   const [status, setStatus] = useState('')
   const { data: all, error } = useCmd<Bill[]>(ws, 'bill.list', { limit: 500 })
-  const data = all?.filter((b) => !status || b.status === status)
+  // home tile: ?due=soon is unpaid bills due within 7 days or overdue
+  const soon = useSearchParams().get('due') === 'soon'
   const today = new Date().toISOString().slice(0, 10)
+  const limit = new Date(Date.now() + 7 * 86400_000).toISOString().slice(0, 10)
+  const data = all?.filter(
+    (b) =>
+      (!status || b.status === status) &&
+      (!soon || (['recorded', 'partly_paid'].includes(b.status) && b.due_date <= limit)),
+  )
   const vendors = useCmd<Vendor[]>(ws, 'vendor.list', {})
   const names = new Map(vendors.data?.map((v) => [v.id, v.name]))
   return (
     <div>
+      {soon && <FilterBanner label="bills due within 7 days or overdue" href={`/w/${ws}/billing/bills`} />}
       <div className="mb-3 flex gap-2">
         <select
           aria-label="Filter by status"

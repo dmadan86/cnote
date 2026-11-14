@@ -1,13 +1,14 @@
 'use client'
 import { Plus } from 'lucide-react'
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { useState } from 'react'
 import { NeedSpace } from '@/components/crm/contacts'
 import { useShell } from '@/components/shell'
 import { btn, btnPrimary, ErrorText, Field, inputCls, Modal, Pill } from '@/components/ui'
 import { useCmd } from '@/lib/hooks'
 import { newDraft } from './bits'
+import { FilterBanner, today } from './filter'
 import { type Contact, type Invoice, money, STATUS_LABEL, STATUS_TONE } from './fmt'
 
 export const StatusPill = ({ status }: { status: string }) => (
@@ -79,7 +80,19 @@ function NewInvoice({ onClose }: { onClose: () => void }) {
 export function InvoiceList() {
   const { ws, spaces } = useShell()
   const [adding, setAdding] = useState(false)
-  const { data, error } = useCmd<Invoice[]>(ws, 'invoice.list', { limit: 500 })
+  const { data: all, error } = useCmd<Invoice[]>(ws, 'invoice.list', { limit: 500 })
+  // home tiles link here with ?filter=outstanding|overdue
+  const filter = useSearchParams().get('filter')
+  const data =
+    filter === 'outstanding' || filter === 'overdue'
+      ? all?.filter(
+          (i) =>
+            i.kind === 'invoice' &&
+            ['issued', 'irn_generated', 'sent', 'partly_paid'].includes(i.status) &&
+            i.total_minor - i.paid_minor - i.credited_minor > 0 &&
+            (filter === 'outstanding' || (!!i.due_date && i.due_date < today())),
+        )
+      : all
   const contacts = useCmd<Contact[]>(ws, 'contact.list', { limit: 500 })
   const names = new Map(contacts.data?.map((c) => [c.id, c.name]))
   return (
@@ -94,10 +107,18 @@ export function InvoiceList() {
           <Plus size={14} /> New invoice
         </button>
       </div>
+      {data !== all && (
+        <FilterBanner
+          label={filter === 'overdue' ? 'overdue invoices' : 'unpaid invoices'}
+          href={`/w/${ws}/billing`}
+        />
+      )}
       <ErrorText error={error} />
       {!spaces.length && <NeedSpace />}
       {data?.length === 0 && spaces.length > 0 && (
-        <p className="py-8 text-center text-muted">No invoices yet.</p>
+        <p className="py-8 text-center text-muted">
+          {data !== all ? 'Nothing matches.' : 'No invoices yet.'}
+        </p>
       )}
       {!!data?.length && (
         <table className="w-full text-left text-[14px]">
