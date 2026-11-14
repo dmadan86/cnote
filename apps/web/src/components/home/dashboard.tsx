@@ -17,6 +17,7 @@ type Summary = {
     follow_ups?: { count: number; overdue: number }
     approvals?: { count: number; confirmations: number; quotes_awaiting: number; to_approve: number }
     bills_due?: { count: number; total_minor: number; overdue_count: number }
+    tickets_breaching?: { count: number }
     people_present?: { present: number; expected: number; on_leave: number; not_marked: number }
     urgent?: { count: number; overdue_tasks: number; overdue_invoices: number }
   }
@@ -163,6 +164,16 @@ export function HomeDashboard() {
         value={String(t.follow_ups.count)}
         detail={t.follow_ups.count ? 'Due today or earlier' : 'Nothing due'}
         alert={t.follow_ups.overdue ? `${t.follow_ups.overdue} overdue` : undefined}
+      />
+    ),
+    t.tickets_breaching && (
+      <TileLink
+        key="tkt"
+        href={`${base}/crm/tickets?filter=breached`}
+        label="Tickets breaching SLA"
+        value={String(t.tickets_breaching.count)}
+        detail={t.tickets_breaching.count ? 'Past their due time' : 'All within SLA'}
+        alert={t.tickets_breaching.count ? 'Needs attention' : undefined}
       />
     ),
     t.people_present && (
