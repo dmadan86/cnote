@@ -474,14 +474,16 @@ func TestReceiptRefundCanBeHeldByApprovalRule(t *testing.T) {
 	admin := b.addMember(b.owner, b.signup("Ada", false), "admin")
 	b.rule(map[string]any{"command": "receipt.refund", "min_amount_minor": 10_000})
 	rid := b.receipt(map[string]any{"amount_minor": 50_000})["id"].(string)
+	// the rule looks at the receipt's amount, so refunding a large advance in small parts can't slip under it
 	small := b.okAs(admin, "receipt.refund", map[string]any{"id": rid, "amount_minor": 9_999})
-	eq(t, small["kind"], "refund")
-	held := b.okAs(admin, "receipt.refund", map[string]any{"id": rid, "amount_minor": 20_000})
-	eq(t, held["approval_required"], true)
-	eq(t, n(held["amount_minor"]), int64(20_000))
+	eq(t, small["approval_required"], true)
+	eq(t, n(small["amount_minor"]), int64(50_000))
+	eq(t, n(b.ok("receipt.get", map[string]any{"id": rid})["refunded_minor"]), int64(0))
+	b.ok("approval.decide", map[string]any{"id": small["confirmation_id"], "decision": "approve"})
 	eq(t, n(b.ok("receipt.get", map[string]any{"id": rid})["refunded_minor"]), int64(9_999))
-	b.ok("approval.decide", map[string]any{"id": held["confirmation_id"], "decision": "approve"})
-	eq(t, n(b.ok("receipt.get", map[string]any{"id": rid})["refunded_minor"]), int64(29_999))
+	// below the rule's threshold nothing is held
+	other := b.receipt(map[string]any{"amount_minor": 5_000})["id"].(string)
+	eq(t, b.okAs(admin, "receipt.refund", map[string]any{"id": other, "amount_minor": 1_000})["kind"], "refund")
 	b.assertTBZero()
 }
 
