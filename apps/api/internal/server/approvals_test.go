@@ -188,10 +188,10 @@ func TestApprovalAgentsAndConfirmationsStayApart(t *testing.T) {
 	key := b.apiKey(b.owner)
 	b.errAs(key, "approval.rule_set", map[string]any{"command": "quote.send"}, 403, "forbidden")
 	q := b.quote(b.contact, "")
-	// an API key is a machine: it gets the agent confirmation, not an approval request
-	r := b.okAs(key, "quote.send", map[string]any{"id": q})
-	eq(t, r["confirmation_required"], true)
-	eq(t, r["approval_required"], nil)
+	// a machine at or above the threshold is refused: it can't open an approval request, and its own confirmation
+	// could be decided by the member who owns it
+	b.errAs(key, "quote.send", map[string]any{"id": q}, 403, "forbidden")
+	eq(t, b.ok("quote.get", map[string]any{"id": q})["status"], "draft")
 
 	member := b.addMember(b.owner, b.signup("Mia", false), "member")
 	q2 := b.quote(b.contact, "")
@@ -204,12 +204,6 @@ func TestApprovalAgentsAndConfirmationsStayApart(t *testing.T) {
 			t.Fatal("approval listed as an agent confirmation")
 		}
 	}
-	// one human decision is enough for an agent call on a command that also has a rule
-	b.ok("confirmation.decide", map[string]any{"id": r["confirmation_id"], "approve": true})
-	if r := b.cmd(b.gosv.URL, key, b.owner.ws, "quote.send", map[string]any{"id": q}, map[string]string{"X-Confirmation-Id": r["confirmation_id"].(string)}); r.status != 200 {
-		t.Fatalf("confirmed agent call: %d %s", r.status, r.body)
-	}
-	eq(t, b.ok("quote.get", map[string]any{"id": q})["status"], "sent")
 }
 
 func TestApprovalTenantIsolationAndIdempotentRequest(t *testing.T) {

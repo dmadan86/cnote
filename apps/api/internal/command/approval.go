@@ -16,7 +16,10 @@ type AmountFunc func(c *Ctx, input json.RawMessage) (noteID string, amount int64
 // the caller gets approval_required. approval.decide later replays the stored input as the requester (RunApproved).
 func (r *Registry) approvalGate(c *Ctx, cmd Command, input json.RawMessage) ([]byte, bool, error) {
 	p := c.Principal
-	if p.Kind != KindUser || p.UserID == nil || p.Role >= Owner {
+	// Agents and API keys can't open approval requests, and their own confirmation could be decided by the member
+	// who owns them, so above the threshold they are refused outright rather than let through.
+	machine := p.Kind == KindAgent || p.Kind == KindAPIKey
+	if !machine && (p.Kind != KindUser || p.UserID == nil || p.Role >= Owner) {
 		return nil, false, nil
 	}
 	var min int64
@@ -37,6 +40,9 @@ func (r *Registry) approvalGate(c *Ctx, cmd Command, input json.RawMessage) ([]b
 	}
 	if amount < min {
 		return nil, false, nil
+	}
+	if machine {
+		return nil, false, ErrForbidden("this amount needs a person's approval; ask a workspace member to make the request in C Note")
 	}
 	var id string
 	err = c.Tx.QueryRow(c.Context, `select id::text from core.confirmations where kind = 'approval' and status = 'pending'

@@ -164,14 +164,14 @@ func (r *Registry) run(c *Ctx, name string, input json.RawMessage, o ExecOptions
 		}
 	}
 
-	if cmd.Confirm && p.IsMachine() {
-		return r.confirm(c, cmd, input, o)
-	}
-
 	if cmd.Amount != nil && !o.approved {
 		if out, held, err := r.approvalGate(c, cmd, input); held || err != nil {
 			return out, err
 		}
+	}
+
+	if cmd.Confirm && p.IsMachine() {
+		return r.confirm(c, cmd, input, o)
 	}
 
 	out, err := cmd.Handler(c, input)
