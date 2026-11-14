@@ -47,6 +47,52 @@ jobs:
           echo "alter role cnote_app password :'pw';" | psql "$DATABASE_ADMIN_URL" -v pw="$DB_APP_PASSWORD"
       - run: cargo test --workspace
 
+  go:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_DB: cnote
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: apps/api/go.mod
+          cache-dependency-path: apps/api/go.sum
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Generate throwaway DB credentials
+        run: |
+          PW=$(openssl rand -hex 16)
+          echo "::add-mask::$PW"
+          echo "DB_APP_PASSWORD=$PW" >> "$GITHUB_ENV"
+          echo "DATABASE_URL=postgres://cnote_app:$PW@localhost:5432/cnote" >> "$GITHUB_ENV"
+      - name: Build Rust server, migrate and start it (fixtures and the differential reference)
+        run: |
+          cargo build -p cnote-server
+          ./target/debug/cnote migrate
+          echo "alter role cnote_app password :'pw';" | psql "$DATABASE_ADMIN_URL" -v pw="$DB_APP_PASSWORD"
+          CNOTE_MASTER_KEY=$(openssl rand -base64 32) ./target/debug/cnote serve --port 4000 > rust-api.log 2>&1 &
+          npx --yes wait-on -t 120000 http://localhost:4000/healthz
+      - name: gofmt
+        working-directory: apps/api
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+      - name: go vet
+        working-directory: apps/api
+        run: go vet ./...
+      - name: go test
+        working-directory: apps/api
+        run: go test -race ./...
+        env:
+          RUST_API_URL: http://localhost:4000
+      - if: failure()
+        run: tail -n 100 rust-api.log
+
   web:
     runs-on: ubuntu-latest
     steps:
