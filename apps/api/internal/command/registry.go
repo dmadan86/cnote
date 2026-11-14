@@ -204,11 +204,9 @@ func (r *Registry) confirm(c *Ctx, cmd Command, input json.RawMessage, opts Exec
 			p.WorkspaceID, name, input, by).Scan(&id); err != nil {
 			return nil, DB(err)
 		}
-		return Marshal(struct {
-			Required bool   `json:"confirmation_required"`
-			ID       string `json:"confirmation_id"`
-			Message  string `json:"message"`
-		}{true, id, name + " moves money or sends a message; a human must confirm it in C Note."})
+		// a map, not a struct: Rust builds a serde_json::Value, so keys come out sorted
+		return Marshal(map[string]any{"confirmation_required": true, "confirmation_id": id,
+			"message": name + " moves money or sends a message; a human must confirm it in C Note."})
 	}
 	var confirmed []byte
 	err := c.Tx.QueryRow(c.Context,

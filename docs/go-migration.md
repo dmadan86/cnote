@@ -240,3 +240,36 @@ keeps them as integers matching Rust's `serde_json::json!({...})` output.
 (bad UUID, missing UUID from `notification.read`) run byte-for-byte against both servers with the
 same fixture. Mutating calls (`notification.read` mark-all and mark-by-id) use twin fixtures: one
 dedicated workspace per server so each starts from `updated=1` and responses are still byte-identical.
+
+## Module notes: finance billing (port/finance-billing)
+
+Commands ported (`apps/api/internal/modules/billing`): `invoice.create_draft`, `invoice.update_draft`, `invoice.preview`,
+`invoice.get`, `invoice.list`, `invoice.issue`, `invoice.cancel`, `invoice.write_off`, `payment.record`, `credit_note.create`,
+`invoice.generate_irn`, `invoice.cancel_irn`, `report.gst_summary`, `report.receivables_ageing`, `report.gstr1`,
+`ledger.trial_balance`, `export.tally`. CRM commands (`contact.*`, `deal.*`) and the `finance.irn_window` sweep and
+the chart-of-accounts workspace hook stay in Rust.
+
+- Money is int64 paise; GST math (`gst.go`) uses `math/big` for qty x price and tax so half-up rounding and the
+  overflow errors match `rust_decimal`/i128. CGST gets the floor half, SGST the odd paisa. Messages of `GstError` are verbatim.
+- IRN goes through the `GspClient` interface (`irn.go`, `SetGSP` = Rust `set_gsp`). Rust never installs a real GSP, so
+  the deterministic offline sandbox (same IRN hash, ack number, signed-QR payload) is the only implementation, and
+  the IRN commands are ported, not left in Rust.
+- `quantity` is a `serde_json::Number` fed to `rust_decimal`: plain integers keep their text, fractions go through
+  f64/ryu (`2.50` -> `2.5`, `1.0` -> `1.0`); exponents, >15 significant digits and values below 1e-3 fall back to Rust.
+  Years outside 0001-9999 and year 0000 dates fall back too.
+- Reports: `rupees()` prints the f64 the way ryu does (`18.0`, `1180.5`). `report.gstr1` was ported with the rest of
+  reports.rs (b2cl limit by invoice date: Rs 2.5 lakh before 2024-08-01, Rs 1 lakh from).
+- `notes.InsertNote` / `notes.AddRelation` (new `notes/export.go`) are the Go `insert_note` / `add_relation` used for the
+  invoice and credit-note pages and the `bills` relations. `billing/decode.go` is a private copy of the notes serde-style
+  decoder (its methods are unexported).
+- Fix in the shared registry: the agent confirmation-request response is now built from a map so its keys are sorted like
+  Rust's `serde_json::Value` (`confirmation_id` before `confirmation_required`); the byte comparison caught it.
+- Order that Rust itself leaves undefined (so the twin-fixture comparison sorts it, the same-database raw comparison does
+  not): lines inside one Tally voucher (`order by journal_lines.id`, a random uuid) and invoices of the same date in
+  `report.receivables_ageing`.
+- Tests: `internal/modules/billing/unit_test.go` (ports of the `#[cfg(test)]` modules in gst/irn/ledger/billing/reports.rs),
+  `internal/server/billing_test.go` (port of every command-related test in `crates/cnote-finance/tests/finance.rs`, plus
+  idempotent replay, role gates, preview-equals-issue and worker-visible events/jobs), `internal/server/billing_diff_test.go`
+  (`TestDifferentialBillingWrites`: ~1300 steps on twin fixtures, responses and billing/ledger/event/confirmation/idempotency
+  rows compared, then 280 raw-byte read comparisons per fixture). The `irn_window_sweep` assertions of
+  `irn_window_is_enforced_for_large_taxpayers` are not ported: the sweep is a Rust worker job, not a command.
