@@ -15,6 +15,12 @@ func New(target string) (http.Handler, error) {
 	if err != nil {
 		return nil, err
 	}
+	switch u.Scheme { // COLLAB_URL may be written as a WebSocket URL
+	case "ws":
+		u.Scheme = "http"
+	case "wss":
+		u.Scheme = "https"
+	}
 	return &httputil.ReverseProxy{
 		Rewrite: func(r *httputil.ProxyRequest) {
 			r.SetURL(u)

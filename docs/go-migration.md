@@ -29,6 +29,13 @@ client --> Go :4100 --+-- POST /api/w/{ws}/commands/{name}, name in Go registry 
 - `internal/db`: pool plus `BeginTenant` (`set_config('app.workspace_id', $1, true)`); RLS does the rest.
 - `internal/modules`: the registry. Each ported module is a package returning `[]command.Command`.
 
+### Collab WebSocket
+
+`apps/collab` is the TypeScript port of the live-editing socket of `crates/cnote-collab` (y-websocket protocol, same
+close code 4409, same tables). Set `COLLAB_URL` (e.g. `http://localhost:4300`; `ws://` also accepted) on the Go server
+and `/collab/...` goes there; unset keeps it on Rust. Revision commands (`note.revisions|revision|restore`) stay in Rust.
+Service env: `DATABASE_URL`, `COLLAB_PORT` (4300), `COLLAB_ALLOWED_ORIGINS`, `COLLAB_DEBOUNCE_MS`.
+
 ### Fallback: how byte-compatibility stays cheap
 
 A handler may return `command.ErrFallback`; the router then replays the buffered request to Rust. Used for:

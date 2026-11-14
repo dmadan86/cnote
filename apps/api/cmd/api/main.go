@@ -45,9 +45,16 @@ func main() {
 		slog.Error("RUST_API_URL", "error", err)
 		os.Exit(1)
 	}
+	front := server.New(pool, modules.Registry(), upstream)
+	if u := os.Getenv("COLLAB_URL"); u != "" { // the TypeScript collab service; unset keeps /collab on Rust
+		if front.Collab, err = proxy.New(u); err != nil {
+			slog.Error("COLLAB_URL", "error", err)
+			os.Exit(1)
+		}
+	}
 	srv := &http.Server{
 		Addr:              ":" + env("PORT", "4100"),
-		Handler:           server.New(pool, modules.Registry(), upstream),
+		Handler:           front,
 		ReadHeaderTimeout: 10 * time.Second, // no Read/WriteTimeout: WebSockets and streams are long-lived
 	}
 	go func() {
