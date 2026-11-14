@@ -5,6 +5,7 @@ package importers
 import (
 	"encoding/json"
 	"errors"
+	"github.com/cnote/api/internal/serdejson"
 	"io"
 	"strconv"
 	"strings"
@@ -126,6 +127,9 @@ func (r *Report) warn(msg string) {
 // ---------- JSON values like serde_json::Value (decoded with UseNumber) ----------
 
 func decodeJSON(s string) (any, error) {
+	if e := serdejson.CheckString(s); e != nil { // serde_json's error text, not Go's
+		return nil, e
+	}
 	dec := json.NewDecoder(strings.NewReader(s))
 	dec.UseNumber()
 	var v any
