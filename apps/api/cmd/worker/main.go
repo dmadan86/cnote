@@ -1,5 +1,6 @@
-// Command worker runs only the C Note background worker (event dispatch, jobs, sweeps): the Go counterpart of
-// `cnote worker`. It can run next to the Rust worker; both claim jobs with core.claim_jobs (FOR UPDATE SKIP LOCKED).
+// Command worker runs only the C Note background worker (event dispatch, jobs, sweeps): the same worker
+// `api` runs with WITH_WORKER=1, as a separate process. Several workers can run at once: they claim jobs with
+// core.claim_jobs (FOR UPDATE SKIP LOCKED).
 package main
 
 import (

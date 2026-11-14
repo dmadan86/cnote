@@ -1,13 +1,10 @@
 package importers
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
-	"io"
-	"net/http"
 	"os"
 	"strings"
 	"testing"
@@ -20,9 +17,9 @@ import (
 	"github.com/cnote/api/internal/db"
 )
 
-// Tests use the real Postgres (DATABASE_URL, role cnote_app) and the real Rust server (RUST_API_URL, default
-// http://localhost:4000) to create fixtures (signup, space, member). The Go import itself runs inside one
-// transaction that is rolled back: the shared Rust worker must never see a queued job of ours.
+// Tests use the real Postgres (DATABASE_URL, role cnote_app) and create fixtures (user, workspace, space, member)
+// with SQL. The import itself runs inside one transaction that is rolled back: a running worker must never see a
+// queued job of ours.
 
 func rnd() string {
 	b := make([]byte, 8)
@@ -33,7 +30,6 @@ func rnd() string {
 type env struct {
 	t    *testing.T
 	pool *pgxpool.Pool
-	rust string
 }
 
 func newEnv(t *testing.T) *env {
@@ -42,97 +38,60 @@ func newEnv(t *testing.T) *env {
 	if url == "" {
 		t.Fatal("DATABASE_URL is required (load the repo .env)")
 	}
-	rust := strings.TrimRight(os.Getenv("RUST_API_URL"), "/")
-	if rust == "" {
-		rust = "http://localhost:4000"
-	}
-	if resp, err := http.Get(rust + "/healthz"); err != nil || resp.StatusCode != 200 {
-		t.Fatalf("Rust server not reachable at %s: %v", rust, err)
-	}
 	pool, err := db.Connect(context.Background(), url, 5)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(pool.Close)
-	return &env{t: t, pool: pool, rust: rust}
+	return &env{t: t, pool: pool}
 }
 
-// tenant is a fresh workspace made through the Rust server: an owner, a space ENG and one extra member (ada).
+// tenant is a fresh workspace made with SQL: an owner, a space ENG and one extra member (ada).
 type tenant struct {
 	e        *env
 	owner    string // user id
-	cookie   string
 	ws       string
 	space    string
 	adaID    string
 	adaEmail string
 }
 
-func (e *env) call(cookie, ws, cmd string, in any) (int, []byte) {
+// signup inserts a user (users are global); the workspace is created for it when asked.
+func (e *env) signup(name string, workspace bool) (userID, ws, email string) {
 	e.t.Helper()
-	b, _ := json.Marshal(in)
-	req, _ := http.NewRequest("POST", e.rust+"/api/w/"+ws+"/commands/"+cmd, bytes.NewReader(b))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Cookie", "cn_session="+cookie)
-	res, err := http.DefaultClient.Do(req)
-	if err != nil {
-		e.t.Fatal(err)
-	}
-	defer res.Body.Close()
-	out, _ := io.ReadAll(res.Body)
-	return res.StatusCode, out
-}
-
-func (e *env) signup(name string, workspace bool) (userID, ws, cookie, email string) {
-	e.t.Helper()
+	ctx := context.Background()
 	email = "go-" + rnd() + "@example.test"
-	body := map[string]any{"email": email, "name": name, "password": rnd() + rnd()}
-	if workspace {
-		body["workspace_name"] = name + " WS"
-	}
-	b, _ := json.Marshal(body)
-	res, err := http.Post(e.rust+"/api/auth/signup", "application/json", bytes.NewReader(b))
-	if err != nil {
+	if err := e.pool.QueryRow(ctx, "insert into core.users(email, name) values ($1, $2) returning id::text", email, name).Scan(&userID); err != nil {
 		e.t.Fatal(err)
 	}
-	defer res.Body.Close()
-	var out struct {
-		UserID      string  `json:"user_id"`
-		WorkspaceID *string `json:"workspace_id"`
-	}
-	_ = json.NewDecoder(res.Body).Decode(&out)
-	for _, c := range res.Cookies() {
-		if c.Name == "cn_session" {
-			cookie = c.Value
+	if workspace {
+		if err := e.pool.QueryRow(ctx, "select core.create_workspace($1, $2, $3::uuid)::text", name+" WS", "t-"+rnd(), userID).Scan(&ws); err != nil {
+			e.t.Fatal(err)
 		}
 	}
-	if res.StatusCode != 200 || cookie == "" {
-		e.t.Fatalf("signup failed: %d", res.StatusCode)
-	}
-	if out.WorkspaceID != nil {
-		ws = *out.WorkspaceID
-	}
-	return out.UserID, ws, cookie, email
+	return userID, ws, email
 }
 
 // newTenant makes a workspace; with a given ada that existing user becomes the member (twin workspaces share her).
 func (e *env) newTenant(shared ...*tenant) *tenant {
 	e.t.Helper()
 	t := &tenant{e: e}
-	t.owner, t.ws, t.cookie, _ = e.signup("Owner", true)
-	st, body := e.call(t.cookie, t.ws, "space.create", map[string]any{"key": "ENG", "name": "Engineering"})
-	var sp struct{ ID string }
-	if st != 200 || json.Unmarshal(body, &sp) != nil || sp.ID == "" {
-		e.t.Fatalf("space.create: %d %s", st, body)
-	}
-	t.space = sp.ID
+	t.owner, t.ws, _ = e.signup("Owner", true)
 	if len(shared) > 0 {
 		t.adaID, t.adaEmail = shared[0].adaID, shared[0].adaEmail
 	} else {
-		t.adaID, _, _, t.adaEmail = e.signup("Ada", false)
+		t.adaID, _, t.adaEmail = e.signup("Ada", false)
 	}
-	if st, body := e.call(t.cookie, t.ws, "member.add", map[string]any{"email": t.adaEmail, "role": "member"}); st != 200 {
-		e.t.Fatalf("member.add: %d %s", st, body)
+	tx := t.begin()
+	defer tx.Rollback(context.Background())
+	if err := tx.QueryRow(context.Background(), "insert into core.spaces (workspace_id, key, name) values ($1::uuid, 'ENG', 'Engineering') returning id::text", t.ws).Scan(&t.space); err != nil {
+		e.t.Fatal(err)
+	}
+	if _, err := tx.Exec(context.Background(), "insert into core.memberships (workspace_id, user_id, role) values ($1::uuid, $2::uuid, 'member')", t.ws, t.adaID); err != nil {
+		e.t.Fatal(err)
+	}
+	if err := tx.Commit(context.Background()); err != nil {
+		e.t.Fatal(err)
 	}
 	return t
 }

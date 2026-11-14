@@ -9,7 +9,7 @@ const schema = `{"$defs":{"Source":{"enum":["jira","csv"],"type":"string"}},"pro
 "day":{"format":"date","type":["string","null"]},"id":{"format":"uuid","type":"string"},"source":{"$ref":"#/$defs/Source"},"tags":{"items":{"type":"string"},"type":"array"}},
 "required":["id","source"],"type":"object"}`
 
-// The expected texts are what the Rust server answers for the same inputs (TestSerdeInputErrorsMatchRust).
+// The expected texts are what the retired Rust server answered for the same inputs.
 func TestDescribe(t *testing.T) {
 	id := `"00000000-0000-0000-0000-000000000000"`
 	for in, want := range map[string]string{

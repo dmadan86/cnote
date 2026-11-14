@@ -1,70 +1,42 @@
 package server_test
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/cnote/api/internal/command"
-	"github.com/cnote/api/internal/db"
 	"github.com/cnote/api/internal/modules"
 	"github.com/cnote/api/internal/modules/billing"
 	"github.com/cnote/api/internal/proxy"
 	"github.com/cnote/api/internal/server"
-	"github.com/cnote/api/internal/worker"
 )
 
-// noRust is the "nothing needs Rust" test mode: the Go server (with the Go worker and the TypeScript collab
-// service) runs with an upstream that records and refuses every request it is handed, and the fixtures are made
-// through that same server (no Rust process is consulted). RUST_API_URL=http://127.0.0.1:1 does the same for the
-// real binary in CI (the `no-rust` job).
-type noRust struct {
-	*env
-	proxied atomic.Int32
-}
-
-func newNoRust(t *testing.T) *noRust {
+// newCritical is the production shape: the Go server with the TypeScript collab service behind /collab, fixtures made
+// through that same server, and the background worker running the jobs.
+func newCritical(t *testing.T) *env {
 	t.Helper()
-	url := os.Getenv("DATABASE_URL")
-	if url == "" {
-		t.Fatal("DATABASE_URL is required (load the repo .env)")
-	}
-	pool, err := db.Connect(context.Background(), url, 5)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(pool.Close)
-	n := &noRust{}
-	reg := command.NewRegistry(modules.Commands()...)
-	front := server.New(pool, reg, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		n.proxied.Add(1)
-		t.Errorf("reached Rust: %s %s", r.Method, r.URL.Path)
-		w.WriteHeader(http.StatusBadGateway)
-	}))
+	e := newEnv(t)
 	port := startCollab(t)
+	front := server.New(e.pool, command.NewRegistry(modules.Commands()...))
+	var err error
 	if front.Collab, err = proxy.New("http://127.0.0.1:" + itoa(port)); err != nil {
 		t.Fatal(err)
 	}
 	srv := httptest.NewServer(front)
 	t.Cleanup(srv.Close)
-	ctx, stop := context.WithCancel(context.Background())
-	t.Cleanup(stop)
-	go worker.New(pool, reg).Run(ctx)
-	n.env = &env{t: t, pool: pool, rust: srv.URL, gosv: srv}
-	return n
+	e.api, e.gosv = srv.URL, srv
+	return e
 }
 
 func itoa(n int) string { return strconv.Itoa(n) }
 
-func TestCriticalFlowsNeverReachRust(t *testing.T) {
-	n := newNoRust(t)
+func TestCriticalFlows(t *testing.T) {
+	n := newCritical(t)
 	t.Setenv("TRUST_PROXY", "1")
 	unsetEnv(t, "PUBLIC_BASE_URL")
 	call := func(w who, cmd string, in any) resp { return n.cmd(n.gosv.URL, w, w.ws, cmd, in, nil) }
@@ -165,7 +137,7 @@ func TestCriticalFlowsNeverReachRust(t *testing.T) {
 	}
 
 	// OAuth: register, consent, token, use the token on MCP and REST, refresh, revoke
-	o := newOCFor(t, n.env)
+	o := newOCFor(t, n)
 	client, tok := o.connect(owner)
 	access := tok["access_token"].(string)
 	if s := o.mcpStatus(access); s != 200 {
@@ -182,7 +154,7 @@ func TestCriticalFlowsNeverReachRust(t *testing.T) {
 		t.Fatalf("revoke: %d %s", r.status, r.body)
 	}
 
-	// requests Rust used to answer: bodies serde rejects, unknown routes and methods
+	// bodies serde rejects, unknown routes and methods
 	for _, c := range []struct {
 		method, path, body string
 		status             int
@@ -207,8 +179,5 @@ func TestCriticalFlowsNeverReachRust(t *testing.T) {
 		if res.StatusCode != c.status {
 			t.Errorf("%s %s %s: %d, want %d", c.method, c.path, c.body, res.StatusCode, c.status)
 		}
-	}
-	if n.proxied.Load() != 0 {
-		t.Fatalf("%d requests reached Rust", n.proxied.Load())
 	}
 }

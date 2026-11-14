@@ -56,10 +56,9 @@ func ErrForbidden(msg string) *Error     { return NewError(Forbidden, msg) }
 func ErrInvalid(msg string) *Error       { return NewError(Invalid, msg) }
 func ErrConflict(msg string) *Error      { return NewError(Conflict, msg) }
 
-// ErrFallback tells the router to hand the request to the Rust server unchanged. Handlers return it
-// for inputs whose Rust error text they do not reproduce (bad JSON shape, odd UUID spellings), so
-// those paths stay byte-identical by construction.
-var ErrFallback = errors.New("fallback to upstream")
+// ErrFallback tells the router the input is one serde would have rejected: it answers with the serde-style error
+// text (internal/serdecheck). Handlers return it for bad JSON shapes and odd UUID spellings.
+var ErrFallback = errors.New("input rejected like serde")
 
 // DB maps a database error like `impl From<sqlx::Error> for CmdError`.
 func DB(err error) error {

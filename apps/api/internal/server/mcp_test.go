@@ -2,13 +2,8 @@ package server_test
 
 import (
 	"encoding/json"
-	"os"
-	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
-
-	"github.com/cnote/api/internal/modules"
 )
 
 var mcpAccept = map[string]string{"Accept": "application/json, text/event-stream"}
@@ -138,86 +133,10 @@ func TestMCPGoOnlyHonoursToolGroupsScopesAndWorkspaces(t *testing.T) {
 	r = other.invoke(okey, "quote.get", map[string]any{"id": id}, nil)
 	eq(t, r["isError"], true)
 
-	// bad credentials: Rust's own 401 challenge, unchanged
+	// bad credentials: a 401 challenge
 	hr, _ := b.mcpCall(b.gosv.URL, "cn_nope_nope", "discover", map[string]any{"query": "quote"})
-	rr, _ := b.mcpCall(b.rust, "cn_nope_nope", "discover", map[string]any{"query": "quote"})
-	if hr.status != 401 || string(hr.body) != string(rr.body) {
-		t.Fatalf("401 differs: %d %s vs %d %s", hr.status, hr.body, rr.status, rr.body)
-	}
-}
-
-// Rust still answers everything it knows; Go must not change a byte of it.
-func TestMCPRustAnswersAreByteIdentical(t *testing.T) {
-	b := newBT(t, false)
-	key := b.must(b.owner, "agent.create", map[string]any{"name": "Same"})["api_key"].(string)
-	for _, c := range []struct {
-		tool string
-		args map[string]any
-	}{
-		{"discover", map[string]any{"query": "note delete"}},
-		{"discover", map[string]any{"query": "zzzz nothing"}},
-		{"invoke", map[string]any{"command": "note.list", "arguments": map[string]any{}}},
-		{"invoke", map[string]any{"command": "nope.nope"}},
-	} {
-		g, _ := b.mcpCall(b.gosv.URL, key, c.tool, c.args)
-		r, _ := b.mcpCall(b.rust, key, c.tool, c.args)
-		if g.status != r.status || string(g.body) != string(r.body) {
-			t.Errorf("%s %v differs:\ngo:   %s\nrust: %s", c.tool, c.args, g.body, r.body)
-		}
-	}
-}
-
-// Shape of Go's own answers equals Rust's for the same kind of reply (compared on a command both can run).
-func TestMCPGoResultShapeMatchesRust(t *testing.T) {
-	b := newBT(t, false)
-	key := b.must(b.owner, "agent.create", map[string]any{"name": "Shape"})["api_key"].(string)
-	_, rust := b.mcpCall(b.rust, key, "discover", map[string]any{"query": "note delete"})
-	_, goOnly := b.mcpCall(b.gosv.URL, key, "discover", map[string]any{"query": "quote send"})
-	keys := func(m map[string]any) (k []string) {
-		for x := range m {
-			k = append(k, x)
-		}
-		return
-	}
-	eq(t, len(keys(rust)), len(keys(goOnly)))
-	for k := range rust {
-		if _, ok := goOnly[k]; !ok {
-			t.Errorf("result key %s missing in Go's reply", k)
-		}
-	}
-}
-
-// Every Go-only command must be described for agents. Go-only = not registered by Rust (read from the Rust source).
-func TestGoOnlyCommandsHaveMCPMetadata(t *testing.T) {
-	re := regexp.MustCompile(`Command::new\(\s*"([a-z_]+\.[a-z_.]+)"`)
-	rust := map[string]bool{}
-	_ = filepath.Walk("../../../../crates", func(p string, i os.FileInfo, err error) error {
-		if err == nil && strings.HasSuffix(p, ".rs") {
-			src, _ := os.ReadFile(p)
-			for _, m := range re.FindAllSubmatch(src, -1) {
-				rust[string(m[1])] = true
-			}
-		}
-		return nil
-	})
-	if len(rust) < 100 {
-		t.Skip("Rust sources not found")
-	}
-	for _, c := range modules.Registry().List() {
-		hasMeta := c.Description != "" && json.Valid(c.Schema)
-		if !rust[c.Name] && !hasMeta {
-			t.Errorf("Go-only command %s has no MCP description/schema: add it to modules/mcpmeta.go", c.Name)
-		}
-		if rust[c.Name] && c.Description != "" {
-			t.Errorf("%s exists in Rust: Rust describes it, remove it from mcpmeta.go", c.Name)
-		}
-		if hasMeta {
-			var s map[string]any
-			_ = json.Unmarshal(c.Schema, &s)
-			if s["type"] != "object" {
-				t.Errorf("%s schema is not an object schema", c.Name)
-			}
-		}
+	if hr.status != 401 {
+		t.Fatalf("bad key: %d %s", hr.status, hr.body)
 	}
 }
 
@@ -237,9 +156,8 @@ func TestMCPGoOnlyAcceptsOAuthTokensForTheirResourceOnly(t *testing.T) {
 	r := b.invoke(good, "quote.list", map[string]any{}, nil)
 	eq(t, r["isError"], false)
 	hr, _ := b.mcpCall(b.gosv.URL, wrong, "invoke", map[string]any{"command": "quote.list"})
-	rr, _ := b.mcpCall(b.rust, wrong, "invoke", map[string]any{"command": "quote.list"})
-	if hr.status != 401 || string(hr.body) != string(rr.body) {
-		t.Fatalf("wrong audience must get Rust's 401: %d %s", hr.status, hr.body)
+	if hr.status != 401 {
+		t.Fatalf("wrong audience must get 401: %d %s", hr.status, hr.body)
 	}
 	adminSQL(b.env, b.owner.ws, `update core.oauth_grants set revoked_at = now() where user_id = $1::uuid and resource = $2`, b.owner.userID, "http://"+host+"/mcp")
 	if hr, _ = b.mcpCall(b.gosv.URL, good, "invoke", map[string]any{"command": "quote.list"}); hr.status != 401 {

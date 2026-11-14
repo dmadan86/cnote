@@ -1,5 +1,6 @@
-// Integration helpers: real Postgres (DATABASE_URL, role cnote_app) and the real Rust server for fixtures and
-// for the revision commands that stay in Rust (note.restore). No mocks.
+// Integration helpers: real Postgres (DATABASE_URL, role cnote_app) and the real Go API (API_URL) for fixtures and
+// for note.restore (the Go API renders the live document through this service: COLLAB_URL, COLLAB_INTERNAL_SECRET).
+// No mocks.
 import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import type { AddressInfo } from 'node:net'
 import * as decoding from 'lib0/decoding'
@@ -13,7 +14,7 @@ try {
   process.loadEnvFile(new URL('../../../.env', import.meta.url))
 } catch {}
 
-export const RUST = (process.env.RUST_API_URL ?? 'http://localhost:4000').replace(/\/$/, '')
+export const API = (process.env.API_URL ?? 'http://localhost:4000').replace(/\/$/, '')
 export const pool = connect(process.env.DATABASE_URL!, 5)
 
 export async function gateway(debounceMs: number, recheckMs = 10_000) {
@@ -28,8 +29,8 @@ export interface User {
   cookie: string
 }
 
-async function rust(path: string, init: RequestInit & { cookie?: string }) {
-  const r = await fetch(RUST + path, {
+async function api(path: string, init: RequestInit & { cookie?: string }) {
+  const r = await fetch(API + path, {
     ...init,
     headers: {
       'content-type': 'application/json',
@@ -41,7 +42,7 @@ async function rust(path: string, init: RequestInit & { cookie?: string }) {
 
 export async function signup(workspace?: string): Promise<User & { ws?: string }> {
   const email = `collab-${randomUUID()}@example.test`
-  const r = await rust('/api/auth/signup', {
+  const r = await api('/api/auth/signup', {
     method: 'POST',
     body: JSON.stringify({
       email,
@@ -57,7 +58,7 @@ export async function signup(workspace?: string): Promise<User & { ws?: string }
 }
 
 export async function cmd(ws: string, who: User, name: string, input: object) {
-  const r = await rust(`/api/w/${ws}/commands/${name}`, {
+  const r = await api(`/api/w/${ws}/commands/${name}`, {
     method: 'POST',
     body: JSON.stringify(input),
     cookie: who.cookie,
@@ -127,7 +128,7 @@ export async function apiKey(f: Fixture, who: User): Promise<string> {
   return key
 }
 
-// ---- wire client (y-sync, spoken by hand like the Rust test) ----
+// ---- wire client (y-sync, spoken by hand) ----
 
 export type Msg = { kind: 'step1' | 'step2' | 'update'; body: Uint8Array } | { kind: 'awareness' }
 

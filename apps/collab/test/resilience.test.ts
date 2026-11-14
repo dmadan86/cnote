@@ -1,5 +1,5 @@
 // QA plan cn-qa-001 sections 3.4 (live-editing parts), 4.1, 4.2, 4.4: convergence, durability, fencing, restore races.
-// Real Postgres, real Rust (fixtures, note.restore), real y-websocket clients; no mocks.
+// Real Postgres, the real Go API (fixtures, note.restore), real y-websocket clients; no mocks.
 import { type ChildProcess, spawn } from 'node:child_process'
 import net from 'node:net'
 import fc from 'fast-check'
@@ -572,5 +572,5 @@ describe('3.4 restore while editing', () => {
     s.close()
   })
 
-  it.skip('RV-009: crash during restore — restore is a Rust transaction (outside apps/collab); needs fault injection in the Rust server', () => {})
+  it.skip('RV-009: crash during restore — restore is a Go API transaction (outside apps/collab); needs fault injection in the Go API', () => {})
 })

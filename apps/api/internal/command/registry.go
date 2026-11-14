@@ -61,7 +61,7 @@ func (c *Ctx) FinanceAllowed() (bool, error) {
 }
 
 // Handler receives the raw JSON input and returns a value that is marshaled as the response.
-// Return ErrFallback to delegate the request to Rust.
+// Return ErrFallback for input serde would have rejected: the router answers with the serde-style error.
 type Handler func(c *Ctx, input json.RawMessage) (any, error)
 
 type Command struct {

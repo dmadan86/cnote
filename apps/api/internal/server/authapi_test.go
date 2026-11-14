@@ -93,14 +93,6 @@ func TestAuthSignupLoginLogoutCookies(t *testing.T) {
 		t.Fatalf("short password: %d %s", got.status, got.body)
 	}
 
-	// a session made by Go is valid on Rust, and the Go-made hash verifies on Rust
-	if m := hit(t, e.rust, "GET", "/api/auth/me", cookieHdr(tok), ""); m.status != 200 || !strings.Contains(string(m.body), `"email":"`+email+`"`) {
-		t.Fatalf("rust me with go session: %d %s", m.status, m.body)
-	}
-	rl := hit(t, e.rust, "POST", "/api/auth/login", jsonHdr, jb(map[string]any{"email": email, "password": pw}))
-	if rl.status != 200 {
-		t.Fatalf("rust login of go account: %d %s", rl.status, rl.body)
-	}
 	// login on Go (any email case/whitespace) works; wrong password and unknown email give the same 401
 	gl := hit(t, e.gosv.URL, "POST", "/api/auth/login", jsonHdr, jb(map[string]any{"email": " " + strings.ToUpper(email), "password": pw}))
 	if gl.status != 200 || string(gl.body) != `{"user_id":"`+su.UserID+`"}` {
@@ -123,7 +115,7 @@ func TestAuthSignupLoginLogoutCookies(t *testing.T) {
 	if _, err := e.pool.Exec(context.Background(), "update core.sessions set expires_at = now() - interval '1 second' where id = encode(sha256($1::bytea), 'hex')", tok); err != nil {
 		t.Fatal(err)
 	}
-	for _, base := range []string{e.gosv.URL, e.rust} {
+	for _, base := range []string{e.gosv.URL} {
 		if got := hit(t, base, "GET", "/api/auth/me", cookieHdr(tok), ""); got.status != 401 || !strings.Contains(string(got.body), "session expired") {
 			t.Fatalf("%s me with expired session: %d %s", base, got.status, got.body)
 		}
@@ -144,12 +136,12 @@ func TestAuthSignupLoginLogoutCookies(t *testing.T) {
 		t.Fatalf("me: %d %s", m.status, m.body)
 	}
 
-	// logout on Go destroys the session for both servers and clears the cookie; the other session survives
+	// logout on Go destroys the session and clears the cookie; the other session survives
 	lo := hit(t, e.gosv.URL, "POST", "/api/auth/logout", cookieHdr(tok), "")
 	if lo.status != 200 || string(lo.body) != `{"ok":true}` || lo.cookie() != "cn_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0" {
 		t.Fatalf("logout: %d %s %q", lo.status, lo.body, lo.cookie())
 	}
-	for _, base := range []string{e.gosv.URL, e.rust} {
+	for _, base := range []string{e.gosv.URL} {
 		if got := hit(t, base, "GET", "/api/auth/me", cookieHdr(tok), ""); got.status != 401 || !strings.Contains(string(got.body), "session expired") {
 			t.Fatalf("%s me after logout: %d %s", base, got.status, got.body)
 		}
@@ -165,40 +157,11 @@ func TestAuthSignupLoginLogoutCookies(t *testing.T) {
 		t.Fatalf("anonymous me: %d %s", got.status, got.body)
 	}
 
-	// Secure flag follows COOKIE_SECURE, which the Go server reads per request like Rust reads it
+	// Secure flag follows COOKIE_SECURE, which the Go server reads per request
 	t.Setenv("COOKIE_SECURE", "true")
 	sec := hit(t, e.gosv.URL, "POST", "/api/auth/login", jsonHdr, jb(map[string]any{"email": email, "password": pw}))
 	if !strings.HasSuffix(sec.cookie(), "; Max-Age=2592000; Secure") {
 		t.Fatalf("secure cookie: %q", sec.cookie())
-	}
-}
-
-// A hash made by Rust verifies in Go, so existing accounts keep working after the flip.
-func TestAuthRustAccountsWorkInGo(t *testing.T) {
-	e := newEnv(t)
-	email, pw := "go-"+rnd()+"@example.test", rnd()+rnd()
-	rs := hit(t, e.rust, "POST", "/api/auth/signup", jsonHdr, jb(map[string]any{"email": email, "name": "Rae", "password": pw, "workspace_name": "Rae WS"}))
-	if rs.status != 200 {
-		t.Fatalf("%d %s", rs.status, rs.body)
-	}
-	rustTok := sessionOf(t, rs)
-	if got := hit(t, e.gosv.URL, "GET", "/api/auth/me", cookieHdr(rustTok), ""); got.status != 200 {
-		t.Fatalf("go me with rust session: %d %s", got.status, got.body)
-	}
-	gl := hit(t, e.gosv.URL, "POST", "/api/auth/login", jsonHdr, jb(map[string]any{"email": email, "password": pw}))
-	if gl.status != 200 {
-		t.Fatalf("go login with rust hash: %d %s", gl.status, gl.body)
-	}
-	if got := hit(t, e.gosv.URL, "POST", "/api/auth/login", jsonHdr, jb(map[string]any{"email": email, "password": pw + " "})); got.status != 401 {
-		t.Fatalf("wrong password accepted: %d", got.status)
-	}
-	// the Go-issued session works on a Rust command route
-	var su struct {
-		WorkspaceID string `json:"workspace_id"`
-	}
-	_ = json.Unmarshal(rs.body, &su)
-	if got := hit(t, e.rust, "POST", "/api/w/"+su.WorkspaceID+"/commands/space.list", map[string]string{"Cookie": "cn_session=" + sessionOf(t, gl), "Content-Type": "application/json"}, "{}"); got.status != 200 {
-		t.Fatalf("rust command with go session: %d %s", got.status, got.body)
 	}
 }
 
@@ -213,7 +176,7 @@ func TestAuthNativeClientGetsBearerToken(t *testing.T) {
 	if r.status != 200 || !strings.HasPrefix(tok, "cs_") || tok != "cs_"+sessionOf(t, r) {
 		t.Fatalf("native signup: %d %s", r.status, r.body)
 	}
-	for _, base := range []string{e.gosv.URL, e.rust} {
+	for _, base := range []string{e.gosv.URL} {
 		if got := hit(t, base, "GET", "/api/auth/me", map[string]string{"Authorization": "Bearer " + tok}, ""); got.status != 200 {
 			t.Fatalf("%s bearer me: %d %s", base, got.status, got.body)
 		}
@@ -225,12 +188,12 @@ func TestAuthNativeClientGetsBearerToken(t *testing.T) {
 	if got := hit(t, e.gosv.URL, "POST", "/api/auth/logout", map[string]string{"Authorization": "Bearer " + tok}, ""); got.status != 200 {
 		t.Fatal(got.status)
 	}
-	if got := hit(t, e.rust, "GET", "/api/auth/me", map[string]string{"Authorization": "Bearer " + tok}, ""); got.status != 401 {
+	if got := hit(t, e.gosv.URL, "GET", "/api/auth/me", map[string]string{"Authorization": "Bearer " + tok}, ""); got.status != 401 {
 		t.Fatalf("native session survived logout: %d", got.status)
 	}
 }
 
-func TestAuthCreateWorkspaceSeedsLikeRust(t *testing.T) {
+func TestAuthCreateWorkspaceSeeds(t *testing.T) {
 	e := newEnv(t)
 	u := e.signup("Wanda", false)
 	create := func(base, name string) string {
@@ -246,9 +209,9 @@ func TestAuthCreateWorkspaceSeedsLikeRust(t *testing.T) {
 	  (select string_agg(name||':'||kind||':'||source_kind||':'||md5(content_md)||':'||md5(title), ',' order by name) from docs.templates)||'|'||
 	  (select string_agg(code||name||kind, ',' order by code) from billing.accounts)||'|'||
 	  (select string_agg(role, ',') from core.memberships)||'|'`
-	r, g := create(e.rust, "Ünï  Co! 2026"), create(e.gosv.URL, "Ünï  Co! 2026")
-	if a, b := e.dbStrings(r, q)[0], e.dbStrings(g, q)[0]; a != b || !strings.Contains(a, "GEN:General:blank") || !strings.Contains(a, "1100Accounts receivableasset") {
-		t.Fatalf("seed differs:\nrust %s\ngo   %s", a, b)
+	g := create(e.gosv.URL, "Ünï  Co! 2026")
+	if a := e.dbStrings(g, q)[0]; !strings.Contains(a, "GEN:General:blank") || !strings.Contains(a, "1100Accounts receivableasset") {
+		t.Fatalf("seed: %s", a)
 	}
 	// errors: no session, blank name; both are decided by the handler, not by serde
 	if got := hit(t, e.gosv.URL, "POST", "/api/workspaces", jsonHdr, jb(map[string]any{"name": "x"})); got.status != 401 {
@@ -341,65 +304,4 @@ func TestGitHubWebhookVerifiesSignatureAndRecordsEvidence(t *testing.T) {
 	// another tenant cannot use this workspace's secret
 	other := e.signup("Other", true)
 	unauth(post(other.ws, sign(secret, body), body), "github webhook is not configured for this workspace")
-}
-
-// The same signed events on twin fixtures: Go and Rust answer alike and write the same evidence.
-func TestDifferentialGitHubWebhook(t *testing.T) {
-	e := newEnv(t)
-	secret := rnd() + rnd()
-	fixture := func() who {
-		o := e.signup("Twin", true)
-		sp := e.must(o, "space.create", map[string]any{"key": "ENG", "name": "ENG", "template": "software"})["id"]
-		for _, title := range []string{"one", "two", "three"} {
-			e.must(o, "item.create", map[string]any{"space_id": sp, "title": title})
-		}
-		tx, _ := dbTenant(e, o.ws)
-		_, _ = tx.Exec(context.Background(), "update core.workspaces set settings = settings || jsonb_build_object('github_webhook_secret', $1::text) where id = $2::uuid", secret, o.ws)
-		_ = tx.Commit(context.Background())
-		return o
-	}
-	rustWS, goWS := fixture(), fixture()
-	bodies := []string{
-		`{"action":"closed","pull_request":{"merged":true,"title":"ENG-1 and eng-2","head":{"ref":"x"},"body":"also ENG-99 ŇENG-3 ENG-3x","html_url":"https://example.test/pr/1"}}`,
-		`{"action":"opened","pull_request":{"title":"t","head":{"ref":"feature/eng-3-login"}}}`,
-		`{"action":"reopened","pull_request":{"title":"ENG-1","merged":"yes"}}`,
-		`{"action":"closed","pull_request":{"merged":false,"title":"ENG-1"}}`,
-		`{"action":"synchronize","pull_request":{"title":"ENG-1"}}`,
-		`{"pull_request":null}`,
-		`{"action":"opened","pull_request":{"title":"ſENG-1 ENG-１ ENG-1٣ ab-1 abcdefghijk-2 xabcdefghij-3 ENG–4 (ENG-5) ENG-6_ _ENG-7"}}`,
-		`{"deployment_status":{"state":"success","target_url":"https://x.test"},"deployment":{"ref":"release/ENG-2","description":"ENG-3"}}`,
-		`{"deployment_status":{"state":"success","log_url":"https://log.test"},"deployment":{"ref":"main","description":"deploy ENG-1"}}`,
-		`{"deployment_status":{"state":"failure"},"deployment":{"ref":"ENG-2"}}`,
-		`{"deployment_status":{"state":"success"},"deployment":{"ref":"main"}}`,
-		`{"zen":"hi"}`, `[]`, `null`, `"ENG-1"`, `{}`, `{"a":1,"a":2}`, `{"pull_request":{"title":"ENG-1","title":"ENG-2"},"action":"opened"}`,
-		`not json`, ``, `{"zen":`, `{"x":1} trailing`, "{\"zen\":\"\xff\"}", `{"zen":"\ud800"}`,
-	}
-	norm := func(s string) string {
-		return regexp.MustCompile(`[0-9a-f]{8}-[0-9a-f-]{27}`).ReplaceAllString(s, "<id>")
-	}
-	for i, b := range bodies {
-		for _, sig := range []string{sign(secret, []byte(b)), "x"} {
-			h := map[string]string{"X-Hub-Signature-256": sig}
-			r := hit(t, e.rust, "POST", "/api/hooks/github/"+rustWS.ws, h, b)
-			g := hit(t, e.gosv.URL, "POST", "/api/hooks/github/"+goWS.ws, h, b)
-			if r.status != g.status || norm(string(r.body)) != norm(string(g.body)) || r.header.Get("Content-Type") != g.header.Get("Content-Type") {
-				t.Errorf("body %d (%.40q) sig %.10s: rust %d %s %s | go %d %s %s", i, b, sig, r.status, r.header.Get("Content-Type"), r.body, g.status, g.header.Get("Content-Type"), g.body)
-			}
-		}
-	}
-	q := `select coalesce(string_agg(n.title||'|'||v.source||'|'||v.kind||'|'||coalesce(v.url,''), ';' order by n.title, v.kind, v.url), '') from projects.evidence v join core.notes n on n.id = v.note_id`
-	if a, b := e.dbStrings(rustWS.ws, q)[0], e.dbStrings(goWS.ws, q)[0]; a != b || a == "" {
-		t.Fatalf("evidence differs:\nrust %s\ngo   %s", a, b)
-	}
-	ev := `select string_agg(kind||'|'||actor_type||'|'||(payload - 'note_id')::text, ';' order by kind, payload::text) from core.events where kind like 'evidence%' or kind like 'item.%'`
-	if a, b := norm(e.dbStrings(rustWS.ws, ev)[0]), norm(e.dbStrings(goWS.ws, ev)[0]); a != b {
-		t.Fatalf("events differ:\nrust %s\ngo   %s", a, b)
-	}
-	// weird paths and methods are decided by Rust (proxied)
-	for _, c := range [][2]string{{"POST", "/api/hooks/github/not-a-uuid"}, {"POST", "/api/hooks/github/" + strings.ToUpper(rustWS.ws)}, {"GET", "/api/hooks/github/" + rustWS.ws}, {"POST", "/api/hooks/github/" + rustWS.ws + "/"}} {
-		r, g := hit(t, e.rust, c[0], c[1], nil, "{}"), hit(t, e.gosv.URL, c[0], c[1], nil, "{}")
-		if r.status != g.status || norm(string(r.body)) != norm(string(g.body)) {
-			t.Errorf("%v: rust %d %s | go %d %s", c, r.status, r.body, g.status, g.body)
-		}
-	}
 }

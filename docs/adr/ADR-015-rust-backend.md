@@ -1,6 +1,6 @@
 # ADR-015 Rust backend, TypeScript only in the browser (amends ADR-010)
 
-Status: Accepted, 11 Nov 2026 (Madan: "use Rust as much as possible").
+Status: Accepted, 11 Nov 2026 (Madan: "use Rust as much as possible"). Superseded: the backend was ported to Go (apps/api) and the Rust code deleted; see docs/go-migration.md.
 
 ## Decision
 All server-side code is Rust: one Cargo workspace, one binary `cnote` with three entrypoints

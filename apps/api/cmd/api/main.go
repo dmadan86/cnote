@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/cnote/api/internal/db"
+	"github.com/cnote/api/internal/migrate"
 	"github.com/cnote/api/internal/modules"
 	"github.com/cnote/api/internal/modules/approvals"
 	"github.com/cnote/api/internal/modules/billing"
@@ -32,6 +34,17 @@ func env(k, def string) string {
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "migrate" { // `api migrate [-reset]`: apply migrations with DATABASE_ADMIN_URL
+		fs := flag.NewFlagSet("migrate", flag.ExitOnError)
+		reset := fs.Bool("reset", false, "drop the module schemas first (development only)")
+		_ = fs.Parse(os.Args[2:])
+		logf := func(f string, a ...any) { slog.Info(fmt.Sprintf(f, a...)) }
+		if err := migrate.Run(context.Background(), os.Getenv("DATABASE_ADMIN_URL"), env("MIGRATIONS_DIR", "migrations"), *reset, logf); err != nil {
+			slog.Error("migrate", "error", err)
+			os.Exit(1)
+		}
+		return
+	}
 	// Like `cnote serve --with-worker` in Rust (flag, or env WITH_WORKER): run the job worker in this process.
 	withWorker := flag.Bool("with-worker", worker.Boolish(os.Getenv("WITH_WORKER")), "also run the background worker (event dispatch, jobs, sweeps)")
 	flag.Parse()
@@ -49,11 +62,6 @@ func main() {
 	}
 	defer pool.Close()
 
-	upstream, err := proxy.New(env("RUST_API_URL", "http://localhost:4000"))
-	if err != nil {
-		slog.Error("RUST_API_URL", "error", err)
-		os.Exit(1)
-	}
 	registry := modules.Registry()
 	sweepSecs, err := strconv.Atoi(env("RECURRING_SWEEP_SECS", "60"))
 	if err != nil || sweepSecs < 0 {
@@ -76,18 +84,18 @@ func main() {
 	if *withWorker {
 		go worker.New(pool, registry).Run(ctx)
 	}
-	front := server.New(pool, registry, upstream)
-	if u := os.Getenv("COLLAB_URL"); u != "" { // the TypeScript collab service; unset keeps /collab on Rust
+	front := server.New(pool, registry)
+	if u := os.Getenv("COLLAB_URL"); u != "" { // the TypeScript collab service
 		if front.Collab, err = proxy.New(u); err != nil {
 			slog.Error("COLLAB_URL", "error", err)
 			os.Exit(1)
 		}
 		if os.Getenv("COLLAB_INTERNAL_SECRET") == "" { // note.restore renders the live document through the collab service
-			slog.Warn("COLLAB_INTERNAL_SECRET is not set: note.restore falls back to RUST_API_URL")
+			slog.Warn("COLLAB_INTERNAL_SECRET is not set: note.restore cannot render live documents")
 		}
 	}
 	srv := &http.Server{
-		Addr:              ":" + env("PORT", "4100"),
+		Addr:              ":" + env("PORT", "4000"),
 		Handler:           front,
 		ReadHeaderTimeout: 10 * time.Second, // no Read/WriteTimeout: WebSockets and streams are long-lived
 	}
@@ -97,7 +105,7 @@ func main() {
 		defer cancel()
 		_ = srv.Shutdown(sctx)
 	}()
-	slog.Info("listening", "addr", srv.Addr, "upstream", env("RUST_API_URL", "http://localhost:4000"))
+	slog.Info("listening", "addr", srv.Addr)
 	if err := srv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
 		slog.Error("server", "error", err)
 		os.Exit(1)

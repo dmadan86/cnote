@@ -1,9 +1,7 @@
-// Package worker is the Go port of crates/cnote-server/src/worker.rs: the durable job loop (event dispatch to
-// module handlers, module jobs, periodic sweeps).
+// Package worker is the durable job loop (event dispatch to module handlers, module jobs, periodic sweeps).
 //
-// Coexistence with the Rust worker: both claim through core.claim_jobs (UPDATE ... WHERE id IN (SELECT ... FOR
-// UPDATE SKIP LOCKED)), so a job is run by exactly one of them. The Go worker only claims the kinds it can run
-// (see Kinds), which is every kind Rust has. Cutover is therefore: start this worker, stop Rust's.
+// Several workers may run at once: they claim through core.claim_jobs (UPDATE ... WHERE id IN (SELECT ... FOR
+// UPDATE SKIP LOCKED)), so a job is run by exactly one of them. A worker only claims the kinds it can run (see Kinds).
 package worker
 
 import (

@@ -32,7 +32,7 @@ func sendMsgCommand() command.Command {
 
 func (m *mcpEnv) rpc(key, method string, params any) (int, http.Header, map[string]any) {
 	m.t.Helper()
-	st, h, b := m.send(m.native.URL, mcpReq{key: key, body: rpc(1, method, params)})
+	st, h, b := m.send(m.gosv.URL, mcpReq{key: key, body: rpc(1, method, params)})
 	var out map[string]any
 	_ = json.Unmarshal(b, &out)
 	return st, h, out
@@ -76,12 +76,12 @@ func errCode(res map[string]any) any {
 func TestMCPRequiresABearerAPIKey(t *testing.T) {
 	m := newMCPEnv(t)
 	init := rpc(1, "initialize", map[string]any{"protocolVersion": "2025-03-26", "capabilities": map[string]any{}, "clientInfo": map[string]any{"name": "t", "version": "1"}})
-	st, h, _ := m.send(m.native.URL, mcpReq{body: init})
+	st, h, _ := m.send(m.gosv.URL, mcpReq{body: init})
 	eq(t, st, 401)
 	if !strings.HasPrefix(h.Get("WWW-Authenticate"), "Bearer") {
 		t.Fatal(h)
 	}
-	st, h, _ = m.send(m.native.URL, mcpReq{key: "cn_nope_nope", body: init})
+	st, h, _ = m.send(m.gosv.URL, mcpReq{key: "cn_nope_nope", body: init})
 	eq(t, st, 401)
 	if !strings.Contains(h.Get("WWW-Authenticate"), "invalid_token") {
 		t.Fatal(h)
@@ -229,6 +229,16 @@ func TestMCPRequestMetadataLifecycleIsRefusedClearly(t *testing.T) {
 	}
 }
 
+// A client that prefers 2026-07-28 gets a version the server serves, so it downgrades instead of failing.
+func TestMCPInitializeNeverOffersAnUnservedVersion(t *testing.T) {
+	m := newMCPEnv(t)
+	for _, v := range []string{"2026-07-28", "2099-01-01", "1999-01-01"} {
+		st, _, init := m.rpc(m.key, "initialize", map[string]any{"protocolVersion": v, "capabilities": map[string]any{}, "clientInfo": map[string]any{"name": "t", "version": "1"}})
+		eq(t, st, 200)
+		eq(t, init["result"].(map[string]any)["protocolVersion"], "2025-11-25")
+	}
+}
+
 func TestMCPRestrictedPagesAreInvisibleToAMemberLevelAgent(t *testing.T) {
 	m := newMCPEnv(t)
 	mo := m.addMember(m.owner, m.signup("Mo", false), "admin")
@@ -262,7 +272,6 @@ func TestMCPRestrictedPagesAreInvisibleToAMemberLevelAgent(t *testing.T) {
 
 func TestMCPMalformedArgumentsAreAToolErrorNotACrash(t *testing.T) {
 	m := newMCPEnv(t)
-	m.native = m.gosv // Go hands inputs serde would reject to Rust, whose error text is the contract
 	for _, args := range []any{map[string]any{}, map[string]any{"space_id": "not-a-uuid", "title": "x"}, map[string]any{"space_id": m.space, "title": 42}} {
 		r := m.invoke(m.key, "note.create", args, nil)
 		eq(t, r["isError"], true)
@@ -289,10 +298,10 @@ func TestMCPRevokedAgentKeyIsRefused(t *testing.T) {
 	m := newMCPEnv(t)
 	created := m.must(m.owner, "agent.create", map[string]any{"name": "temp"})
 	key := created["api_key"].(string)
-	st, _, _ := m.send(m.native.URL, mcpReq{key: key, body: rpc(1, "tools/list", map[string]any{})})
+	st, _, _ := m.send(m.gosv.URL, mcpReq{key: key, body: rpc(1, "tools/list", map[string]any{})})
 	eq(t, st, 200)
 	m.must(m.owner, "apikey.revoke", map[string]any{"id": created["api_key_id"]})
-	st, _, _ = m.send(m.native.URL, mcpReq{key: key, body: rpc(1, "tools/call", call("space_list", map[string]any{}))})
+	st, _, _ = m.send(m.gosv.URL, mcpReq{key: key, body: rpc(1, "tools/call", call("space_list", map[string]any{}))})
 	eq(t, st, 401)
 }
 

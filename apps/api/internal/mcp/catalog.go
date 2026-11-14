@@ -10,15 +10,13 @@ import (
 	"github.com/cnote/api/internal/command"
 )
 
-// RustCatalog is a snapshot of GET /api/commands on the Rust server: the commands Rust owns and what agents are told
-// about them (description, tool group, confirmation, whether they are a direct MCP tool, input schema). Go serves the
-// MCP protocol itself, so it needs the whole catalogue; Go-only commands add theirs from modules/mcpmeta.go.
-// TestCatalogMatchesRust compares it with the running Rust server; regenerate with:
-//
-//	curl -s localhost:4000/api/commands > internal/mcp/catalog.json
+// RustCatalog is the frozen catalogue of the commands that came from the Rust server: what agents are told about
+// them (description, tool group, confirmation, whether they are a direct MCP tool, input schema). It is now plain data
+// maintained by hand in catalog.json; newer commands add theirs from modules/mcpmeta.go. Shared with the
+// /api/commands handler.
 //
 //go:embed catalog.json
-var RustCatalog []byte // GET /api/commands of the Rust server, shared with the /api/commands handler
+var RustCatalog []byte
 
 type entry struct {
 	Name        string          `json:"name"`

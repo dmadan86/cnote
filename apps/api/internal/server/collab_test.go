@@ -20,8 +20,7 @@ func TestCollabPathRoutesToCollabURL(t *testing.T) {
 		t.Cleanup(s.Close)
 		return s
 	}
-	rust, collab := tag("rust"), tag("collab")
-	up, _ := proxy.New(rust.URL)
+	collab := tag("collab")
 	// a ws:// COLLAB_URL is accepted
 	cp, err := proxy.New(strings.Replace(collab.URL, "http://", "ws://", 1))
 	if err != nil {
@@ -38,12 +37,12 @@ func TestCollabPathRoutesToCollabURL(t *testing.T) {
 		b, _ := io.ReadAll(resp.Body)
 		return string(b)
 	}
-	off := server.New(nil, command.NewRegistry(), up)
-	on := server.New(nil, command.NewRegistry(), up)
+	off := server.New(nil, command.NewRegistry())
+	on := server.New(nil, command.NewRegistry())
 	on.Collab = cp
 
-	if got := get(off, "/collab/w/n?epoch=2"); !strings.HasPrefix(got, "rust /collab/w/n?epoch=2") {
-		t.Errorf("COLLAB_URL unset must keep Rust: %q", got)
+	if got := get(off, "/collab/w/n?epoch=2"); got != "" {
+		t.Errorf("COLLAB_URL unset: /collab is the router's empty 404: %q", got)
 	}
 	if got := get(on, "/collab/w/n?epoch=2"); !strings.HasPrefix(got, "collab /collab/w/n?epoch=2") {
 		t.Errorf("collab path must go to the collab service: %q", got)
@@ -52,6 +51,6 @@ func TestCollabPathRoutesToCollabURL(t *testing.T) {
 		t.Errorf("healthz: %q", got)
 	}
 	if got := get(on, "/api/notes/ping"); got != "" {
-		t.Errorf("other paths are the router's empty 404, not Rust's: %q", got)
+		t.Errorf("other paths are the router's empty 404, %q", got)
 	}
 }

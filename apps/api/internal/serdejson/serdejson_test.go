@@ -2,7 +2,7 @@ package serdejson
 
 import "testing"
 
-// Texts read from the Rust server; TestSerdeJSONErrorsMatchRust compares 5000 mutated documents live.
+// Texts read from the retired Rust server.
 func TestCheck(t *testing.T) {
 	for in, want := range map[string]string{
 		`{bad`: "key must be a string at line 1 column 2", ``: "EOF while parsing a value at line 1 column 0", `[1,]`: "trailing comma at line 1 column 4",

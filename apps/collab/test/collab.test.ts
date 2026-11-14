@@ -1,5 +1,5 @@
-// Ports the socket scenarios of crates/cnote-collab/tests/collab.rs against the real database and the real
-// Rust server (fixtures, note.restore). Needs DATABASE_URL (.env) and Rust on RUST_API_URL (default :4000).
+// Socket scenarios against the real database and the real Go API (fixtures, note.restore). Needs DATABASE_URL (.env)
+// and the Go API on API_URL (default :4000) with COLLAB_URL and COLLAB_INTERNAL_SECRET set to a collab service.
 import { afterAll, describe, expect, it } from 'vitest'
 import { WebSocket } from 'ws'
 import { WebsocketProvider } from 'y-websocket'
@@ -244,7 +244,7 @@ describe('collab gateway', () => {
     const after = await cmdOk(f.ws, f.owner, 'note.revisions', { note_id: f.note })
     expect(after.map((x: { reason: string }) => x.reason)).toEqual(['restore', 'before_restore', 'edit'])
     const before = await cmdOk(f.ws, f.owner, 'note.revision', { id: after[1].id })
-    expect(before.content_md).toBe('hello world v2 v3') // Rust's Markdown of the TS-persisted state
+    expect(before.content_md).toBe('hello world v2 v3') // the Markdown of the persisted state
     expect(after[0].restored_from).toBe(v2)
 
     const staleSave = await cmd(f.ws, f.owner, 'note.update', {

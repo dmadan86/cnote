@@ -11,7 +11,7 @@ CRM (contacts, deals by stage), Billing (invoices, read-only) and Search.
 ## Run
 
 ```sh
-cargo run -p cnote-server -- serve --with-worker        # API on :4000
+(cd apps/api && WITH_WORKER=1 go run ./cmd/api)        # API on :4000
 pnpm install
 cp apps/mobile/.env.example apps/mobile/.env            # optional: EXPO_PUBLIC_API_URL
 pnpm dev:mobile                                         # Metro on :8081

@@ -104,16 +104,16 @@ func TestAIKeysAreEncryptedAndNeverReturned(t *testing.T) {
 		t.Fatal("the blob decrypts for another workspace")
 	}
 
-	// both servers read what the other wrote: Go encrypted it, Rust decrypts it and sends it as the bearer token
-	for _, base := range []string{e.gosv.URL, e.rust} {
+	// the stored key is decrypted and sent as the bearer token
+	for _, base := range []string{e.gosv.URL} {
 		if r := e.cmd(base, o, o.ws, "ai.summarize", map[string]any{"note_id": note}, nil); r.status != 200 || r.json()["provider"] != "openai" {
 			t.Fatalf("summarize via %s: %d %s", base, r.status, r.body)
 		}
 	}
-	// and the other way round: Rust encrypts, Go decrypts
+	// a changed key is picked up
 	e.must(o, "ai.set_provider", map[string]any{"provider": "openai", "base_url": fk.srv.URL + "/v1", "api_key": key + "-rust"})
 	if r := e.goCmd(o, "ai.summarize", map[string]any{"note_id": note}); r.status != 200 {
-		t.Fatalf("Go cannot use a key Rust encrypted: %d %s", r.status, r.body)
+		t.Fatalf("a re-encrypted key is unusable: %d %s", r.status, r.body)
 	}
 	fk.mu.Lock()
 	var auths []string
@@ -121,7 +121,7 @@ func TestAIKeysAreEncryptedAndNeverReturned(t *testing.T) {
 		auths = append(auths, q.Auth)
 	}
 	fk.mu.Unlock()
-	if strings.Join(auths, ",") != "Bearer "+key+",Bearer "+key+",Bearer "+key+"-rust" {
+	if strings.Join(auths, ",") != "Bearer "+key+",Bearer "+key+"-rust" {
 		t.Errorf("provider saw %v", auths)
 	}
 

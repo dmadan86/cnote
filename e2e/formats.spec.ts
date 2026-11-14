@@ -102,7 +102,7 @@ test('colour, alignment, image, emoji, merged + resized table: stored contract s
   }
   await expect.poll(md, { timeout: 15_000 }).toMatch(/colwidth="\d+"/)
   await page.waitForTimeout(3000) // collab gateway snapshot
-  // What this editor produces (the Rust side must match it byte for byte).
+  // What this editor produces (the server must round-trip it unchanged).
   const local = await page.evaluate(
     () => (document.querySelector('.ProseMirror') as any).editor.getMarkdown() as string,
   )

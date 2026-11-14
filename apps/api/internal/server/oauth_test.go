@@ -59,11 +59,7 @@ func newOCFor(t *testing.T, e *env) *oc {
 	t.Helper()
 	t.Setenv("TRUST_PROXY", "1")
 	unsetEnv(t, "PUBLIC_BASE_URL")
-	// A Go server whose upstream fails the test: everything here must be answered natively, never by Rust.
-	guard := httptest.NewServer(server.New(e.pool, command.NewRegistry(modules.Commands()...), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Errorf("proxied to Rust: %s %s", r.Method, r.URL.Path)
-		w.WriteHeader(http.StatusBadGateway)
-	})))
+	guard := httptest.NewServer(server.New(e.pool, command.NewRegistry(modules.Commands()...)))
 	t.Cleanup(guard.Close)
 	e.gosv = guard
 	return &oc{env: e, t: t, base: e.gosv.URL, xff: fmt.Sprintf("10.%d.%d.%d", mrand.Intn(256), mrand.Intn(256), 1+mrand.Intn(250))}

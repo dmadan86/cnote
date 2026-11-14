@@ -19,7 +19,9 @@ import (
 	"github.com/cnote/api/internal/command"
 	"github.com/cnote/api/internal/db"
 	"github.com/cnote/api/internal/jobs"
+	"github.com/cnote/api/internal/modules"
 	"github.com/cnote/api/internal/secretbox"
+	"github.com/cnote/api/internal/server"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -30,11 +32,11 @@ func rnd() string {
 	return hex.EncodeToString(b)
 }
 
-func rustURL() string {
-	if u := strings.TrimRight(os.Getenv("RUST_API_URL"), "/"); u != "" {
-		return u
-	}
-	return "http://localhost:4000"
+// apiURL serves the Go API (fixtures are made through its public endpoints) for the length of the test.
+func apiURL(t *testing.T, pool *pgxpool.Pool) string {
+	srv := httptest.NewServer(server.New(pool, modules.Registry()))
+	t.Cleanup(srv.Close)
+	return srv.URL
 }
 
 type fx struct {
@@ -45,10 +47,12 @@ type fx struct {
 	ctx    *command.Ctx
 }
 
-// setup signs up through Rust (fixture) and opens ONE tenant tx that is always rolled back: the Rust worker
+// setup signs up through the Go server (fixture) and opens ONE tenant tx that is always rolled back: a worker
 // claims any committed queued job, so nothing here may commit.
 func setup(t *testing.T) *fx {
 	t.Helper()
+	t.Setenv("AUTH_SIGNUP_FREE", "1000000") // the per-IP throttle is shared through the database
+	t.Setenv("AUTH_IP_FREE", "1000000")
 	url := os.Getenv("DATABASE_URL")
 	if url == "" {
 		t.Fatal("DATABASE_URL is required (load the repo .env)")
@@ -64,7 +68,7 @@ func setup(t *testing.T) *fx {
 	}
 	t.Cleanup(pool.Close)
 	b, _ := json.Marshal(map[string]any{"email": "go-" + rnd() + "@example.test", "name": "Hook", "password": rnd() + rnd(), "workspace_name": "Hooks WS"})
-	res, err := http.Post(rustURL()+"/api/auth/signup", "application/json", bytes.NewReader(b))
+	res, err := http.Post(apiURL(t, pool)+"/api/auth/signup", "application/json", bytes.NewReader(b))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -508,10 +512,10 @@ func TestMCPTarget(t *testing.T) {
 	}
 }
 
-func TestRustEncryptedSecretDecryptsInGo(t *testing.T) {
+func TestHookSecretIsEncryptedAndDecryptsInGo(t *testing.T) {
 	f := setup(t)
 	b, _ := json.Marshal(map[string]any{"name": "compat", "target": "http", "url": "https://example.com/hook", "events": []string{"note."}})
-	req, _ := http.NewRequest("POST", rustURL()+"/api/w/"+f.ws+"/commands/hook.create", bytes.NewReader(b))
+	req, _ := http.NewRequest("POST", apiURL(t, f.pool)+"/api/w/"+f.ws+"/commands/hook.create", bytes.NewReader(b))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Cookie", "cn_session="+f.cookie)
 	res, err := http.DefaultClient.Do(req)
@@ -527,7 +531,7 @@ func TestRustEncryptedSecretDecryptsInGo(t *testing.T) {
 	if res.StatusCode != 200 || json.Unmarshal(raw, &out) != nil {
 		t.Fatalf("hook.create: %d %s", res.StatusCode, raw)
 	}
-	// Rust committed this hook in its own tx; clean it up through a tenant tx of ours (not the shared one).
+	// The server committed this hook in its own tx; clean it up through a tenant tx of ours (not the shared one).
 	t.Cleanup(func() {
 		tx, err := db.BeginTenant(context.Background(), f.pool, f.ws)
 		if err == nil {

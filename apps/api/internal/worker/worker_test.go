@@ -15,59 +15,12 @@ import (
 
 func (e *env) sync(s side) {
 	e.t.Helper()
-	switch x := s.(type) {
-	case *goSide:
+	if x, ok := s.(*goSide); ok {
 		x.drain(500)
-	case *rustSide:
-		e.settle(x.w.ws)
 	}
 }
 
 func str(v any, k string) string { return v.(map[string]any)[k].(string) }
-
-// twins creates two identical fixtures: a Rust one (the real Rust worker reacts to everything) and a Go one
-// (this test plays the Go worker inside a rolled-back transaction).
-func (e *env) twins() (*rustSide, *goSide) {
-	e.t.Helper()
-	rw, gw := e.signup("Tess"), e.signup("Tess")
-	e.settle(rw.ws)
-	e.settle(gw.ws)
-	return &rustSide{e, rw}, e.newGoSide(gw)
-}
-
-func (e *env) snap(s side, extra ...string) string {
-	if g, ok := s.(*goSide); ok {
-		g.c.Principal = command.Principal{Kind: command.KindSystem, WorkspaceID: g.w.ws, Role: command.Owner}
-		return snapshot(e.t, g.c, extra...)
-	}
-	return snapshot(e.t, e.readCtx(s.ws().ws), extra...)
-}
-
-func (e *env) sameRows(r *rustSide, g *goSide) {
-	e.t.Helper()
-	rs, gs := e.snap(r), e.snap(g)
-	if rs != gs {
-		rl, gl := strings.Split(rs, "\n"), strings.Split(gs, "\n")
-		seen := map[string]int{}
-		for _, l := range rl {
-			seen[l]++
-		}
-		var onlyGo, onlyRust []string
-		for _, l := range gl {
-			if seen[l] > 0 {
-				seen[l]--
-			} else {
-				onlyGo = append(onlyGo, l)
-			}
-		}
-		for l, n := range seen {
-			for ; n > 0; n-- {
-				onlyRust = append(onlyRust, l)
-			}
-		}
-		e.t.Fatalf("Go and Rust worker results differ.\nonly Go:\n%s\nonly Rust:\n%s", strings.Join(onlyGo, "\n"), strings.Join(onlyRust, "\n"))
-	}
-}
 
 func TestParseBindings(t *testing.T) {
 	id := "0b2ed6f4-0d63-4a56-98a6-4c0b3b4f5a11"
@@ -122,50 +75,11 @@ func TestSubst(t *testing.T) {
 	}
 }
 
-// Bindings and freshness: the same page and item edits produce the same relations, bindings, flags, events and
-// queued jobs under the Rust worker and under this worker.
-func TestDifferentialBindingsAndFreshness(t *testing.T) {
-	e := newEnv(t)
-	r, g := e.twins()
-	run := func(s side) {
-		sp := str(s.cmd("space.create", map[string]any{"key": "ENG", "name": "Engineering", "template": "software"}), "id")
-		item := s.cmd("item.create", map[string]any{"space_id": sp, "title": "Ship it"})
-		target := str(s.cmd("note.create", map[string]any{"space_id": sp, "title": "Pricing", "content_md": "v1"}), "id")
-		e.sync(s) // the page must exist after these events are handled, as it does in the Go run
-		page := str(s.cmd("note.create", map[string]any{"space_id": sp, "title": "Guide", "content_md": "Tracks ENG-1 and [[Pricing]] cnote://x/note/" + target +
-			" see https://github.com/acme/api/pull/9 and https://example.com/x. repo:acme/api/deploy.md ünïcödeENG-2 ENG-3 [[Missing]]"}), "id")
-		e.sync(s)
-		s.cmd("note.update", map[string]any{"id": target, "content_md": "v2"})
-		e.sync(s)
-		s.cmd("note.update", map[string]any{"id": target, "content_md": "v3"}) // an open flag exists: no second proposal
-		e.sync(s)
-		s.cmd("note.update", map[string]any{"id": target, "title": "Pricing 2"}) // title change counts too
-		e.sync(s)
-		s.cmd("item.transition", map[string]any{"key": str(item, "key"), "to": "In Progress"})
-		e.sync(s)
-		s.cmd("note.update", map[string]any{"id": page, "content_md": "Tracks ENG-1 only"})
-		e.sync(s)
-		s.cmd("note.update", map[string]any{"id": page, "title": "Guide 2"}) // title only: bindings are not re-synced
-		e.sync(s)
-	}
-	run(r)
-	run(g)
-	e.sameRows(r, g)
-	// the AI jobs ran on the Go side too and produced the same chunks and proposals (compared above)
-	var n int
-	if err := g.c.Tx.QueryRow(g.c.Context, "select count(*) from core.jobs where kind = 'ai.index_note' and id > $1", g.baseline).Scan(&n); err != nil || n < 3 {
-		t.Fatalf("ai.index_note jobs: %d %v", n, err)
-	}
-	if err := g.c.Tx.QueryRow(g.c.Context, "select count(*) from core.jobs where kind = 'docs.propose_edit' and status = 'done' and id > $1", g.baseline).Scan(&n); err != nil || n < 2 {
-		t.Fatalf("docs.propose_edit jobs: %d %v", n, err)
-	}
-}
-
 func TestPagesCannotBindToNotesTheirAuthorCannotRead(t *testing.T) {
 	e := newEnv(t)
 	w := e.signup("Tess")
 	member := e.signup("Mo")
-	e.rustCmd(w, "member.add", map[string]any{"email": member.email, "role": "member"})
+	e.apiCmd(w, "member.add", map[string]any{"email": member.email, "role": "member"})
 	e.settle(w.ws)
 	g := e.newGoSide(w)
 	priv := str(g.cmd("space.create", map[string]any{"key": "HID", "name": "HID", "visibility": "private", "template": "software"}), "id")
@@ -180,64 +94,6 @@ func TestPagesCannotBindToNotesTheirAuthorCannotRead(t *testing.T) {
 	}
 	if bound != 0 {
 		t.Fatal("member must not bind to an item in a private space")
-	}
-}
-
-// Automations: the Rust tests of crates/cnote-projects/tests/projects.rs, run through the Go event handler, then
-// the same scenario on a Rust twin to compare every row.
-func TestDifferentialAutomations(t *testing.T) {
-	e := newEnv(t)
-	r, g := e.twins()
-	run := func(s side) {
-		sp := str(s.cmd("space.create", map[string]any{"key": "ENG", "name": "Engineering", "template": "software"}), "id")
-		mk := func(name string, trig map[string]any, conds, actions any, draft bool) map[string]any {
-			return map[string]any{"space_id": sp, "name": name, "trigger": trig, "conditions": conds, "actions": actions, "draft": draft}
-		}
-		comment := []any{map[string]any{"type": "comment", "body": "Triage {{item.key}}"}}
-		onCreated := map[string]any{"kind": "event", "event": "item.created", "cnql": "type = bug"}
-		s.cmd("automation.create", mk("bug comment", onCreated, []any{}, comment, false))
-		draft := str(s.cmd("automation.create", mk("imported", onCreated, []any{}, comment, true)), "id")
-		s.cmd("automation.create", mk("urgent only", map[string]any{"kind": "event", "event": "item.created"}, []any{map[string]any{"cnql": "priority = urgent"}}, comment, false))
-		s.cmd("automation.create", mk("bad target", map[string]any{"kind": "event", "event": "item.created", "cnql": "type = story"}, []any{}, []any{map[string]any{"type": "transition", "to": "Nowhere"}}, false))
-		s.cmd("automation.create", mk("auto start", map[string]any{"kind": "event", "event": "item.assigned", "cnql": `statusCategory = "To Do"`}, []any{},
-			[]any{map[string]any{"type": "transition", "to": "In Progress"}, map[string]any{"type": "command", "name": "item.update", "input": map[string]any{"key": "{{item.key}}", "labels": []any{"auto"}}}}, false))
-		s.cmd("item.create", map[string]any{"space_id": sp, "title": "crash", "item_type": "bug"})
-		s.cmd("item.create", map[string]any{"space_id": sp, "title": "plain", "priority": "urgent"})
-		s.cmd("item.create", map[string]any{"space_id": sp, "title": "story", "item_type": "story"})
-		e.sync(s)
-		s.cmd("item.assign", map[string]any{"key": "ENG-2", "user_id": s.ws().userID})
-		e.sync(s)
-		s.cmd("automation.update", map[string]any{"id": draft, "draft": false})
-		s.cmd("item.create", map[string]any{"space_id": sp, "title": "second crash", "item_type": "bug"})
-		e.sync(s)
-		s.cmd("automation.update", map[string]any{"id": draft, "enabled": false})
-		e.sync(s)
-	}
-	run(r)
-	run(g)
-	e.sameRows(r, g)
-
-	// worker-visible expectations of the Rust test, asserted on the Go side
-	counts := map[string]int{}
-	rows, err := g.c.Tx.Query(g.c.Context, "select a.name, r.status, count(*) from projects.automation_runs r join projects.automations a on a.id = r.automation_id group by 1,2")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for rows.Next() {
-		var n, st string
-		var c int
-		_ = rows.Scan(&n, &st, &c)
-		counts[n+"/"+st] = c
-	}
-	rows.Close()
-	for k, want := range map[string]int{"bug comment/success": 2, "imported/success": 1, "urgent only/success": 1, "bad target/failed": 1, "auto start/success": 1} {
-		if counts[k] != want {
-			t.Errorf("%s = %d, want %d (all: %v)", k, counts[k], want, counts)
-		}
-	}
-	var actor string
-	if err := g.c.Tx.QueryRow(g.c.Context, "select actor_type from core.events where kind = 'item.transitioned' order by id desc limit 1").Scan(&actor); err != nil || actor != "system" {
-		t.Fatalf("automation changes are attributed to the system, got %q %v", actor, err)
 	}
 }
 
@@ -298,7 +154,7 @@ func TestAutomationActionsUseCreatorPermissions(t *testing.T) {
 	e := newEnv(t)
 	w := e.signup("Tess")
 	member := e.signup("Mo")
-	e.rustCmd(w, "member.add", map[string]any{"email": member.email, "role": "member"})
+	e.apiCmd(w, "member.add", map[string]any{"email": member.email, "role": "member"})
 	e.settle(w.ws)
 	g := e.newGoSide(w)
 	sp := str(g.cmd("space.create", map[string]any{"key": "ENG", "name": "Engineering", "template": "software"}), "id")
@@ -497,8 +353,8 @@ func TestRunClaimedOutcomes(t *testing.T) {
 }
 
 // Claiming uses core.claim_jobs (FOR UPDATE SKIP LOCKED) and only the kinds this worker runs, so it can share the
-// queue with the Rust worker: a job claimed by one transaction is invisible to the other, and every kind is taken.
-func TestClaimSharesQueueWithRust(t *testing.T) {
+// queue with other workers: a job claimed by one transaction is invisible to the other, and every kind is taken.
+func TestClaimSharesQueue(t *testing.T) {
 	e := newEnv(t)
 	w := e.signup("Tess")
 	e.settle(w.ws)
