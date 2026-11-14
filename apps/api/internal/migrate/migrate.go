@@ -49,6 +49,9 @@ func load(dir string) ([]file, error) {
 		sum := sha512.Sum384(b)
 		out = append(out, file{v, strings.ReplaceAll(desc, "_", " "), string(b), sum[:]})
 	}
+	if len(out) == 0 { // a wrong working directory must not look like "every applied migration is missing"
+		return nil, fmt.Errorf("no migrations found in %s (run from the repo root or pass the directory)", dir)
+	}
 	sort.Slice(out, func(i, j int) bool { return out[i].version < out[j].version })
 	return out, nil
 }
