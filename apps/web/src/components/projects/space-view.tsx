@@ -30,8 +30,9 @@ import {
   type Workflow,
 } from './shared'
 import { SprintsView } from './sprints'
+import { BillingTab, TimeTab } from './time'
 
-type Layout = 'list' | 'board' | 'sprints'
+type Layout = 'list' | 'board' | 'sprints' | 'time' | 'billing'
 type View = { id: string; name: string; layout: string; query: string }
 
 function QueryBar({
@@ -482,6 +483,8 @@ export function SpaceView({ space }: { space: Space }) {
           {tab('list', 'List')}
           {tab('board', 'Board')}
           {tab('sprints', 'Sprints')}
+          {tab('time', 'Time')}
+          {tab('billing', 'Billing')}
         </div>
         <Link href={`/w/${ws}/projects/triage`} className={`${btn} ml-auto`}>
           <Inbox size={14} /> Triage
@@ -496,6 +499,10 @@ export function SpaceView({ space }: { space: Space }) {
 
       {layout === 'sprints' ? (
         <SprintsView space={space} agents={agents} />
+      ) : layout === 'time' ? (
+        <TimeTab space={space} />
+      ) : layout === 'billing' ? (
+        <BillingTab space={space} />
       ) : (
         <>
           <QueryBar

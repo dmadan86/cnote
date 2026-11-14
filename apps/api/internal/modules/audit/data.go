@@ -28,6 +28,7 @@ var SubjectCatalog = map[string]string{
 	"core.note_revisions.note_id":                  "immutable page versions",
 	"core.public_links.note_id":                    "link hashes of documents",
 	"ai.chunks.note_id":                            "derived search index of the page text; deleted on erase",
+	"projects.time_entries.item_id":                "work time on items, not a contact record",
 	"projects.items.note_id":                       "work items, not a contact record",
 	"projects.evidence.note_id":                    "work items, not a contact record",
 	"docs.freshness_flags.note_id":                 "page upkeep",
