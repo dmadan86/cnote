@@ -54,6 +54,7 @@ func publiclinksIP(r *http.Request) string { return publiclinks.ClientIP(r) }
 // authSurface serves the request when it is one of this surface's routes and reports whether it did.
 func (s *Server) authSurface(w http.ResponseWriter, r *http.Request) bool {
 	path := r.URL.EscapedPath()
+	r = r.WithContext(auth.WithClient(r.Context(), publiclinksIP(r), r.UserAgent())) // recorded on any session this request creates
 	switch {
 	case r.Method == http.MethodPost && path == "/api/auth/signup":
 		s.signup(w, r)

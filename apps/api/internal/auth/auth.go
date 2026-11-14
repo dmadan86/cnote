@@ -83,14 +83,19 @@ func (a *Auth) PrincipalFor(ctx context.Context, h http.Header, workspaceID stri
 	}
 	var userID string
 	var sess sessInfo
+	var stale bool
 	err := a.Pool.QueryRow(ctx,
-		`select u.id::text, s.amr, coalesce(s.sso_workspace_id::text, '') from core.sessions s join core.users u on u.id = s.user_id
-		 where s.id = $1 and s.expires_at > now()`, sha256Hex(token)).Scan(&userID, &sess.amr, &sess.ssoWS)
+		`select u.id::text, s.amr, coalesce(s.sso_workspace_id::text, ''), (s.last_seen_at is null or s.last_seen_at < now() - make_interval(secs => $2))
+		 from core.sessions s join core.users u on u.id = s.user_id
+		 where s.id = $1 and s.expires_at > now()`, sha256Hex(token), seenEvery.Seconds()).Scan(&userID, &sess.amr, &sess.ssoWS, &stale)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return command.Principal{}, command.NewError(command.Unauthenticated, "session expired")
 	}
 	if err != nil {
 		return command.Principal{}, command.DB(err)
+	}
+	if stale {
+		a.touch(ctx, sha256Hex(token))
 	}
 	return a.userPrincipal(ctx, userID, workspaceID, &sess)
 }

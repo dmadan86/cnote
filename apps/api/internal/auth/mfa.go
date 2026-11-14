@@ -109,7 +109,6 @@ func (a *Auth) MFAConfirm(ctx context.Context, userID, code string) ([]string, e
 		}
 		return nil, errBadCode
 	}
-	codes := make([]string, recoveryCount)
 	tx, err := a.Pool.Begin(ctx)
 	if err != nil {
 		return nil, command.DB(err)
@@ -118,14 +117,53 @@ func (a *Auth) MFAConfirm(ctx context.Context, userID, code string) ([]string, e
 	if _, err := tx.Exec(ctx, "update core.user_mfa set confirmed_at = now() where user_id = $1::uuid", userID); err != nil {
 		return nil, command.DB(err)
 	}
+	codes, err := replaceRecoveryCodes(ctx, tx, userID)
+	if err != nil {
+		return nil, err
+	}
+	return codes, command.DB(tx.Commit(ctx))
+}
+
+// replaceRecoveryCodes deletes the person's codes, used or not, and stores a fresh set; the old set stops working.
+func replaceRecoveryCodes(ctx context.Context, tx pgx.Tx, userID string) ([]string, error) {
 	if _, err := tx.Exec(ctx, "delete from core.mfa_recovery_codes where user_id = $1::uuid", userID); err != nil {
 		return nil, command.DB(err)
 	}
+	codes := make([]string, recoveryCount)
 	for i := range codes {
 		codes[i] = newRecoveryCode()
 		if _, err := tx.Exec(ctx, "insert into core.mfa_recovery_codes (user_id, code_hash) values ($1::uuid, $2)", userID, sha256Hex(normCode(codes[i]))); err != nil {
 			return nil, command.DB(err)
 		}
+	}
+	return codes, nil
+}
+
+// RegenerateRecovery needs the password and a current authenticator code (a recovery code is not enough: it would let a
+// stolen code mint more), then replaces the whole set.
+func (a *Auth) RegenerateRecovery(ctx context.Context, userID, password, code string) ([]string, error) {
+	var hash *string
+	if err := a.Pool.QueryRow(ctx, "select password_hash from core.users where id = $1::uuid", userID).Scan(&hash); err != nil {
+		return nil, command.DB(err)
+	}
+	bad := command.NewError(command.Unauthenticated, "invalid password or code")
+	if hash == nil || !VerifyPassword(password, *hash) || len(normCode(code)) != 6 {
+		return nil, bad
+	}
+	if err := a.checkSecondFactor(ctx, userID, code); err != nil {
+		if e, ok := err.(*command.Error); ok && e.Code == command.Unauthenticated {
+			return nil, bad
+		}
+		return nil, err
+	}
+	tx, err := a.Pool.Begin(ctx)
+	if err != nil {
+		return nil, command.DB(err)
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	codes, err := replaceRecoveryCodes(ctx, tx, userID)
+	if err != nil {
+		return nil, err
 	}
 	return codes, command.DB(tx.Commit(ctx))
 }

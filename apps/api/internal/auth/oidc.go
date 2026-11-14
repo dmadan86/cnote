@@ -3,7 +3,7 @@ package auth
 // OpenID Connect sign-in per workspace (authorization code flow, PKCE S256, state + nonce, RS256 ID tokens checked
 // against the provider's JWKS). Every request to the provider goes through netguard (public https only). The
 // per-login secrets (state, nonce, PKCE verifier) travel in a sealed, short-lived cookie bound to the browser, so
-// no server state is needed. SAML and ES256/PS256 tokens are not supported.
+// no server state is needed. ES256/PS256 tokens are not supported (SAML is in saml.go).
 
 import (
 	"context"
@@ -77,10 +77,10 @@ func (a *Auth) ssoConfig(ctx context.Context, slug string) (SSOConfig, error) {
 	return c, err
 }
 
-// idpGet / idpPost call the provider through the SSRF guard.
-func idpDo(ctx context.Context, method, u string, form url.Values, dst any) error {
+// idpFetch calls the provider through the SSRF guard and returns the (size-capped) 200 body.
+func idpFetch(ctx context.Context, method, u string, form url.Values, accept string) ([]byte, error) {
 	if err := netguard.CheckEndpoint(ctx, u); err != nil {
-		return errors.New("identity provider address refused: " + err.Error())
+		return nil, errors.New("identity provider address refused: " + err.Error())
 	}
 	cctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -90,20 +90,28 @@ func idpDo(ctx context.Context, method, u string, form url.Values, dst any) erro
 	}
 	req, err := http.NewRequestWithContext(cctx, method, u, body)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if form != nil {
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	}
-	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Accept", accept)
 	res, err := netguard.Client().Do(req)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer res.Body.Close()
 	buf, err := io.ReadAll(io.LimitReader(res.Body, maxIDPBody+1))
 	if err != nil || len(buf) > maxIDPBody || res.StatusCode != 200 {
-		return errors.New("identity provider answered with an error")
+		return nil, errors.New("identity provider answered with an error")
+	}
+	return buf, nil
+}
+
+func idpDo(ctx context.Context, method, u string, form url.Values, dst any) error {
+	buf, err := idpFetch(ctx, method, u, form, "application/json")
+	if err != nil {
+		return err
 	}
 	return json.Unmarshal(buf, dst)
 }
