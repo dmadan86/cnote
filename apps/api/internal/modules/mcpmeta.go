@@ -101,7 +101,22 @@ var mcpMeta = map[string]meta{
 	"quote.accept":             {"Mark a sent quotation as accepted.", idOnly},
 	"quote.reject":             {"Mark a sent quotation as rejected.", idOnly},
 	"quote.convert_to_invoice": {"Turn an accepted quotation into a draft invoice.", idOnly},
-	"quote.convert_to_project": {"Turn an accepted quotation into a project item.", idOnly},
+	"quote.convert_to_project": {"Turn an accepted quotation into a project item; optional milestones [{name, percent_bp}] create billing milestones (percents of the quotation).", schema([]string{"id"}, props{
+		"id": id, "milestones": props{"type": "array", "items": map[string]any{"type": "object", "required": []string{"name", "percent_bp"}, "properties": props{"name": str, "percent_bp": props{"type": "integer", "description": "Basis points of the quotation, 3000 = 30%"}}}}})},
+	"time.log":    {"Log time on a work item (people only). At most 24 hours a day per person.", schema([]string{"item_id", "minutes"}, props{"item_id": id, "minutes": num, "worked_on": date, "note": str, "billable": flag})},
+	"time.update": {"Change your own unbilled time entry (admins: anyone's).", schema([]string{"id"}, props{"id": id, "minutes": num, "worked_on": date, "note": str, "billable": flag})},
+	"time.delete": {"Delete your own unbilled time entry (admins: anyone's).", idOnly},
+	"time.list":   {"List time entries with totals, filtered by project, item, person, dates or unbilled only.", schema(nil, props{"space_id": id, "item_id": id, "user_id": id, "from": date, "to": date, "unbilled": flag, "limit": num})},
+	"time.invoice": {"Raise a draft invoice from a project's unbilled billable time up to a date, at the project's hourly rate and SAC. The entries become billed and locked.", schema([]string{"space_id", "to_date"}, props{
+		"space_id": id, "to_date": date, "group_by": props{"type": "string", "enum": []string{"item", "person", "none"}}, "contact_id": id, "invoice_date": date})},
+	"project.billing_set": {"Set a project's billing profile: customer, hourly rate (paise), SAC and GST rate used by time and milestone invoices.", schema([]string{"space_id"}, props{
+		"space_id": id, "contact_id": id, "hourly_rate_minor": props{"type": "integer", "description": "Paise per hour"}, "hsn_sac": str, "gst_rate_bp": num})},
+	"project.billing_get": {"Read a project's billing profile.", schema([]string{"space_id"}, props{"space_id": id})},
+	"milestone.set_billing": {"Make a project version a billing milestone: an amount before GST, or a percent of an accepted quotation (the milestone that completes 100% takes the remainder; the sum cannot exceed the quotation).", schema([]string{"version_id"}, props{
+		"version_id": id, "quotation_id": id, "bill_amount_minor": props{"type": "integer", "description": "Paise before GST"}, "bill_percent_bp": props{"type": "integer", "description": "Basis points of the quotation"}})},
+	"milestone.invoice":    {"Raise the draft invoice for a billing milestone (one line per GST rate of the quotation). invoice_date defaults to the version's release date, else today.", schema([]string{"version_id"}, props{"version_id": id, "invoice_date": date})},
+	"milestone.list":       {"List a project's versions with billing: amount, percent, quotation, invoice and a status of planned, due, invoiced or paid.", schema([]string{"space_id"}, props{"space_id": id})},
+	"report.project_money": {"One project's money: quoted, invoiced, received, advances (received, unapplied, applied), milestones and hours with the unbilled value.", schema([]string{"space_id"}, props{"space_id": id})},
 
 	"bill.create_draft": {"Create a draft purchase bill from a vendor.", schema([]string{"space_id", "vendor_id", "vendor_bill_number"}, props{
 		"space_id": id, "vendor_id": id, "vendor_bill_number": str, "bill_date": date, "due_date": date, "place_of_supply": str, "notes": str, "lines": lines})},

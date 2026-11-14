@@ -20,6 +20,7 @@ import {
   useAgents,
   useToast,
 } from './shared'
+import { ItemTimeCard } from './time'
 
 type Comment = {
   id: string
@@ -383,6 +384,8 @@ export function ItemDetailView({ itemKey }: { itemKey: string }) {
             )}
           </Prop>
         </Card>
+
+        <ItemTimeCard itemId={it.id} push={push} />
 
         <Card title="Relations">
           {note.data?.relations.length === 0 && <p className="text-[13px] text-muted">No relations yet.</p>}

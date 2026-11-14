@@ -53,6 +53,10 @@ type in struct {
 	ReverseCharge *bool           `json:"reverse_charge"`
 	Notes         *string         `json:"notes"`
 	Lines         json.RawMessage `json:"lines"`
+	Milestones    []struct {
+		Name      string `json:"name"`
+		PercentBP int    `json:"percent_bp"`
+	} `json:"milestones"`
 }
 
 func decode(raw json.RawMessage) (in, error) {
@@ -554,6 +558,12 @@ func convertToProject(c *command.Ctx, input json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	in, _ := decode(input)
+	for _, m := range in.Milestones {
+		if strings.TrimSpace(m.Name) == "" || m.PercentBP < 1 || m.PercentBP > 10000 {
+			return nil, command.ErrInvalid("each milestone needs a name and a percent_bp between 1 and 10000")
+		}
+	}
 	if q.ConvertedItemID != nil {
 		return nil, command.ErrConflict("quotation already converted to a project item")
 	}
@@ -577,6 +587,22 @@ func convertToProject(c *command.Ctx, input json.RawMessage) (any, error) {
 	}
 	if err := markConverted(c, q, "converted_item_id", item.ID, "project"); err != nil {
 		return nil, err
+	}
+	// Billing milestones: a version per milestone, each a percent of the quotation (the one that completes 100% takes the remainder).
+	for _, m := range in.Milestones {
+		v, err := c.Call("version.create", map[string]any{"space_id": q.SpaceID, "name": strings.TrimSpace(m.Name)})
+		if err != nil {
+			return nil, err
+		}
+		var ver struct {
+			ID string `json:"id"`
+		}
+		if json.Unmarshal(v, &ver) != nil || ver.ID == "" {
+			return nil, command.NewError(command.Internal, "version.create returned no id")
+		}
+		if _, err := c.Call("milestone.set_billing", map[string]any{"version_id": ver.ID, "quotation_id": q.ID, "bill_percent_bp": m.PercentBP}); err != nil {
+			return nil, err
+		}
 	}
 	return map[string]any{"quotation": mustDetail(c, q.ID), "item": json.RawMessage(out)}, nil
 }

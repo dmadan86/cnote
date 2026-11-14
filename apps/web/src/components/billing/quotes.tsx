@@ -401,6 +401,21 @@ export function QuoteView({ params }: { params: Promise<{ id: string }> }) {
       },
       (x) => setErr((x as Error).message),
     )
+  const [schedule, setSchedule] = useState('')
+  // "Advance 30, Slab 40": milestones as percents of the quotation
+  const convertProject = () => {
+    const milestones = schedule
+      .split(',')
+      .map((p) => /^\s*(.+?)\s+(\d+(?:\.\d+)?)\s*%?\s*$/.exec(p))
+      .filter((m): m is RegExpExecArray => !!m)
+      .map((m) => ({ name: m[1], percent_bp: Math.round(Number(m[2]) * 100) }))
+    if (schedule.trim() && milestones.length !== schedule.split(',').length)
+      return setErr('Write the schedule as: Advance 30, Slab 40, Handover 30')
+    run(ws, 'quote.convert_to_project', { id, milestones }).then(
+      () => (setErr(undefined), reload()),
+      (x) => setErr((x as Error).message),
+    )
+  }
   if (error) return <ErrorText error={error} />
   if (!q) return <p className="text-muted">Loading...</p>
   const tax = {
@@ -478,9 +493,18 @@ export function QuoteView({ params }: { params: Promise<{ id: string }> }) {
               </button>
             )}
             {(q.status === 'accepted' || q.status === 'converted') && !q.converted_item_id && (
-              <button type="button" className={btn} onClick={() => act('quote.convert_to_project')}>
-                Convert to project
-              </button>
+              <>
+                <input
+                  aria-label="Payment schedule"
+                  placeholder="Payment schedule: Advance 30, Slab 40, Handover 30"
+                  value={schedule}
+                  onChange={(e) => setSchedule(e.target.value)}
+                  className="w-72 max-w-full rounded-md border border-line bg-canvas px-2 py-1.5 text-[13px]"
+                />
+                <button type="button" className={btn} onClick={convertProject}>
+                  Convert to project
+                </button>
+              </>
             )}
             {q.converted_invoice_id && (
               <Link href={`/w/${ws}/billing/${q.converted_invoice_id}`} className={btn}>
