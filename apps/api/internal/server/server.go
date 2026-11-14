@@ -50,6 +50,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.WriteString(w, "ok")
 	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.EscapedPath(), "/api/w/"):
 		s.runCommand(w, r)
+	case r.Method == http.MethodPost && r.URL.Path == "/mcp":
+		s.mcp(w, r)
 	case s.Collab != nil && strings.HasPrefix(r.URL.Path, "/collab/"):
 		slog.Debug("collab", "path", r.URL.Path)
 		s.Collab.ServeHTTP(w, r)

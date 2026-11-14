@@ -68,6 +68,17 @@ test('consent page: sign in, approve, token works on MCP, disconnect in settings
     })
   expect((await mcp()).status()).toBe(200)
 
+  // Go-only commands (quote.*) are discoverable and callable with the same token.
+  const call = (name: string, args: object) =>
+    request.post(`${API}/mcp`, {
+      headers: { authorization: `Bearer ${access_token}`, accept: 'application/json, text/event-stream' },
+      data: { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name, arguments: args } },
+    })
+  const found = await (await call('discover', { query: 'quote send' })).json()
+  expect(found.result.structuredContent.commands[0].name).toBe('quote.send')
+  const listed = await (await call('invoke', { command: 'quote.list', arguments: {} })).json()
+  expect(listed.result.isError).toBe(false)
+
   await page.goto('/')
   await page.waitForURL(/\/w\/[0-9a-f-]+$/)
   await page.goto(`${page.url()}/settings`)
