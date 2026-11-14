@@ -19,6 +19,9 @@ import (
 // No session: the token is the whole authorization, and it can only ever create a contact and a lead.
 const inquiryPrefix = "/api/public/inquiry/"
 
+// ticketPrefix is the "raise a ticket" twin of the inquiry form: same token, same switch, same limits (a separate rate bucket).
+const ticketPrefix = "/api/public/ticket/"
+
 var (
 	inqMu   sync.Mutex
 	inqSeen = map[string][]time.Time{}
@@ -52,7 +55,10 @@ func clientIP(r *http.Request) string {
 }
 
 func (s *Server) inquiry(w http.ResponseWriter, r *http.Request) {
-	token := strings.TrimPrefix(r.URL.Path, inquiryPrefix)
+	token, ticket := strings.TrimPrefix(r.URL.Path, inquiryPrefix), strings.HasPrefix(r.URL.Path, ticketPrefix)
+	if ticket {
+		token = strings.TrimPrefix(r.URL.Path, ticketPrefix)
+	}
 	fail := func(err error) {
 		var ce *command.Error
 		if !errors.As(err, &ce) {
@@ -86,6 +92,7 @@ func (s *Server) inquiry(w http.ResponseWriter, r *http.Request) {
 		Phone   string `json:"phone"`
 		Email   string `json:"email"`
 		Message string `json:"message"`
+		Subject string `json:"subject"`
 		Hp      string `json:"hp"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 16<<10)).Decode(&in); err != nil {
@@ -93,8 +100,19 @@ func (s *Server) inquiry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// A bot that fills the hidden field or floods gets the same 200 as a person, and nothing is stored.
-	if in.Hp == "" && !inquiryLimited(clientIP(r)) {
-		if err := leads.Receive(r.Context(), s.Pool, form, leads.Inquiry{Name: in.Name, Phone: in.Phone, Email: in.Email, Message: in.Message}); err != nil {
+	q := leads.Inquiry{Name: in.Name, Phone: in.Phone, Email: in.Email, Message: in.Message}
+	bucket := clientIP(r)
+	if ticket {
+		bucket = "t:" + bucket
+	}
+	if in.Hp == "" && !inquiryLimited(bucket) {
+		var err error
+		if ticket {
+			err = leads.ReceiveTicket(r.Context(), s.Pool, form, in.Subject, q)
+		} else {
+			err = leads.Receive(r.Context(), s.Pool, form, q)
+		}
+		if err != nil {
 			fail(err)
 			return
 		}

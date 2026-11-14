@@ -51,7 +51,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodGet && r.URL.Path == "/healthz":
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		_, _ = io.WriteString(w, "ok")
-	case strings.HasPrefix(r.URL.Path, inquiryPrefix):
+	case strings.HasPrefix(r.URL.Path, inquiryPrefix) || strings.HasPrefix(r.URL.Path, ticketPrefix):
 		s.inquiry(w, r)
 	case strings.HasPrefix(r.URL.Path, "/api/public/"):
 		s.Public.ServeHTTP(w, r)

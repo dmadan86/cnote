@@ -11,6 +11,11 @@ import (
 
 type props map[string]any
 
+var (
+	ticketPrio   = []string{"low", "normal", "high", "urgent"}
+	ticketStatus = []string{"open", "pending", "resolved", "closed"}
+)
+
 func schema(required []string, p props) json.RawMessage {
 	o := map[string]any{"type": "object", "properties": p}
 	if len(required) > 0 {
@@ -87,8 +92,17 @@ var mcpMeta = map[string]meta{
 	"activity.list": {"List logged activities for a deal or contact, newest first.", schema(nil, props{"note_id": id, "contact_id": id})},
 	"followup.list": {"Deals needing follow-up: overdue, today, week, unplanned (no date) or inbox (new leads not yet answered).", schema(nil, props{
 		"due": props{"type": "string", "enum": []string{"overdue", "today", "week", "unplanned", "inbox"}}, "owner_id": id, "note_id": id, "contact_id": id})},
-	"followup.set":     {"Set or clear a deal's next follow-up date, next step and lead source.", schema([]string{"id"}, props{"id": id, "next_follow_up": date, "next_step": str, "source": str})},
-	"deal.lose":        {"Mark a deal lost with a reason.", schema([]string{"id", "lost_reason"}, props{"id": id, "lost_reason": str})},
+	"followup.set": {"Set or clear a deal's next follow-up date, next step and lead source.", schema([]string{"id"}, props{"id": id, "next_follow_up": date, "next_step": str, "source": str})},
+	"deal.lose":    {"Mark a deal lost with a reason.", schema([]string{"id", "lost_reason"}, props{"id": id, "lost_reason": str})},
+	"ticket.create": {"Open a support ticket for a contact or company. The SLA due time comes from the priority's hours.", schema([]string{"title", "contact_id"}, props{
+		"title": str, "contact_id": id, "description": str, "priority": props{"type": "string", "enum": ticketPrio}, "assignee_id": id, "invoice_id": id, "project_id": id})},
+	"ticket.update": {"Change a ticket's status (open, pending, resolved, closed), priority, assignee, invoice or project; null clears a link. Replies are comments: use comment.add on the ticket id.", schema([]string{"id"}, props{
+		"id": id, "status": props{"type": "string", "enum": ticketStatus}, "priority": props{"type": "string", "enum": ticketPrio}, "assignee_id": id, "invoice_id": id, "project_id": id})},
+	"ticket.list": {"List tickets (default filter: open and pending), breached ones first. breached=true lists only tickets past their SLA due time.", schema(nil, props{
+		"status": props{"type": "string", "enum": append([]string{"active", "all"}, ticketStatus...)}, "priority": props{"type": "string", "enum": ticketPrio}, "assignee_id": props{"type": "string", "description": "UUID or me"}, "contact_id": id, "breached": flag})},
+	"ticket.get":       {"Read one ticket with its contact, links, SLA due time and breach flag.", idOnly},
+	"ticket.sla_get":   {"Read the hours to resolve per priority (workspace setting; defaults urgent 4, high 8, normal 24, low 72).", schema(nil, props{})},
+	"ticket.sla_set":   {"Set the hours to resolve per priority, e.g. {\"hours\": {\"urgent\": 2}} (admins). Applies to new tickets and when a ticket's priority changes.", schema([]string{"hours"}, props{"hours": props{"type": "object"}})},
 	"inquiry_form.get": {"Read the workspace's public inquiry form settings and link (admins).", schema(nil, props{})},
 	"inquiry_form.set": {"Configure the public inquiry form: target space, owner, on/off, or rotate its link (admins).", schema(nil, props{"space_id": id, "owner_id": id, "enabled": flag, "rotate": flag})},
 	"quote.create_draft": {"Create a draft quotation (estimate) for a contact. Never posts to the ledger.", schema([]string{"space_id", "contact_id", "lines"}, props{

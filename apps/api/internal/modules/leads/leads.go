@@ -20,7 +20,7 @@ import (
 
 func Commands() []command.Command {
 	role := func(c command.Command, r command.Role) command.Command { c.MinRole = r; return c }
-	return []command.Command{
+	return append(ticketCommands(), []command.Command{
 		command.NewCommand("activity.log", command.GroupManageCRM, activityLog),
 		command.NewCommand("activity.list", command.GroupRead, activityList), // guests read what page access lets them
 		role(command.NewCommand("followup.list", command.GroupRead, followupList), command.Member),
@@ -28,7 +28,7 @@ func Commands() []command.Command {
 		command.NewCommand("deal.lose", command.GroupManageCRM, dealLose),
 		role(command.NewCommand("inquiry_form.set", command.GroupAdmin, formSet), command.Admin),
 		role(command.NewCommand("inquiry_form.get", command.GroupAdmin, formGet), command.Admin),
-	}
+	}...)
 }
 
 var (
