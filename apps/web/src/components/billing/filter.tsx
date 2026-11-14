@@ -1,4 +1,5 @@
 import Link from 'next/link'
+import { dayIST } from './fmt'
 
 /** Shown when a home tile opened a list pre-filtered through the URL; links back to the full list. */
 export function FilterBanner({ label, href }: { label: string; href: string }) {
@@ -12,4 +13,4 @@ export function FilterBanner({ label, href }: { label: string; href: string }) {
   )
 }
 
-export const today = () => new Date().toISOString().slice(0, 10)
+export const today = () => dayIST()

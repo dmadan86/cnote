@@ -6,7 +6,7 @@ import { useShell } from '@/components/shell'
 import { btn, btnPrimary, ErrorText, Field, inputCls, Pill } from '@/components/ui'
 import { useCmd } from '@/lib/hooks'
 import { Confirm, run } from './bits'
-import { money, parseMinor, stateName, toRupees } from './fmt'
+import { dayIST, money, parseMinor, stateName, toRupees } from './fmt'
 import { ShareButton } from './share-panel'
 
 export type Receipt = {
@@ -60,7 +60,7 @@ const METHODS: [string, string][] = [
 ]
 // 40% is not offered: invoices accept rates up to 28% only, so a 40% voucher could not match its invoice.
 const RATES = [0, 3, 5, 12, 18, 28]
-const today = () => new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10)
+const today = () => dayIST()
 
 export const ReceiptPill = ({ r }: { r: Pick<Receipt, 'status' | 'kind'> }) => (
   <Pill tone={r.kind === 'refund' ? 'neutral' : TONE[r.status]}>

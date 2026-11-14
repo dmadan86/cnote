@@ -5,13 +5,12 @@ import { useShell } from '@/components/shell'
 import { btn, ErrorText, inputCls } from '@/components/ui'
 import { cmd } from '@/lib/api'
 import { useCmd } from '@/lib/hooks'
-import { money } from './fmt'
+import { dayIST, money } from './fmt'
 
-const today = () => new Date().toISOString().slice(0, 10)
+const today = () => dayIST()
 const monthsAgo = (n: number) => {
-  const d = new Date()
-  d.setMonth(d.getMonth() - n, 1)
-  return d.toISOString().slice(0, 10)
+  const [y, m] = dayIST().split('-').map(Number)
+  return new Date(Date.UTC(y, m - 1 - n, 1)).toISOString().slice(0, 10)
 }
 
 function download(name: string, mime: string, body: string) {

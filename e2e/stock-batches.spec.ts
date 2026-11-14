@@ -10,7 +10,7 @@ function gstin(state: string, pan: string) {
   }, 0)
   return body + CHARS[(36 - (sum % 36)) % 36]
 }
-const day = (n: number) => new Date(Date.now() + n * 86_400_000).toISOString().slice(0, 10)
+const day = (n: number) => new Date(Date.now() + n * 86_400_000 + 330 * 60_000).toISOString().slice(0, 10) // the server counts days in IST
 
 test('Batch item: receive two batches on a bill, invoice takes the earliest expiry, expiry report and tile', async ({
   page,

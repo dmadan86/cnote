@@ -7,6 +7,9 @@ export function parseMinor(s: string): number | null {
   const m = /^\s*(\d+)(?:\.(\d{1,2}))?\s*$/.exec(s)
   return m ? Number(m[1]) * 100 + Number((m[2] ?? '').padEnd(2, '0')) : null
 }
+// Calendar day in India (the server books dates in IST); n shifts it by whole days.
+export const dayIST = (n = 0) =>
+  new Date(Date.now() + n * 86_400_000 + 330 * 60_000).toISOString().slice(0, 10)
 export const toRupees = (minor: number) => (minor % 100 ? (minor / 100).toFixed(2) : String(minor / 100))
 
 export const STATES: [string, string][] = [

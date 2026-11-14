@@ -6,7 +6,7 @@ import { UseTemplateButton } from '@/components/templates/use-template'
 import { btn, btnPrimary, ErrorText, Field, inputCls } from '@/components/ui'
 import { useCmd } from '@/lib/hooks'
 import { Confirm, run } from './bits'
-import { type InvoiceDetail, money, parseMinor, STATES, toRupees } from './fmt'
+import { dayIST, type InvoiceDetail, money, parseMinor, STATES, toRupees } from './fmt'
 import { StatusPill } from './invoice-list'
 import { ApplyAdvancePanel } from './receipts'
 import { ShareButton, UpiCard } from './share-panel'
@@ -151,7 +151,7 @@ export function IssuedView({ inv, reload }: { inv: InvoiceDetail; reload: () => 
             <ShareButton
               noteId={inv.id}
               kind="invoice"
-              overdue={open && !!inv.due_date && inv.due_date < new Date().toISOString().slice(0, 10)}
+              overdue={open && !!inv.due_date && inv.due_date < dayIST()}
             />
           )}
           {open && (

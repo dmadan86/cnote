@@ -11,7 +11,7 @@ import { useCmd } from '@/lib/hooks'
 import { Confirm, run } from './bits'
 import { Totals } from './editor'
 import { FilterBanner } from './filter'
-import { type Line, money, parseMinor, toRupees } from './fmt'
+import { dayIST, type Line, money, parseMinor, toRupees } from './fmt'
 import { StockSelect } from './stock'
 import { blankTrk, TrackingFields, type Trk, trkFrom, trkPayload } from './tracking'
 
@@ -132,8 +132,8 @@ export function BillList() {
   const { data: all, error } = useCmd<Bill[]>(ws, 'bill.list', { limit: 500 })
   // home tile: ?due=soon is unpaid bills due within 7 days or overdue
   const soon = useSearchParams().get('due') === 'soon'
-  const today = new Date().toISOString().slice(0, 10)
-  const limit = new Date(Date.now() + 7 * 86400_000).toISOString().slice(0, 10)
+  const today = dayIST()
+  const limit = dayIST(7)
   const data = all?.filter(
     (b) =>
       (!status || b.status === status) &&

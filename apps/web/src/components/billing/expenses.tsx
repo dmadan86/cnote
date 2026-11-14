@@ -9,7 +9,7 @@ import { btn, btnPrimary, ErrorText, Field, inputCls, Modal, Pill } from '@/comp
 import { CmdFailure } from '@/lib/api'
 import { useCmd } from '@/lib/hooks'
 import { run } from './bits'
-import { money, parseMinor, toRupees } from './fmt'
+import { dayIST, money, parseMinor, toRupees } from './fmt'
 
 export type Expense = {
   id: string
@@ -47,7 +47,7 @@ const TONE: Record<Expense['status'], 'ok' | 'warn' | 'bad' | 'neutral'> = {
   posted: 'ok',
 }
 const StatusPill = ({ s }: { s: Expense['status'] }) => <Pill tone={TONE[s]}>{LABEL[s]}</Pill>
-const today = () => new Date().toISOString().slice(0, 10)
+const today = () => dayIST()
 
 /** One form for a new claim, an edit of a draft or rejected claim, and a company-paid expense. */
 function ExpenseForm({
