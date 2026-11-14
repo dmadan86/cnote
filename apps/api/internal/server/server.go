@@ -35,7 +35,7 @@ func New(pool *pgxpool.Pool, reg *command.Registry, upstream http.Handler) *Serv
 
 var wsRe = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
-// maxBody matches axum's default Json limit; larger bodies go to Rust to get its exact rejection.
+// maxBody matches axum's default Json limit; larger bodies get axum's exact 413 rejection.
 const maxBody = 2 << 20
 
 // ServeHTTP dispatches by hand instead of http.ServeMux: ServeMux redirects "unclean" paths (//, ..),
@@ -73,7 +73,14 @@ func (s *Server) runCommand(w http.ResponseWriter, r *http.Request) {
 	slog.Debug("native command", "command", name)
 
 	buf, err := io.ReadAll(io.LimitReader(r.Body, maxBody+1))
-	if err != nil || len(buf) > maxBody {
+	if err == nil && len(buf) > maxBody {
+		// Same reply as axum; forwarding the unread rest of the body made the proxy return 502.
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.WriteHeader(http.StatusRequestEntityTooLarge)
+		_, _ = io.WriteString(w, "Failed to buffer the request body: length limit exceeded")
+		return
+	}
+	if err != nil {
 		r.Body = io.NopCloser(io.MultiReader(bytes.NewReader(buf), r.Body))
 		s.Upstream.ServeHTTP(w, r)
 		return

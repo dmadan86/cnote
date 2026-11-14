@@ -41,3 +41,19 @@ export async function createSpace(page: Page, name = `Space ${uniq()}`) {
   await expect(page.getByRole('heading', { name })).toBeVisible()
   return name
 }
+
+/** Signs up, creates a space and an empty page, and returns the focused editor. */
+export async function newPage(page: Page) {
+  await signup(page)
+  await createSpace(page)
+  await page.getByRole('button', { name: 'New page' }).last().click()
+  await expect(page).toHaveURL(/\/n\/[0-9a-f-]+$/)
+  const editor = page.getByRole('textbox', { name: 'Page content' })
+  await expect(editor).toBeVisible()
+  await editor.click()
+  return editor
+}
+
+/** The editor's Markdown, as stored. */
+export const markdown = (page: Page) =>
+  page.evaluate(() => (document.querySelector('.ProseMirror') as any).editor.getMarkdown() as string)
