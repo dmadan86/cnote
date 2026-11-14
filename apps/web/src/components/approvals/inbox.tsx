@@ -40,7 +40,7 @@ function Row({ a, ws, done }: { a: Approval; ws: string; done: () => void }) {
       setBusy(false)
     }
   }
-  const title = a.note_title || 'Untitled'
+  const title = a.note_title || (a.command.startsWith('payroll.') ? 'Payroll run' : 'Untitled')
   return (
     <li className="space-y-2 rounded-lg border border-line p-3">
       <div className="flex flex-wrap items-start justify-between gap-2">

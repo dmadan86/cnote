@@ -47,6 +47,10 @@ var SubjectCatalog = map[string]string{
 	"billing.purchase_bills.note_id":               "export (as the bill)",
 	"billing.expenses.note_id":                     "staff expense claims and company spending; names no contact",
 	"billing.purchase_bill_lines.item_note_id":     "catalogue items, not people",
+	// payroll (WP25) hangs on hr.employees, not on a note; listed here so a reviewer sees the subject-data rules in one place
+	"payroll.salary_structures.employee_id": "export for a member (finance access needed); erase redacts PAN, bank account, IFSC, UAN and ESIC number and keeps the amounts",
+	"payroll.run_lines.employee_id":         "export for a member as payslips; erase redacts the same identifiers on each line and keeps the figures (PF, ESI, PT and TDS records are statutory)",
+	"payroll.adjustments.employee_id":       "one-off pay changes with a reason; kept with the payslip they belong to",
 }
 
 // hasReceipts: billing.receipts arrives with a separate migration; handle it when it is there.
@@ -148,6 +152,19 @@ func exportSubject(c *command.Ctx, raw json.RawMessage) (any, error) {
 		// attendance and leave (WP10): the member's own employee record, daily attendance and leave requests
 		put("employee", `select e.id, e.name, e.code, e.weekly_off, e.active, e.created_at from hr.employees e where e.user_id = $1::uuid`, user)
 		put("attendance", `select a.day, a.status, a.in_at, a.out_at, a.note, a.marked_by from hr.attendance a join hr.employees e on e.id = a.employee_id where e.user_id = $1::uuid order by a.day`, user)
+		// payroll (WP25): salary data only for a caller with finance access, never for a plain admin
+		if fin, e := c.FinanceAllowed(); e != nil {
+			return nil, e
+		} else if fin {
+			put("salary_structure", `select s.basic_minor, s.hra_minor, s.special_minor, s.other_minor, s.pt_state, s.pf_applicable, s.esi_applicable, s.regime, s.pan, s.bank_account, s.ifsc, s.uan, s.esic_no, s.updated_at
+				from payroll.salary_structures s join hr.employees e on e.id = s.employee_id where e.user_id = $1::uuid`, user)
+			put("payslips", `select to_char(r.month, 'YYYY-MM') as month, r.status as run_status, l.days_in_month, l.lop_halves / 2.0 as lop_days, l.basic_minor, l.hra_minor, l.special_minor, l.other_minor, l.adj_earnings_minor,
+				l.gross_minor, l.pf_wages_minor, l.epf_ee_minor, l.esi_ee_minor, l.pt_minor, l.tds_minor, l.adj_deductions_minor, l.deductions_minor, l.net_minor, l.epf_er_minor, l.eps_er_minor, l.esi_er_minor,
+				l.pan, l.bank_account, l.ifsc, l.uan, l.esic_no from payroll.run_lines l join payroll.runs r on r.id = l.run_id join hr.employees e on e.id = l.employee_id
+				where e.user_id = $1::uuid and r.status <> 'draft' order by r.month`, user)
+		} else {
+			put("payroll", `select 'salary data is exported only with finance access' as note`)
+		}
 		put("leave_requests", `select r.id, t.name as leave_type, r.from_day, r.to_day, r.days, r.half_day, r.status, r.reason, r.decided_by, r.decided_at, r.decision_note, r.created_at
 			from hr.leave_requests r join hr.employees e on e.id = r.employee_id join hr.leave_types t on t.id = r.leave_type_id where e.user_id = $1::uuid order by r.from_day`, user)
 	}
@@ -197,12 +214,12 @@ func eraseSubject(c *command.Ctx, raw json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if user != "" {
-		return nil, command.ErrInvalid("erasing a member is not supported here: remove them from the workspace and export their data; their sign-in belongs to the person")
-	}
 	reason, err := m.str("reason", 1000)
 	if err != nil {
 		return nil, err
+	}
+	if user != "" {
+		return erasePayroll(c, user, reason)
 	}
 	if reason == "" {
 		return nil, command.ErrInvalid("reason is required")
@@ -302,5 +319,52 @@ func eraseSubject(c *command.Ctx, raw json.RawMessage) (any, error) {
 		return nil, err
 	}
 	result["request_id"], result["status"] = rid, "done"
+	return result, nil
+}
+
+// erasePayroll is the only erasure offered for a member: their sign-in belongs to the person, but the identifiers
+// that let someone be paid (PAN, bank account, IFSC, UAN, ESIC number) are redacted. Salary amounts, payslip figures
+// and statutory records are kept: PF, ESI, PT and TDS records have retention periods (verify with counsel).
+func erasePayroll(c *command.Ctx, user, reason string) (any, error) {
+	var has bool
+	if err := c.Tx.QueryRow(c.Context, `select exists (select 1 from payroll.salary_structures s join hr.employees e on e.id = s.employee_id where e.user_id = $1::uuid)
+		or exists (select 1 from payroll.run_lines l join hr.employees e on e.id = l.employee_id where e.user_id = $1::uuid)`, user).Scan(&has); err != nil {
+		return nil, command.DB(err)
+	}
+	if !has {
+		return nil, command.ErrInvalid("erasing a member is not supported here: remove them from the workspace and export their data; their sign-in belongs to the person")
+	}
+	if fin, err := c.FinanceAllowed(); err != nil {
+		return nil, err
+	} else if !fin {
+		return nil, command.ErrForbidden("salary data needs finance access")
+	}
+	if reason == "" {
+		return nil, command.ErrInvalid("reason is required")
+	}
+	st, err := c.Tx.Exec(c.Context, `update payroll.salary_structures s set pan = null, bank_account = null, ifsc = null, uan = null, esic_no = null, redacted_at = now()
+		from hr.employees e where e.id = s.employee_id and e.user_id = $1::uuid`, user)
+	if err != nil {
+		return nil, command.DB(err)
+	}
+	ln, err := c.Tx.Exec(c.Context, `update payroll.run_lines l set pan = null, bank_account = null, ifsc = null, uan = null, esic_no = null, redacted_at = now()
+		from hr.employees e where e.id = l.employee_id and e.user_id = $1::uuid`, user)
+	if err != nil {
+		return nil, command.DB(err)
+	}
+	result := map[string]any{"mode": "payroll_only",
+		"redacted":        map[string]int64{"salary_structures": st.RowsAffected(), "payslip_lines": ln.RowsAffected()},
+		"redacted_fields": []string{"PAN", "bank account", "IFSC", "UAN", "ESIC number"},
+		"kept": []string{"salary amounts and payslip figures (statutory retention: PF, ESI, professional tax and TDS records)", "audit event log (append-only)", "ledger and journal entries",
+			"the member's account, attendance and leave (not erased here)"}}
+	rid, err := record(c, "erase", "done", nil, &user, reason, result)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := c.Emit("data.erased", nil, map[string]any{"request_id": rid, "mode": "payroll_only", "user_id": user}); err != nil {
+		return nil, err
+	}
+	result["request_id"], result["status"] = rid, "done"
+	result["message"] = "PAN, bank account, IFSC, UAN and ESIC number were redacted. Salary amounts and payslip figures are kept because PF, ESI, PT and TDS records are statutory."
 	return result, nil
 }

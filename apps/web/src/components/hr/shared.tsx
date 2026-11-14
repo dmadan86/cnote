@@ -10,21 +10,27 @@ export function useRole() {
 }
 
 /** Tabs shared by the people pages. */
-export function PeopleTabs({ current }: { current: 'directory' | 'attendance' | 'leave' }) {
-  const { ws } = useShell()
+export function PeopleTabs({
+  current,
+}: {
+  current: 'directory' | 'attendance' | 'leave' | 'payslips' | 'payroll'
+}) {
+  const { ws, role } = useRole()
   const tabs = [
     ['directory', 'Directory', `/w/${ws}/people`],
     ['attendance', 'Attendance', `/w/${ws}/people/attendance`],
     ['leave', 'Leave', `/w/${ws}/people/leave`],
+    ['payslips', 'My payslips', `/w/${ws}/people/payslips`],
+    ...(isAdminRole(role) ? ([['payroll', 'Payroll', `/w/${ws}/people/payroll`]] as const) : []),
   ] as const
   return (
-    <nav aria-label="People sections" className="flex gap-1 border-b border-line">
+    <nav aria-label="People sections" className="flex gap-1 overflow-x-auto border-b border-line">
       {tabs.map(([k, label, href]) => (
         <Link
           key={k}
           href={href}
           aria-current={k === current ? 'page' : undefined}
-          className="-mb-px border-b-2 border-transparent px-3 py-2 text-[13px] font-medium text-muted hover:text-fg aria-[current=page]:border-accent aria-[current=page]:text-fg"
+          className="-mb-px shrink-0 border-b-2 border-transparent px-3 py-2 text-[13px] font-medium text-muted hover:text-fg aria-[current=page]:border-accent aria-[current=page]:text-fg"
         >
           {label}
         </Link>
