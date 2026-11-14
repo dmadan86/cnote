@@ -280,11 +280,163 @@ function ExportCard() {
   )
 }
 
+type PL = {
+  income: { code: string; name: string; amount_minor: number }[]
+  expenses: { code: string; name: string; amount_minor: number }[]
+  total_income_minor: number
+  total_expenses_minor: number
+  net_profit_minor: number
+}
+
+const PLRows = ({ rows }: { rows: { code: string; name: string; amount_minor: number }[] }) =>
+  rows.length ? (
+    rows.map((x) => (
+      <tr key={x.code} className="border-t border-line tabular-nums">
+        <td className="py-1.5">{x.name}</td>
+        <td className="text-right">{money(x.amount_minor)}</td>
+      </tr>
+    ))
+  ) : (
+    <tr>
+      <td className="py-1.5 text-muted">None in this range</td>
+      <td />
+    </tr>
+  )
+
+function PLCard() {
+  const { ws } = useShell()
+  const [r, setR] = useState([`${today().slice(0, 8)}01`, today()])
+  const { data, error } = useCmd<PL>(ws, 'report.profit_loss', { from: r[0], to: r[1] })
+  return (
+    <Card title="Profit and loss">
+      <RangeInputs from={r[0]} to={r[1]} set={(f, t) => setR([f, t])} />
+      <ErrorText error={error} />
+      {data && (
+        <table className="w-full text-left text-[13px]">
+          <thead className="text-[12px] text-muted">
+            <tr>
+              <th className={th}>Income</th>
+              <th className="text-right font-medium">Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            <PLRows rows={data.income} />
+            <tr className="border-t border-line font-medium tabular-nums">
+              <td className="py-1.5">Total income</td>
+              <td className="text-right">{money(data.total_income_minor)}</td>
+            </tr>
+          </tbody>
+          <thead className="text-[12px] text-muted">
+            <tr>
+              <th className="pt-3 font-medium">Expenses</th>
+              <th />
+            </tr>
+          </thead>
+          <tbody>
+            <PLRows rows={data.expenses} />
+            <tr className="border-t border-line font-medium tabular-nums">
+              <td className="py-1.5">Total expenses</td>
+              <td className="text-right">{money(data.total_expenses_minor)}</td>
+            </tr>
+            <tr className="border-t border-line font-semibold tabular-nums" data-testid="net-profit">
+              <td className="py-1.5">Net profit</td>
+              <td className="text-right">{money(data.net_profit_minor)}</td>
+            </tr>
+          </tbody>
+        </table>
+      )}
+      <p className="mt-2 text-[12px] text-muted">
+        From the ledger by posting date: a claim counts when it is approved, GST on bills is excluded.
+      </p>
+    </Card>
+  )
+}
+
+type TdsReport = {
+  total_tds_minor: number
+  owed_to_government_minor: number
+  groups: {
+    tds_code: string
+    label: string
+    tds_minor: number
+    vendors: {
+      vendor_id: string
+      vendor: string
+      pan: string | null
+      payments: number
+      base_minor: number
+      tds_minor: number
+    }[]
+  }[]
+}
+
+function TdsCard() {
+  const { ws } = useShell()
+  const fy = new Date().getMonth() < 3 ? new Date().getFullYear() - 1 : new Date().getFullYear()
+  const [r, setR] = useState([`${fy}-04-01`, today()])
+  const { data, error } = useCmd<TdsReport>(ws, 'report.tds_payable', { from: r[0], to: r[1] })
+  return (
+    <Card title="TDS payable">
+      <RangeInputs from={r[0]} to={r[1]} set={(f, t) => setR([f, t])} />
+      <ErrorText error={error} />
+      {data && (
+        <>
+          <p className="mb-2 text-[13px]">
+            Withheld in this range: <b className="tabular-nums">{money(data.total_tds_minor)}</b>. Owed to the
+            government in the books:{' '}
+            <b className="tabular-nums" data-testid="tds-owed">
+              {money(data.owed_to_government_minor)}
+            </b>
+          </p>
+          {data.groups.length === 0 && (
+            <p className="text-[13px] text-muted">No TDS withheld in this range.</p>
+          )}
+          {data.groups.map((g) => (
+            <div key={g.tds_code} className="mb-3">
+              <h3 className="text-[13px] font-medium">
+                {g.label} <span className="tabular-nums text-muted">{money(g.tds_minor)}</span>
+              </h3>
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[420px] text-left text-[13px]">
+                  <thead className="text-[12px] text-muted">
+                    <tr>
+                      <th className={th}>Vendor</th>
+                      <th className="font-medium">PAN</th>
+                      <th className="text-right font-medium">Paid (no GST)</th>
+                      <th className="text-right font-medium">TDS</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {g.vendors.map((v) => (
+                      <tr key={v.vendor_id} className="border-t border-line tabular-nums">
+                        <td className="py-1.5">{v.vendor}</td>
+                        <td>{v.pan ?? <span className="text-bad">Missing</span>}</td>
+                        <td className="text-right">{money(v.base_minor)}</td>
+                        <td className="text-right">{money(v.tds_minor)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ))}
+          <p className="text-[12px] text-muted">
+            Rates and limits are editable data. Have your CA review them each April. Challan payment and
+            returns are not handled here.
+          </p>
+        </>
+      )}
+    </Card>
+  )
+}
+
 export function Reports() {
   return (
     <div className="space-y-4">
       <AgeingCard />
+      <PLCard />
       <GstCard />
+      <TdsCard />
       <TrialCard />
       <ExportCard />
     </div>

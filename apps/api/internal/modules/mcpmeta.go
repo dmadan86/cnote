@@ -68,7 +68,7 @@ var mcpMeta = map[string]meta{
 		"joined_on": date, "left_on": date, "finance_access": flag})},
 	"member.deactivate": {"Deactivate a person who left: they can no longer sign in to this workspace and their API keys stop. Not the last owner. People only.", schema([]string{"user_id"}, props{"user_id": id})},
 	"member.reactivate": {"Let a deactivated person back in. Their old API keys stay revoked. People only.", schema([]string{"user_id"}, props{"user_id": id})},
-	"approval.rule_set": {"Set the approval rule for a command (quote.send, invoice.issue, bill.record, bill.pay, invoice.write_off): actions at or above the amount by non-owners wait for approval. Admins only.", schema([]string{"command"}, props{
+	"approval.rule_set": {"Set the approval rule for a command (quote.send, invoice.issue, bill.record, bill.pay, invoice.write_off, receipt.refund, expense.approve, expense.reimburse): actions at or above the amount by non-owners wait for approval. Admins only.", schema([]string{"command"}, props{
 		"command": str, "min_amount_minor": props{"type": "integer", "description": "Paise"}, "approver_user_id": id, "approver_role": props{"type": "string", "enum": []string{"admin", "owner"}}, "fallback_user_id": id, "escalate_after_hours": num, "enabled": flag})},
 	"approval.rule_list": {"List the workspace's approval rules.", schema(nil, props{})},
 	"approval.list":      {"List approval requests (pending by default), optionally only mine or for one page.", schema(nil, props{"status": str, "mine": flag, "note_id": id})},
@@ -110,7 +110,7 @@ var mcpMeta = map[string]meta{
 	"bill.get":    {"Get one purchase bill with its lines and payments.", idOnly},
 	"bill.list":   {"List purchase bills, optionally by status or vendor.", schema(nil, props{"status": str, "vendor_id": id, "limit": num})},
 	"bill.record": {"Record (post) a draft purchase bill to the ledger with input GST.", idOnly},
-	"bill.pay":    {"Pay a recorded purchase bill, fully or partly. Moves money.", schema([]string{"id", "amount_minor"}, props{"id": id, "amount_minor": props{"type": "integer", "description": "Paise"}, "method": str, "reference": str})},
+	"bill.pay":    {"Pay a recorded purchase bill, fully or partly. Moves money. TDS is proposed from the vendor's default code; pass tds_code and tds_minor to choose or override.", schema([]string{"id", "amount_minor"}, props{"id": id, "amount_minor": props{"type": "integer", "description": "Gross paise settled against the bill"}, "method": str, "reference": str, "tds_code": str, "tds_minor": props{"type": "integer", "description": "Paise withheld; overrides the proposal"}})},
 	"bill.cancel": {"Cancel a draft or recorded purchase bill (reverses its posting).", idOnly},
 	"vendor.list": {"List vendors (contacts marked as vendor).", schema(nil, props{"limit": num})},
 
@@ -122,6 +122,23 @@ var mcpMeta = map[string]meta{
 	"receipt.refund": {"Refund the unapplied part of an advance and issue a refund voucher. Moves money; admins only.", schema([]string{"id"}, props{"id": id, "amount_minor": props{"type": "integer", "description": "Paise; default all unapplied"}, "method": str, "reference": str})},
 	"receipt.get":    {"Get one receipt or refund voucher with its applications and refunds.", idOnly},
 	"receipt.list":   {"List receipt vouchers; status 'open' = advances still unapplied.", schema(nil, props{"contact_id": id, "status": str, "kind": props{"type": "string", "enum": []string{"receipt", "refund"}}, "limit": num})},
+
+	"expense.create":        {"Start an expense claim for the calling person: what was spent, when, how much and the category. Attach the receipt photo to the page. Draft until submitted.", schema([]string{"spent_on", "category", "amount_minor"}, props{"space_id": id, "spent_on": date, "category": props{"type": "string", "description": "travel, meals, office, software, communication, repairs, other (see expense.categories)"}, "amount_minor": props{"type": "integer", "description": "Paise, tax included"}, "gst_minor": props{"type": "integer", "description": "GST inside the amount, informational"}, "vendor_name": str, "description": str, "method": str, "reference": str, "account_code": str})},
+	"expense.update":        {"Edit your own draft or rejected claim (a rejected claim returns to draft).", schema([]string{"id"}, props{"id": id, "spent_on": date, "category": str, "amount_minor": num, "gst_minor": num, "vendor_name": str, "description": str, "account_code": str})},
+	"expense.submit":        {"Submit your draft claim for approval.", idOnly},
+	"expense.approve":       {"Approve a submitted claim: books the expense and what the company owes the claimant. Admins only; not your own claim unless you are an owner.", idOnly},
+	"expense.reject":        {"Reject a submitted claim with a reason. Admins only.", schema([]string{"id", "reason"}, props{"id": id, "reason": str})},
+	"expense.reimburse":     {"Pay back an approved claim to the claimant. Moves money; admins only.", schema([]string{"id"}, props{"id": id, "method": str, "reference": str})},
+	"expense.record_direct": {"Record a company-paid expense with no vendor bill; it posts to the ledger at once. Moves money.", schema([]string{"spent_on", "category", "amount_minor"}, props{"space_id": id, "spent_on": date, "category": str, "amount_minor": props{"type": "integer", "description": "Paise"}, "gst_minor": num, "vendor_name": str, "description": str, "method": str, "reference": str, "account_code": str})},
+	"expense.list":          {"List expenses: your own claims, or all for admins. status 'open' = submitted or approved (the approval and reimbursement queues).", schema(nil, props{"status": str, "kind": props{"type": "string", "enum": []string{"claim", "direct"}}, "from": date, "to": date, "limit": num})},
+	"expense.get":           {"Get one expense.", idOnly},
+	"expense.categories":    {"The expense categories and the ledger account each one posts to.", schema(nil, props{})},
+	"report.profit_loss":    {"Income against expenses by account from the ledger between two dates (by posting date).", schema([]string{"from", "to"}, props{"from": date, "to": date})},
+	"report.tds_payable":    {"Tax deducted at source on vendor payments between two dates, by section code and vendor with PAN, and what is owed to the government.", schema([]string{"from", "to"}, props{"from": date, "to": date})},
+	"bill.tds_preview":      {"Preview the TDS that paying a bill would deduct (vendor default code or tds_code), with the reason and warnings such as a missing PAN.", schema([]string{"id", "amount_minor"}, props{"id": id, "amount_minor": props{"type": "integer", "description": "Gross payment in paise"}, "tds_code": str})},
+	"vendor.set_tax":        {"Set a vendor's PAN and default TDS code (empty string clears).", schema([]string{"id"}, props{"id": id, "pan": str, "default_tds_code": str})},
+	"tds.rate_list":         {"List the TDS codes with rates and thresholds (editable data, review each April).", schema(nil, props{})},
+	"tds.rate_set":          {"Create or change a TDS code: label, rate and no-PAN rate in basis points, single-payment and annual limits in paise (null clears), active. Admins only.", schema([]string{"code"}, props{"code": str, "label": str, "rate_bp": num, "no_pan_rate_bp": num, "single_limit_minor": num, "annual_limit_minor": num, "active": flag})},
 
 	"recurring.create": {"Create a recurring invoice schedule for a contact.", schema([]string{"space_id", "contact_id", "frequency", "start_date", "lines"}, props{
 		"space_id": id, "contact_id": id, "frequency": props{"type": "string", "enum": []string{"monthly", "quarterly", "yearly"}}, "interval": num,

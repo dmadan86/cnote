@@ -44,6 +44,7 @@ func Commands() []command.Command {
 	mi, rd := command.GroupManageInvoices, command.GroupRead
 	confirm := func(c command.Command) command.Command { c.Confirm = true; return c }
 	member := func(c command.Command) command.Command { c.MinRole = command.Member; return c }
+	admin := func(c command.Command) command.Command { c.MinRole = command.Admin; return c }
 	nc := command.NewCommand
 	return []command.Command{
 		nc("bill.create_draft", mi, createDraft),
@@ -54,8 +55,13 @@ func Commands() []command.Command {
 		confirm(nc("bill.pay", mi, pay)),
 		confirm(nc("bill.cancel", mi, cancel)),
 		nc("vendor.list", rd, vendorList),
+		nc("vendor.set_tax", mi, vendorSetTax),
+		nc("bill.tds_preview", rd, tdsPreview),
+		member(nc("tds.rate_list", rd, rateList)),
+		admin(nc("tds.rate_set", mi, rateSet)),
 		member(nc("report.payables_ageing", rd, payablesAgeing)),
 		member(nc("report.itc_summary", rd, itcSummary)),
+		member(nc("report.tds_payable", rd, tdsPayable)),
 	}
 }
 
@@ -76,6 +82,8 @@ type in struct {
 	AmountMinor      *int64          `json:"amount_minor"`
 	Method           *string         `json:"method"`
 	Reference        *string         `json:"reference"`
+	TDSCode          *string         `json:"tds_code"`
+	TDSMinor         *int64          `json:"tds_minor"`
 	AsOf             *string         `json:"as_of"`
 	From             *string         `json:"from"`
 	To               *string         `json:"to"`
@@ -151,21 +159,26 @@ type row struct {
 	TotalMinor       int64       `json:"total_minor"`
 	PaidMinor        int64       `json:"paid_minor"`
 	OutstandingMinor int64       `json:"outstanding_minor"`
+	ITCAtRisk        bool        `json:"itc_at_risk"` // unpaid past itcRiskDays: the 180-day input credit rule is near
 	RecordedAt       *command.Ts `json:"recorded_at"`
 	SpaceID          string      `json:"space_id"`
 }
 
+// itcRiskDays: input credit is lost if a bill is unpaid 180 days after its date (CGST Act 16(2) proviso); flag from 150.
+const itcRiskDays = "150"
+
 const cols = `b.note_id::text, b.vendor_id::text, b.vendor_bill_number, b.bill_date::text, b.due_date::text, b.supplier_gstin,
 	b.supplier_state, b.place_of_supply, b.status, b.currency::text, b.subtotal_minor, b.cgst_minor, b.sgst_minor, b.igst_minor,
 	b.total_minor, b.paid_minor, case when b.status in ('recorded','partly_paid') then b.total_minor - b.paid_minor else 0 end,
-	b.recorded_at, n.space_id::text`
+	b.status in ('recorded','partly_paid') and b.cgst_minor + b.sgst_minor + b.igst_minor > 0
+	  and (now() at time zone 'Asia/Kolkata')::date - b.bill_date > ` + itcRiskDays + `, b.recorded_at, n.space_id::text`
 
 func scan(r pgx.Row) (row, error) {
 	var x row
 	var rec *time.Time
 	err := r.Scan(&x.ID, &x.VendorID, &x.VendorBillNumber, &x.BillDate, &x.DueDate, &x.SupplierGSTIN, &x.SupplierState,
 		&x.PlaceOfSupply, &x.Status, &x.Currency, &x.SubtotalMinor, &x.CGSTMinor, &x.SGSTMinor, &x.IGSTMinor, &x.TotalMinor,
-		&x.PaidMinor, &x.OutstandingMinor, &rec, &x.SpaceID)
+		&x.PaidMinor, &x.OutstandingMinor, &x.ITCAtRisk, &rec, &x.SpaceID)
 	x.RecordedAt = command.TsPtr(rec)
 	return x, err
 }
@@ -203,6 +216,8 @@ type paymentOut struct {
 	AmountMinor int64      `json:"amount_minor"`
 	Method      string     `json:"method"`
 	Reference   *string    `json:"reference"`
+	TDSMinor    int64      `json:"tds_minor"`
+	TDSCode     *string    `json:"tds_code"`
 	PaidAt      command.Ts `json:"paid_at"`
 }
 
@@ -252,7 +267,7 @@ func detailOf(c *command.Ctx, id string) (detail, error) {
 		return d, command.DB(err)
 	}
 	prows, err := c.Tx.Query(c.Context,
-		"select id::text, amount_minor, method, reference, paid_at from billing.purchase_payments where bill_id = $1::uuid order by paid_at, id", id)
+		"select id::text, amount_minor, method, reference, tds_minor, tds_code, paid_at from billing.purchase_payments where bill_id = $1::uuid order by paid_at, id", id)
 	if err != nil {
 		return d, command.DB(err)
 	}
@@ -260,7 +275,7 @@ func detailOf(c *command.Ctx, id string) (detail, error) {
 	for prows.Next() {
 		var p paymentOut
 		var at time.Time
-		if err := prows.Scan(&p.ID, &p.AmountMinor, &p.Method, &p.Reference, &at); err != nil {
+		if err := prows.Scan(&p.ID, &p.AmountMinor, &p.Method, &p.Reference, &p.TDSMinor, &p.TDSCode, &at); err != nil {
 			return d, command.DB(err)
 		}
 		p.PaidAt = *command.TsPtr(&at)
@@ -717,11 +732,37 @@ func pay(c *command.Ctx, input json.RawMessage) (any, error) {
 	if v.Method != nil && strings.TrimSpace(*v.Method) != "" {
 		method = strings.TrimSpace(*v.Method)
 	}
+	code := ""
+	if v.TDSCode != nil {
+		code = strings.TrimSpace(*v.TDSCode)
+	}
+	t, err := computeTDS(c, b, amount, code, billing.TodayIST())
+	if err != nil {
+		return nil, err
+	}
+	if v.TDSMinor != nil { // the payer's override of the proposal
+		if t.Code == "" {
+			return nil, command.ErrInvalid("tds_minor needs a tds_code (or a default TDS code on the vendor)")
+		}
+		if *v.TDSMinor < 0 || *v.TDSMinor > amount {
+			return nil, command.ErrInvalid("tds_minor must be between 0 and the payment")
+		}
+		t.TDSMinor, t.NetMinor = *v.TDSMinor, amount-*v.TDSMinor
+		if t.TDSMinor > 0 && t.OnMinor == 0 {
+			t.OnMinor = t.BaseMinor
+		} else if t.TDSMinor == 0 {
+			t.OnMinor = 0
+		}
+	}
+	var tdsCode *string
+	if t.Code != "" {
+		tdsCode = &t.Code
+	}
 	var pid string
 	if err := c.Tx.QueryRow(c.Context,
-		`insert into billing.purchase_payments (workspace_id, bill_id, amount_minor, method, reference)
-		 values ($1::uuid,$2::uuid,$3,$4,$5) returning id::text`,
-		c.WorkspaceID(), b.ID, amount, method, nilStr(v.Reference)).Scan(&pid); err != nil {
+		`insert into billing.purchase_payments (workspace_id, bill_id, amount_minor, method, reference, tds_code, tds_rate_bp, tds_base_minor, tds_on_minor, tds_minor)
+		 values ($1::uuid,$2::uuid,$3,$4,$5,$6,$7,$8,$9,$10) returning id::text`,
+		c.WorkspaceID(), b.ID, amount, method, nilStr(v.Reference), tdsCode, t.RateBP, t.BaseMinor, t.OnMinor, t.TDSMinor).Scan(&pid); err != nil {
 		return nil, command.DB(err)
 	}
 	paid := b.PaidMinor + amount
@@ -732,15 +773,27 @@ func pay(c *command.Ctx, input json.RawMessage) (any, error) {
 	if _, err := c.Tx.Exec(c.Context, "update billing.purchase_bills set paid_minor = $2, status = $3 where note_id = $1::uuid", b.ID, paid, status); err != nil {
 		return nil, command.DB(err)
 	}
-	if err := billing.Post(c, "purchase_payment", pid, "Payment for bill "+b.VendorBillNumber,
-		[]billing.Leg{billing.L(acctPayable, amount, 0), billing.L(billing.AcctBank, 0, amount)}); err != nil {
+	legs := []billing.Leg{billing.L(acctPayable, amount, 0), billing.L(billing.AcctBank, 0, t.NetMinor)}
+	if t.TDSMinor > 0 { // the vendor is paid net; the withheld part is owed to the government
+		if _, err := c.Tx.Exec(c.Context,
+			"insert into billing.accounts (workspace_id, code, name, kind) values ($1::uuid,$2,'TDS payable','liability') on conflict do nothing", c.WorkspaceID(), acctTDSPayable); err != nil {
+			return nil, command.DB(err)
+		}
+		legs = append(legs, billing.L(acctTDSPayable, 0, t.TDSMinor))
+	}
+	if err := billing.Post(c, "purchase_payment", pid, "Payment for bill "+b.VendorBillNumber, legs); err != nil {
 		return nil, err
 	}
-	if _, err := c.Emit("bill.payment_recorded", &b.ID, map[string]any{"payment_id": pid, "amount_minor": amount, "status": status}); err != nil {
+	if _, err := c.Emit("bill.payment_recorded", &b.ID, map[string]any{"payment_id": pid, "amount_minor": amount, "status": status,
+		"tds_minor": t.TDSMinor, "tds_code": tdsCode}); err != nil {
 		return nil, err
 	}
 	if status == "paid" {
-		if _, err := c.Emit("bill.paid", &b.ID, map[string]any{"vendor_bill_number": b.VendorBillNumber, "total_minor": b.TotalMinor}); err != nil {
+		var tdsTotal int64
+		if err := c.Tx.QueryRow(c.Context, "select coalesce(sum(tds_minor),0)::bigint from billing.purchase_payments where bill_id = $1::uuid", b.ID).Scan(&tdsTotal); err != nil {
+			return nil, command.DB(err)
+		}
+		if _, err := c.Emit("bill.paid", &b.ID, map[string]any{"vendor_bill_number": b.VendorBillNumber, "total_minor": b.TotalMinor, "tds_minor": tdsTotal}); err != nil {
 			return nil, err
 		}
 	}
@@ -807,7 +860,7 @@ func vendorList(c *command.Ctx, input json.RawMessage) (any, error) {
 	}
 	uid, admin := access.Viewer(c)
 	rows, err := c.Tx.Query(c.Context,
-		`select n.id::text, n.space_id::text, n.title, c.email, c.phone, c.company, c.gstin, c.state_code,
+		`select n.id::text, n.space_id::text, n.title, c.email, c.phone, c.company, c.gstin, c.state_code, c.pan, c.default_tds_code,
 		   coalesce((select sum(b.total_minor - b.paid_minor) from billing.purchase_bills b
 		             where b.vendor_id = n.id and b.status in ('recorded','partly_paid')), 0)::bigint
 		 from crm.contacts c join core.notes n on n.id = c.note_id
@@ -821,13 +874,13 @@ func vendorList(c *command.Ctx, input json.RawMessage) (any, error) {
 	out := []map[string]any{}
 	for rows.Next() {
 		var id, space, name string
-		var email, phone, company, gstin, state *string
+		var email, phone, company, gstin, state, pan, tdsCode *string
 		var due int64
-		if err := rows.Scan(&id, &space, &name, &email, &phone, &company, &gstin, &state, &due); err != nil {
+		if err := rows.Scan(&id, &space, &name, &email, &phone, &company, &gstin, &state, &pan, &tdsCode, &due); err != nil {
 			return nil, command.DB(err)
 		}
 		out = append(out, map[string]any{"id": id, "space_id": space, "name": name, "email": email, "phone": phone,
-			"company": company, "gstin": gstin, "state_code": state, "outstanding_minor": due})
+			"company": company, "gstin": gstin, "state_code": state, "pan": pan, "default_tds_code": tdsCode, "outstanding_minor": due})
 	}
 	return out, command.DB(rows.Err())
 }
