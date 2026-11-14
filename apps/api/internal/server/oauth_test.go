@@ -47,6 +47,14 @@ func newOC(t *testing.T) *oc {
 	return newOCFor(t, newEnv(t))
 }
 
+// newOCDiff is newOC without the guard: differential tests send Rust-owned corner cases through the real proxy.
+func newOCDiff(t *testing.T) *oc {
+	e := newEnv(t)
+	t.Setenv("TRUST_PROXY", "1")
+	unsetEnv(t, "PUBLIC_BASE_URL")
+	return &oc{env: e, t: t, base: e.gosv.URL, xff: fmt.Sprintf("10.%d.%d.%d", mrand.Intn(256), mrand.Intn(256), 1+mrand.Intn(250))}
+}
+
 func newOCFor(t *testing.T, e *env) *oc {
 	t.Helper()
 	t.Setenv("TRUST_PROXY", "1")
@@ -63,7 +71,12 @@ func newOCFor(t *testing.T, e *env) *oc {
 
 func (o *oc) req(method, path string, hdr map[string]string, body []byte, ct string) hresp {
 	o.t.Helper()
-	req, _ := http.NewRequest(method, o.base+path, bytes.NewReader(body))
+	return o.reqAt(o.base, method, path, hdr, body, ct)
+}
+
+func (o *oc) reqAt(base, method, path string, hdr map[string]string, body []byte, ct string) hresp {
+	o.t.Helper()
+	req, _ := http.NewRequest(method, base+path, bytes.NewReader(body))
 	if ct != "" {
 		req.Header.Set("Content-Type", ct)
 	}

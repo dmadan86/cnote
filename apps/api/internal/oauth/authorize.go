@@ -166,7 +166,11 @@ func (h *Handler) authorizeContext(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	noStore(w)
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "client_name": v.client.name, "redirect_host": u.hostLabel(), "workspaces": workspaces})
+	ws := make([]map[string]any, 0, len(workspaces)) // serde_json::Value: sorted keys
+	for _, x := range workspaces {
+		ws = append(ws, map[string]any{"id": x.ID, "name": x.Name, "slug": x.Slug, "role": x.Role})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "client_name": v.client.name, "redirect_host": u.hostLabel(), "workspaces": ws})
 }
 
 func (h *Handler) authorize(w http.ResponseWriter, r *http.Request) {

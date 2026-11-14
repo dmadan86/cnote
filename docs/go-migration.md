@@ -40,7 +40,7 @@ Service env: `DATABASE_URL`, `COLLAB_PORT` (4300), `COLLAB_ALLOWED_ORIGINS`, `CO
 
 A handler may return `command.ErrFallback`; the router then replays the buffered request to Rust. Used for:
 inputs serde would reject (missing or mistyped `id`, odd UUID spellings, wrong body shape, invalid JSON),
-OAuth access tokens (`cno_`), unparsable `X-Confirmation-Id`, bodies over 2 MiB. Rust produces its own error
+unparsable `X-Confirmation-Id`, bodies over 2 MiB. Rust produces its own error
 text, so those paths are identical by construction and we never re-implement serde error messages.
 
 ### Response format rules (learned from the differential test)
@@ -121,7 +121,7 @@ Small, read-heavy, few events first; money, outbound and background-coupled last
 7. **projects** (`cnote-projects`: items, workflows, evidence, GitHub webhook).
 8. **marketplace**, **importers**, **ai** (providers, hooks, BYO keys; needs `CNOTE_MASTER_KEY` crypto parity).
 9. **finance/billing**: money-moving, `confirm` flows, plan limits. Port with the strictest differential tests.
-10. **Last**: MCP (`/mcp`), OAuth endpoints, collab WebSocket and revisions (Yjs). These stay proxied as long
+10. **Last**: collab WebSocket and revisions (Yjs); MCP and OAuth moved in Wave 3 (see below). These stay proxied as long
     as needed; the worker (`event.dispatch`, jobs, sweeps) moves only after the modules it calls are in Go.
 
 ## Rust tests that map to each module
@@ -145,7 +145,7 @@ Small, read-heavy, few events first; money, outbound and background-coupled last
 
 - Rate limiting is an in-process bucket per server (as in Rust), so a caller can briefly use both budgets
   while commands are split across the two servers.
-- OAuth access tokens and invalid inputs are served by Rust (fallback), not natively.
+- Invalid inputs are served by Rust (fallback), not natively. OAuth access tokens (`cno_`) are native since Wave 3.
 - `ctx.call` (nested commands) and event/job handlers are not ported; the Rust worker still consumes
   `core.events` and `core.jobs` written by Go.
 - The Go server needs `DATABASE_URL`; `RUST_API_URL` must be reachable or non-native traffic returns 502.
@@ -410,7 +410,7 @@ Final race-suite result: 55 top-level tests / 357 including subtests passed, zer
 `quote.reject`, `quote.convert_to_invoice` and `quote.convert_to_project` (`internal/modules/quotes`, migration
 `0950_quotations.sql`) exist only in Go. Rust has no handler for them, so there is nothing to fall back to: bad
 input returns an `invalid` error from Go rather than `ErrFallback`. Agents reach them through
-`/mcp` `discover` and `invoke` (see "MCP for Go-only commands" below). Quotations never
+`/mcp` `discover` and `invoke` (see "OAuth 2.1 authorization server and the MCP endpoint" below). Quotations never
 post to the ledger; their numbers (`QT/<FY>/<n>`) come from their own `quote:<FY>` series in `billing.sequences`.
 
 ## Go-only command: contact.lifecycle
@@ -490,18 +490,40 @@ returns the first result on both servers (needs a payload hash in `core.idempote
 `core.events` is append-only, so hard-deleting a note that has events fails (notes are soft-deleted in practice);
 SEC-014 is closed by WP7 (`command.denied` events for agent/API-key gate refusals, Go-registry commands only; Rust-handled commands still do not log denials); the three OAuth/install tables are readable by any tenant session.
 
-## MCP for Go-only commands
+## OAuth 2.1 authorization server and the MCP endpoint (Wave 3)
 
-`/mcp` stays on Rust (transport, resources, core tools, OAuth endpoints, the 401 challenge). `internal/server/mcp.go`
-intercepts only `POST /mcp` `tools/call` of the two meta tools: `discover` is answered by Rust and Go merges in its
-Go-only commands (same scoring and shape); `invoke` of a Go-only command runs natively through `Registry.Execute`, so
-role, scopes, workspace tool groups, rate limit, idempotency, confirmation and usage are the REST gate. Anything else,
-any request Go cannot authenticate (bad key, wrong OAuth audience, revoked grant) and any request with `requestState`
-is proxied unchanged. `cn_` keys and `cno_` tokens (resource must equal `PUBLIC_BASE_URL/mcp`, or the loopback Host)
-resolve in `auth.MCPPrincipal`. A Go-only command is one with `Description` + `Schema`, set in
-`modules/mcpmeta.go`; `TestGoOnlyCommandsHaveMCPMetadata` fails for a Go-only command without an entry. Go-only
-commands are not "core" tools, like most Rust commands: they are not in `tools/list`. Not done: the MCP elicitation
-nudge for Go-only confirmations (the result still carries the approval message).
+Both now run in Go (`internal/oauth`, `internal/mcp`, `internal/modules/oauthapps`). Same tables, same SHA-256 hashing of
+codes and tokens, same token shapes (`cnx_` code, `cno_` access, `cnr_` refresh, `cnc_` registered client), so a token
+issued by either server is valid on both (`TestOAuthTokensAreValidOnBothServers`). No new env vars: it reads
+`PUBLIC_BASE_URL`, `PUBLIC_WEB_URL`, `TRUST_PROXY`, `OAUTH_CIMD_ALLOW_PRIVATE` like Rust.
+
+**OAuth** (`internal/oauth`): `GET /.well-known/oauth-protected-resource[/mcp]`, `GET /.well-known/oauth-authorization-server`,
+`POST /oauth/register`, `/oauth/token` (code + PKCE S256, refresh rotation with reuse detection, resource binding),
+`/oauth/revoke`, and the cookie-session consent endpoints `POST /api/oauth/authorize[/context]`; client ID metadata
+documents are fetched with the SSRF guard of `netguard.rs` (public addresses only, connection pinned to the checked
+addresses, no redirects, 5 s, 16 KiB). Rate limits are the same buckets as Rust (`command.CheckRateWith`), in-process.
+`oauth_app.list|revoke` (connected apps) are Go commands. Cases Go will not decide itself are proxied to Rust before any
+side effect: bodies serde would reject (its error text is the contract), `OPTIONS`/`HEAD`/wrong verbs, and redirect URIs
+the `url` crate might parse differently from Go (anything but plain lowercase `scheme://host[:port]/path?query` URIs
+with no dot segments and an already-normalized form; see `oauth/uri.go`).
+
+**MCP** (`internal/mcp`, `POST /mcp`): authentication and the 401 challenge, `initialize`, `ping`, `tools/list`,
+`tools/call` (`discover`, `invoke`, core tools), `resources/list|read`, `resources/templates/list`, `prompts/list`,
+`notifications/initialized` are answered natively, byte-identical to rmcp 3.9 for the legacy lifecycle. The command
+catalogue Go needs for that (names, descriptions, groups, schemas of the commands Rust owns) is the embedded snapshot
+`internal/mcp/catalog.json` of `GET /api/commands`; Go-only commands add theirs from `modules/mcpmeta.go`.
+`TestMCPCatalogMatchesRust` fails when Rust's registry moved on: regenerate with
+`curl -s localhost:4000/api/commands > apps/api/internal/mcp/catalog.json`. Executing a command that Go has ported runs
+through `Registry.Execute` (the REST gate: role, scopes, tool groups, rate limit, idempotency, confirmation, usage). What
+Go proxies to Rust unchanged: execution of commands only Rust has (AI, importers, ...), anything declined with
+`ErrFallback`, the 2026-07-28 request-metadata lifecycle (`_meta`, `Mcp-*` headers, elicitation round trips,
+`server/discover`), unknown `MCP-Protocol-Version`, batches, JSON-RPC responses, other methods, invalid JSON, `GET`/`DELETE`.
+Discover is the one deliberate difference from Rust: it lists Go-only commands too.
+
+Reference for differential tests: Rust throttles registration/token/consent per client address and :4000 is shared, so
+for a complete run start a private reference and point the tests at it:
+`TRUST_PROXY=1 OAUTH_CIMD_ALLOW_PRIVATE=1 cnote serve --port 4520` then `RUST_OAUTH_URL=http://localhost:4520 go test ./...`.
+Without it the throttled cases are skipped and `TestOAuthDifferentialClientMetadataDocuments` is skipped.
 
 ## Go-only commands and public routes: share links (WP2)
 `share.create|list|revoke|email` and `invoice.upi_qr` (migration `1010_public_links.sql`) are Go-only and absent from

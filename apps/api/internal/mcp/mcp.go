@@ -134,6 +134,8 @@ func (s *Server) tools() []tool {
 func write(w http.ResponseWriter, status int, ct string, body []byte) {
 	if ct != "" {
 		w.Header().Set("Content-Type", ct)
+	} else {
+		w.Header()["Content-Type"] = nil // Rust sends none; a nil entry stops net/http sniffing text/plain
 	}
 	w.WriteHeader(status)
 	_, _ = w.Write(body)
@@ -355,7 +357,7 @@ func parseMessage(b []byte) (m message, ok bool) {
 		return m, false
 	}
 	var ver string
-	if json.Unmarshal(o["jsonrpc"], &ver) != nil || ver != "2.0" {
+	if !isString(o["jsonrpc"]) || json.Unmarshal(o["jsonrpc"], &ver) != nil || ver != "2.0" {
 		return m, false
 	}
 	for k := range o {
@@ -363,7 +365,7 @@ func parseMessage(b []byte) (m message, ok bool) {
 			return m, false
 		}
 	}
-	if json.Unmarshal(o["method"], &m.method) != nil {
+	if !isString(o["method"]) || json.Unmarshal(o["method"], &m.method) != nil {
 		return m, false
 	}
 	if raw, has := o["params"]; has {
@@ -395,7 +397,7 @@ func parseMessage(b []byte) (m message, ok bool) {
 	case "tools/list", "resources/list", "resources/templates/list", "prompts/list":
 		for k, v := range m.params {
 			var c string
-			if k != "cursor" || json.Unmarshal(v, &c) != nil {
+			if k != "cursor" || !isString(v) || json.Unmarshal(v, &c) != nil {
 				return m, false
 			}
 		}
@@ -407,7 +409,7 @@ func parseMessage(b []byte) (m message, ok bool) {
 			switch k {
 			case "name":
 				var n string
-				if json.Unmarshal(v, &n) != nil {
+				if !isString(v) || json.Unmarshal(v, &n) != nil {
 					return m, false
 				}
 			case "arguments":
@@ -423,7 +425,7 @@ func parseMessage(b []byte) (m message, ok bool) {
 		return m, hasName
 	case "resources/read":
 		var u string
-		if len(m.params) != 1 || json.Unmarshal(m.params["uri"], &u) != nil || m.params["uri"] == nil {
+		if len(m.params) != 1 || !isString(m.params["uri"]) || json.Unmarshal(m.params["uri"], &u) != nil {
 			return m, false
 		}
 		return m, true
@@ -431,11 +433,14 @@ func parseMessage(b []byte) (m message, ok bool) {
 	return m, false
 }
 
+// isString: a JSON string literal (null would unmarshal into a Go string without error, but serde rejects it).
+func isString(raw json.RawMessage) bool { return len(raw) > 0 && raw[0] == '"' }
+
 func parseInitialize(m *message) bool {
 	if len(m.params) != 3 {
 		return false
 	}
-	if json.Unmarshal(m.params["protocolVersion"], &m.initVersion) != nil || m.params["protocolVersion"] == nil {
+	if !isString(m.params["protocolVersion"]) || json.Unmarshal(m.params["protocolVersion"], &m.initVersion) != nil {
 		return false
 	}
 	var caps map[string]json.RawMessage
@@ -509,11 +514,15 @@ func (s *Server) dispatch(w http.ResponseWriter, r *http.Request, p command.Prin
 	case "prompts/list":
 		respond(w, m.id, map[string]any{"prompts": []any{}})
 	case "resources/templates/list":
-		respond(w, m.id, struct {
-			ResourceTemplates []map[string]string `json:"resourceTemplates"`
-		}{[]map[string]string{
-			{"uriTemplate": "cnote://ws/{ws}/note/{id}", "name": "note", "description": "A note as Markdown with title, owner, freshness and verify_by front matter", "mimeType": "text/markdown"},
-			{"uriTemplate": "cnote://ws/{ws}/view/{id}", "name": "view", "description": "A saved view: its CNQL query and, when available, its current results", "mimeType": "text/markdown"},
+		type tmpl struct {
+			URITemplate string `json:"uriTemplate"`
+			Name        string `json:"name"`
+			Description string `json:"description"`
+			MimeType    string `json:"mimeType"`
+		}
+		respond(w, m.id, map[string]any{"resourceTemplates": []tmpl{
+			{"cnote://ws/{ws}/note/{id}", "note", "A note as Markdown with title, owner, freshness and verify_by front matter", "text/markdown"},
+			{"cnote://ws/{ws}/view/{id}", "view", "A saved view: its CNQL query and, when available, its current results", "text/markdown"},
 		}})
 	case "resources/list":
 		s.listResources(w, r, p, m)

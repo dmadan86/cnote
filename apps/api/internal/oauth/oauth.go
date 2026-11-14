@@ -254,7 +254,7 @@ func (f *fields) str(k string, nullOK bool) (string, bool) {
 		return "", false
 	}
 	var s string
-	if json.Unmarshal(raw, &s) != nil {
+	if raw[0] != '"' || json.Unmarshal(raw, &s) != nil { // null is not a String (serde)
 		f.ok = false
 		return "", false
 	}
@@ -279,7 +279,7 @@ func (f *fields) strList(k string, nullOK bool) ([]string, bool) {
 
 func (f *fields) boolean(k string) bool {
 	var v bool
-	if raw, has := f.o[k]; !has || json.Unmarshal(raw, &v) != nil {
+	if raw, has := f.o[k]; !has || (string(raw) != "true" && string(raw) != "false") || json.Unmarshal(raw, &v) != nil {
 		f.ok = false
 	}
 	return v
