@@ -25,6 +25,7 @@ func Commands() []command.Command {
 		nc("invoice.get", rd, invoiceGet),
 		nc("invoice.list", rd, invoiceList),
 		nc("invoice.preview", rd, invoicePreview),
+		nc("invoice.upi_qr", rd, invoiceUPIQR),
 		confirm(nc("invoice.issue", mi, invoiceIssue)),
 		nc("invoice.generate_irn", mi, invoiceGenerateIRN),
 		confirm(nc("invoice.cancel_irn", mi, invoiceCancelIRN)),

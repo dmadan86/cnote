@@ -11,6 +11,7 @@ import { Confirm, run } from './bits'
 import { Totals } from './editor'
 import { FilterBanner } from './filter'
 import { type Contact, type Line, money, parseMinor, toRupees } from './fmt'
+import { ShareButton } from './share-panel'
 
 type Quote = {
   id: string
@@ -26,7 +27,13 @@ type Quote = {
   converted_invoice_id: string | null
   converted_item_id: string | null
 }
-type QuoteDetail = Quote & { contact_name: string | null; lines: Line[] }
+type QuoteDetail = Quote & {
+  contact_name: string | null
+  lines: Line[]
+  accepted_via: 'staff' | 'link' | null
+  accepted_by_name: string | null
+  accepted_note: string | null
+}
 
 const LABEL: Record<string, string> = {
   draft: 'Draft',
@@ -441,7 +448,14 @@ export function QuoteView({ params }: { params: Promise<{ id: string }> }) {
             <Totals subtotal={q.subtotal_minor} tax={tax} />
           </div>
           <p className="text-[13px] text-muted">Valid until {q.valid_until}</p>
+          {q.accepted_via === 'link' && (
+            <p className="text-[13px]" data-testid="decided-by">
+              {q.status === 'rejected' ? 'Declined' : 'Accepted'} by {q.accepted_by_name} on the shared link
+              {q.accepted_note ? `: "${q.accepted_note}"` : ''}
+            </p>
+          )}
           <div className="flex flex-wrap gap-2">
+            <ShareButton noteId={q.id} kind="quotation" />
             {q.status === 'sent' && (
               <>
                 <button type="button" className={btnPrimary} onClick={() => act('quote.accept')}>

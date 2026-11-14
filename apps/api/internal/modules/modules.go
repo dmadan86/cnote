@@ -14,6 +14,7 @@ import (
 	"github.com/cnote/api/internal/modules/notifications"
 	"github.com/cnote/api/internal/modules/planning"
 	"github.com/cnote/api/internal/modules/projects"
+	"github.com/cnote/api/internal/modules/publiclinks"
 	"github.com/cnote/api/internal/modules/purchases"
 	"github.com/cnote/api/internal/modules/quotes"
 	"github.com/cnote/api/internal/modules/recurring"
@@ -36,6 +37,7 @@ func Commands() []command.Command {
 	cmds = append(cmds, purchases.Commands()...)
 	cmds = append(cmds, recurring.Commands()...)
 	cmds = append(cmds, home.Commands()...)
+	cmds = append(cmds, publiclinks.Commands()...)
 	return cmds
 }
 

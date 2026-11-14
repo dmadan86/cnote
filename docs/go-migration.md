@@ -489,3 +489,16 @@ Open, not fixed (see test skips and the QA report): API-007 reusing an idempoten
 returns the first result on both servers (needs a payload hash in `core.idempotency` and a Rust change);
 `core.events` is append-only, so hard-deleting a note that has events fails (notes are soft-deleted in practice);
 SEC-014 denials are not written to the event log; the three OAuth/install tables are readable by any tenant session.
+
+## Go-only commands and public routes: share links (WP2)
+`share.create|list|revoke|email` and `invoice.upi_qr` (migration `1010_public_links.sql`) are Go-only and absent from
+the Rust `/mcp` list. `share.create` and `share.email` are `send_messages` + confirmation for agents and API keys;
+`share.create` returns a secret (the token), so it is never stored in idempotency, events or confirmations.
+The server also routes `/api/public/{token}` (GET the document) and `/api/public/{token}/quote` (POST accept or
+decline) natively, with no session: tokens are 32 random bytes, only their sha256 is stored, the unauthenticated
+lookup is the narrow `core.resolve_public_link(hash)` SECURITY DEFINER function, and everything after it runs in
+the link's tenant under RLS. Customer decisions run `quote.accept` / `quote.reject` as a System principal on
+behalf of the link creator (their current role and page access; a removed or demoted creator kills their links).
+Rate limits (in-process): `PUBLIC_IP_BURST/PER_SEC`, `PUBLIC_FAIL_BURST/PER_SEC` (misses per IP),
+`PUBLIC_TOKEN_BURST/PER_SEC`; `PUBLIC_TRUST_PROXY=1` takes the client IP from the right-most `X-Forwarded-For`.
+Email uses `SMTP_URL` + `EMAIL_FROM`; the link origin comes from the request's `origin` or `PUBLIC_WEB_URL`.
