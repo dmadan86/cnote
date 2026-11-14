@@ -37,7 +37,17 @@ function useStages() {
   return { stages, stageLabel: (k: string) => stages.find(([s]) => s === k)?.[1] ?? k }
 }
 
-function DealForm({ stage, onClose, onSaved }: { stage: string; onClose: () => void; onSaved: () => void }) {
+export function DealForm({
+  stage,
+  contactId,
+  onClose,
+  onSaved,
+}: {
+  stage: string
+  contactId?: string
+  onClose: () => void
+  onSaved: () => void
+}) {
   const { ws, spaces } = useShell()
   const { stageLabel } = useStages()
   const contacts = useCmd<Contact[]>(ws, 'contact.list', { limit: 500 })
@@ -74,7 +84,13 @@ function DealForm({ stage, onClose, onSaved }: { stage: string; onClose: () => v
         </Field>
         <Field label="Contact">
           {(id) => (
-            <select id={id} name="contact_id" className={inputCls}>
+            <select
+              key={contacts.data ? 'ready' : 'loading'}
+              id={id}
+              name="contact_id"
+              defaultValue={contactId ?? ''}
+              className={inputCls}
+            >
               <option value="">None</option>
               {contacts.data?.map((c) => (
                 <option key={c.id} value={c.id}>

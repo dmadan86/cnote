@@ -1,6 +1,6 @@
 'use client'
 import { useState } from 'react'
-import { BusinessTypePicker } from '@/components/business-type'
+import { CompanyProfile } from '@/components/business-type'
 import { HooksTab } from '@/components/hooks-settings'
 import { Secret } from '@/components/secret'
 import { useShell } from '@/components/shell'
@@ -22,7 +22,10 @@ const TABS = [
 ] as const
 type TabName = (typeof TABS)[number]
 
-type Ws = { name: string; settings: { agent_tool_groups?: string[]; business_type?: string } }
+type Ws = {
+  name: string
+  settings: { agent_tool_groups?: string[]; business_type?: string; company_size?: string }
+}
 type Key = {
   id: string
   name: string
@@ -75,9 +78,10 @@ function WorkspaceTab({ ws }: { ws: string }) {
         <p className="text-[13px] text-muted">
           Changing this re-applies the modules shown in the sidebar and the CRM deal stage names.
         </p>
-        <BusinessTypePicker
+        <CompanyProfile
           ws={ws}
-          current={data.settings.business_type}
+          type={data.settings.business_type}
+          size={data.settings.company_size}
           onDone={() => {
             reload()
             shell.reload()

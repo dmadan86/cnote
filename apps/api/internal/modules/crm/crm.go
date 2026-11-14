@@ -246,7 +246,7 @@ func Commands() []command.Command {
 			return execute(c, n, i)
 		}))
 	}
-	return out
+	return append(out, command.NewCommand("contact.lifecycle", command.GroupRead, lifecycle))
 }
 func emit(c *command.Ctx, kind, id string, p any) error { _, err := c.Emit(kind, &id, p); return err }
 func rename(c *command.Ctx, id string, title *string) error {

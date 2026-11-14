@@ -60,12 +60,40 @@ export const BUSINESS_TYPES: BusinessType[] = [
   },
 ]
 
-export const applyBusinessType = (ws: string, id: string) => {
+export const COMPANY_SIZES = ['1-10', '11-50', '51-200', '200+'] as const
+
+/** Why each module is worth switching on; shown in step 2 of company setup. */
+export const MODULE_WHY: Record<string, { label: string; why: string }> = {
+  crm: { label: 'CRM', why: 'Track inquiries, deals and every customer in one place.' },
+  billing: {
+    label: 'Billing',
+    why: 'Send quotations and GST invoices, record payments, see what is outstanding.',
+  },
+  projects: { label: 'Projects', why: 'Turn an approved quotation into tasks with owners and due dates.' },
+  docs: { label: 'Docs', why: 'Write SOPs, scopes of work and meeting notes next to the work.' },
+  whiteboard: { label: 'Whiteboard', why: 'Sketch layouts and plans together on a shared canvas.' },
+}
+
+/** "Other" has no preset: recommend the core four and keep the default deal stage names. */
+export const defaultModules = (id?: string) =>
+  BUSINESS_TYPES.find((b) => b.id === id)?.modules ?? ['docs', 'projects', 'crm', 'billing']
+
+export const applyBusinessType = (
+  ws: string,
+  id: string,
+  extra: { company_size?: string; modules?: string[] } = {},
+) => {
   const t = BUSINESS_TYPES.find((b) => b.id === id)
-  // "other" (skip) only records the choice; modules and labels stay as they are.
+  // "other" only records the choice (and any modules picked); deal stage labels stay as they are.
   return cmd(ws, 'workspace.update', {
-    settings: t
-      ? { business_type: id, modules: t.modules, deal_stage_labels: t.labels }
-      : { business_type: id },
+    settings: {
+      business_type: id,
+      ...(extra.company_size ? { company_size: extra.company_size } : {}),
+      ...(extra.modules || t ? { modules: extra.modules ?? t?.modules } : {}),
+      ...(t ? { deal_stage_labels: t.labels } : {}),
+    },
   })
 }
+
+export const saveCompanySize = (ws: string, company_size: string) =>
+  cmd(ws, 'workspace.update', { settings: { company_size } })
