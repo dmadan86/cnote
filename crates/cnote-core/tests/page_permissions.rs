@@ -724,3 +724,42 @@ async fn guest_shared_as_editor_can_save_the_page() {
         );
     }
 }
+
+#[tokio::test]
+async fn moves_cannot_create_cycles_or_cross_spaces() {
+    let w = W::new().await;
+    let a = w.space("MA", "open").await;
+    let b = w.space("MB", "open").await;
+    let top = w.page(a, "Top", None, "x").await;
+    let mid = w.page(a, "Mid", Some(top), "x").await;
+    let leaf = w.page(a, "Leaf", Some(mid), "x").await;
+    let other = w.page(b, "Elsewhere", None, "x").await;
+    for (id, parent) in [(top, top), (top, leaf), (mid, leaf), (top, other)] {
+        assert_eq!(
+            w.err(
+                &w.owner,
+                "note.update",
+                json!({"id": id, "parent_id": parent})
+            )
+            .await,
+            ErrorCode::Invalid,
+            "{id} under {parent}"
+        );
+    }
+    assert!(
+        w.run(
+            &w.owner,
+            "note.create",
+            json!({"space_id": b, "title": "x", "parent_id": top})
+        )
+        .await
+        .is_err()
+    );
+    // A legal move still works.
+    w.ok(
+        &w.owner,
+        "note.update",
+        json!({"id": leaf, "parent_id": top}),
+    )
+    .await;
+}

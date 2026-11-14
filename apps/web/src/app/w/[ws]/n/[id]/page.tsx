@@ -13,11 +13,12 @@ import { useShell } from '@/components/shell'
 import { InsertField } from '@/components/templates/fields'
 import { SaveAsTemplate } from '@/components/templates/save-template'
 import { btn, FreshnessPill } from '@/components/ui'
+import { VersionsTab } from '@/components/versions-panel'
 import { activity, activityRest, type Evt } from '@/lib/activity'
 import { cmd, type NoteDetail } from '@/lib/api'
 import { ago, useCmd } from '@/lib/hooks'
 
-type Tab = 'relations' | 'history' | 'comments'
+type Tab = 'relations' | 'history' | 'versions' | 'comments'
 
 function Panel({
   ws,
@@ -25,11 +26,15 @@ function Panel({
   tab,
   setTab,
   comments,
+  canEdit,
+  onRestored,
 }: {
   ws: string
   note: NoteDetail
   tab: Tab
   setTab: (t: Tab) => void
+  canEdit: boolean
+  onRestored: () => void
   comments: Omit<React.ComponentProps<typeof CommentsTab>, 'ws' | 'noteId'>
 }) {
   const history = useCmd<Evt[]>(ws, 'note.history', { id: note.id }, tab === 'history')
@@ -37,7 +42,7 @@ function Panel({
   return (
     <aside aria-label="Page details" className="w-80 shrink-0 border-l border-line bg-side">
       <div role="tablist" className="flex border-b border-line">
-        {(['relations', 'history', 'comments'] as Tab[]).map((t) => (
+        {(['relations', 'history', 'versions', 'comments'] as Tab[]).map((t) => (
           <button
             key={t}
             type="button"
@@ -84,6 +89,7 @@ function Panel({
             </ul>
           </>
         )}
+        {tab === 'versions' && <VersionsTab ws={ws} note={note} canEdit={canEdit} onRestored={onRestored} />}
         {tab === 'comments' && <CommentsTab ws={ws} noteId={note.id} {...comments} />}
       </div>
     </aside>
@@ -105,6 +111,7 @@ export default function NotePage({ params }: { params: Promise<{ id: string }> }
     setTab('comments')
   }
   const [rev, setRev] = useState(0) // bumps when an approved proposal rewrites the content
+  const [restored, setRestored] = useState(false)
   const [title, setTitle] = useState('')
   const editorRef = useRef<Editor | null>(null)
 
@@ -188,6 +195,12 @@ export default function NotePage({ params }: { params: Promise<{ id: string }> }
             reloadNote()
           }}
         />
+        {restored && (
+          <p role="status" className="border-b border-line bg-hover px-6 py-1.5 text-[13px]">
+            This page was restored to an earlier version. Edits you made in the last few seconds may not have
+            been kept.
+          </p>
+        )}
         {!canEdit && (
           <p role="status" className="border-b border-line bg-hover px-6 py-1.5 text-[13px] text-muted">
             You can view this page but not edit it.
@@ -205,9 +218,14 @@ export default function NotePage({ params }: { params: Promise<{ id: string }> }
             className="mb-6 w-full bg-transparent text-3xl font-bold placeholder:text-muted"
           />
           <NoteEditor
-            key={`${id}-${rev}`}
+            key={`${id}-${rev}-${note.collab_epoch}`}
             ws={ws}
             id={id}
+            epoch={note.collab_epoch}
+            onStale={() => {
+              setRestored(true)
+              reloadNote()
+            }}
             initialMd={note.content_md}
             editable={canEdit}
             onSaved={reloadNote}
@@ -232,6 +250,8 @@ export default function NotePage({ params }: { params: Promise<{ id: string }> }
           note={note}
           tab={tab}
           setTab={setTab}
+          canEdit={canEdit}
+          onRestored={reloadNote}
           comments={{
             comments: comments.data ?? [],
             reload: comments.reload,

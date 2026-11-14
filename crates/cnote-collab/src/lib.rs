@@ -1,9 +1,15 @@
 //! Collaboration gateway (ADR-005): a Yjs-compatible WebSocket server. One in-memory room per note, y-sync
-//! protocol (sync step 1/2, update, awareness relay), debounced persistence into core.notes.
+//! protocol (sync step 1/2, update, awareness relay). Every accepted update is committed to core.note_updates
+//! before it is relayed, and a debounced snapshot into core.notes absorbs (and deletes) the logged updates, so a
+//! crash loses nothing anyone has seen. Writes are fenced by core.notes.collab_epoch: after a restore the old room
+//! can no longer write, and its clients are closed with code 4409 so they reload the restored page.
 //! Each connection's latest awareness (presence, cursor) is kept in memory: replayed to anyone who joins and
 //! cleared for everyone when that connection drops. Rooms live in one process; scale out by routing a note to one node.
 
 mod md;
+mod revisions;
+
+pub use revisions::module;
 
 use axum::Router;
 use axum::extract::ws::{Message as Ws, WebSocket, WebSocketUpgrade};
@@ -31,6 +37,8 @@ use yrs::{ClientID, Doc, Options, ReadTxn, StateVector, Transact, Update};
 pub const SESSION_COOKIE: &str = "cn_session";
 const DEBOUNCE: Duration = Duration::from_secs(2);
 const MAX_FRAME: usize = 8 << 20;
+/// WebSocket close code for "this page was restored; reload it" (an old collab epoch).
+pub const CLOSE_STALE_EPOCH: u16 = 4409;
 
 #[derive(Clone)]
 struct AppState {
@@ -42,6 +50,10 @@ struct AppState {
 
 struct Room {
     key: (Uuid, Uuid),
+    /// core.notes.collab_epoch this room was loaded at; every write is fenced on it.
+    epoch: i32,
+    /// Flips to true when the room is fenced out (restored elsewhere): every connection then closes.
+    stale: tokio::sync::watch::Sender<bool>,
     state: Mutex<RoomState>,
     /// Serialises persists so an older snapshot never overwrites a newer one.
     persist: tokio::sync::Mutex<()>,
@@ -57,6 +69,8 @@ struct RoomState {
     last_edit: Instant,
     editor: Option<Principal>,
     timer_running: bool,
+    /// Ids in core.note_updates already applied to `doc`; the next snapshot deletes exactly these.
+    applied: Vec<i64>,
 }
 
 pub fn router(pool: PgPool, registry: Arc<Registry>) -> Router {
@@ -147,34 +161,66 @@ fn seed_client(note: Uuid) -> ClientID {
     ClientID::new(n.max(1))
 }
 
-async fn load_doc(ctx: &mut Ctx, note: Uuid) -> CmdResult<Doc> {
-    let (md_text, ydoc): (String, Option<Vec<u8>>) = sqlx::query_as(
-        "select content_md, content_ydoc from core.notes where id = $1 and deleted_at is null",
+/// The live document: the last snapshot (or a seed from Markdown) plus every logged update of the current
+/// epoch. Returns the doc, the epoch, and the log ids it absorbed (the next snapshot deletes them).
+pub(crate) async fn load_doc(
+    conn: &mut sqlx::PgConnection,
+    note: Uuid,
+) -> CmdResult<(Doc, i32, Vec<i64>)> {
+    let (md_text, ydoc, epoch): (String, Option<Vec<u8>>, i32) = sqlx::query_as(
+        "select content_md, content_ydoc, collab_epoch from core.notes where id = $1 and deleted_at is null",
     )
     .bind(note)
-    .fetch_one(&mut *ctx.tx)
+    .fetch_optional(&mut *conn)
+    .await?
+    .ok_or_else(|| CmdError::not_found("note"))?;
+    let log: Vec<(i64, Vec<u8>)> = sqlx::query_as(
+        "select id, update from core.note_updates where note_id = $1 and epoch = $2 order by id",
+    )
+    .bind(note)
+    .bind(epoch)
+    .fetch_all(&mut *conn)
     .await?;
-    if let Some(bytes) = ydoc.filter(|b| !b.is_empty()) {
-        let doc = Doc::new();
-        let ok = Update::decode_v1(&bytes)
-            .ok()
-            .is_some_and(|u| doc.transact_mut().apply_update(u).is_ok());
-        // Persisting writes content_md from the doc, so a mismatch means the note was edited through the API.
-        if ok && md::same(&md::to_markdown(&doc), &md_text) {
-            return Ok(doc);
+    let ids = log.iter().map(|(id, _)| *id).collect();
+    let snapshot = ydoc.filter(|b| !b.is_empty());
+    let mut replay = snapshot.is_none(); // a seed is deterministic, so updates made on it apply again
+    let doc = 'doc: {
+        if let Some(bytes) = snapshot {
+            let doc = Doc::new();
+            let ok = Update::decode_v1(&bytes)
+                .ok()
+                .is_some_and(|u| doc.transact_mut().apply_update(u).is_ok());
+            // Persisting writes content_md from the doc, so a mismatch means the note was edited through the API;
+            // then the API text wins and updates logged against the older snapshot are dropped.
+            if ok && md::same(&md::to_markdown(&doc), &md_text) {
+                replay = true;
+                break 'doc doc;
+            }
+        }
+        let doc = Doc::with_options(Options {
+            client_id: seed_client(note),
+            ..Options::default()
+        });
+        md::seed(&doc, &md_text);
+        doc
+    };
+    if replay {
+        let mut txn = doc.transact_mut();
+        for (_, u) in &log {
+            if let Ok(u) = Update::decode_v1(u) {
+                let _ = txn.apply_update(u);
+            }
         }
     }
-    let doc = Doc::with_options(Options {
-        client_id: seed_client(note),
-        ..Options::default()
-    });
-    md::seed(&doc, &md_text);
-    Ok(doc)
+    Ok((doc, epoch, ids))
 }
 
 #[derive(serde::Deserialize)]
 struct Q {
     token: Option<String>,
+    /// The collab_epoch the client's document belongs to (note.get). A different one means the page was restored
+    /// since, so merging the client's state would bring the replaced content back: it is refused with 4409.
+    epoch: Option<i32>,
 }
 
 async fn ws_handler(
@@ -193,9 +239,29 @@ async fn ws_handler(
         Ok(r) => r,
         Err(e) => return fail(e),
     };
-    upgrade
-        .max_message_size(MAX_FRAME)
-        .on_upgrade(move |socket| serve(socket, s, room, principal, write))
+    let upgrade = upgrade.max_message_size(MAX_FRAME);
+    if q.epoch.is_some_and(|e| e != room.epoch) {
+        return upgrade.on_upgrade(|mut socket| async move { close_stale(&mut socket).await });
+    }
+    upgrade.on_upgrade(move |socket| serve(socket, s, room, principal, write))
+}
+
+async fn close_stale(socket: &mut WebSocket) {
+    let _ = socket
+        .send(Ws::Close(Some(axum::extract::ws::CloseFrame {
+            code: CLOSE_STALE_EPOCH,
+            reason: "page restored".into(),
+        })))
+        .await;
+}
+
+/// Fence a room out: drop it from the map (if still there) and close all of its connections.
+fn retire(s: &AppState, room: &Arc<Room>) {
+    let mut rooms = s.rooms.lock().unwrap();
+    if rooms.get(&room.key).is_some_and(|r| Arc::ptr_eq(r, room)) {
+        rooms.remove(&room.key);
+    }
+    room.stale.send_replace(true);
 }
 
 /// Access check plus room lookup/creation. Returns the room and whether this caller may edit.
@@ -212,14 +278,25 @@ async fn prepare(
         registry: s.registry.clone(),
     };
     let write = may_write(&mut ctx, note).await?;
+    let epoch: i32 = sqlx::query_scalar("select collab_epoch from core.notes where id = $1")
+        .bind(note)
+        .fetch_one(&mut *ctx.tx)
+        .await?;
     let key = (ws, note);
-    if let Some(r) = s.rooms.lock().unwrap().get(&key) {
-        return Ok((r.clone(), write));
+    let open = s.rooms.lock().unwrap().get(&key).cloned();
+    if let Some(r) = open {
+        if r.epoch == epoch {
+            return Ok((r, write));
+        }
+        retire(s, &r); // restored since this room loaded
     }
-    let doc = load_doc(&mut ctx, note).await?;
+    let (doc, epoch, applied) = load_doc(&mut ctx.tx, note).await?;
     ctx.tx.commit().await?;
+    let recovered = !applied.is_empty();
     let room = Arc::new(Room {
         key,
+        epoch,
+        stale: tokio::sync::watch::channel(false).0,
         state: Mutex::new(RoomState {
             doc,
             peers: HashMap::new(),
@@ -229,11 +306,17 @@ async fn prepare(
             last_edit: Instant::now(),
             editor: None,
             timer_running: false,
+            applied,
         }),
         persist: Default::default(),
     });
     // Another connection may have created the room while this one was loading.
     let room = s.rooms.lock().unwrap().entry(key).or_insert(room).clone();
+    if recovered {
+        // Updates logged before a crash: fold them into a snapshot soon.
+        room.state.lock().unwrap().dirty = true;
+        kick(s, &room);
+    }
     Ok((room, write))
 }
 
@@ -264,7 +347,16 @@ async fn recheck(s: &AppState, p: &Principal, room: &Room) -> CmdResult<bool> {
         principal: p.clone(),
         registry: s.registry.clone(),
     };
-    may_write(&mut ctx, room.key.1).await
+    let w = may_write(&mut ctx, room.key.1).await?;
+    let epoch: Option<i32> =
+        sqlx::query_scalar("select collab_epoch from core.notes where id = $1")
+            .bind(room.key.1)
+            .fetch_optional(&mut *ctx.tx)
+            .await?;
+    if epoch != Some(room.epoch) {
+        return Err(CmdError::new(ErrorCode::Conflict, "page restored"));
+    }
+    Ok(w)
 }
 
 fn send_all(st: &RoomState, except: u64, frame: &[u8]) {
@@ -297,6 +389,15 @@ async fn serve(socket: WebSocket, s: AppState, room: Arc<Room>, principal: Princ
     };
     let writer = tokio::spawn(async move {
         while let Some(frame) = rx.recv().await {
+            if frame.is_empty() {
+                // Sentinel from the fenced path (Yjs frames are never empty).
+                let close = axum::extract::ws::CloseFrame {
+                    code: CLOSE_STALE_EPOCH,
+                    reason: "page restored".into(),
+                };
+                let _ = sink.send(Ws::Close(Some(close))).await;
+                break;
+            }
             if sink.send(Ws::Binary(frame.into())).await.is_err() {
                 break;
             }
@@ -305,19 +406,39 @@ async fn serve(socket: WebSocket, s: AppState, room: Arc<Room>, principal: Princ
 
     let mut tick = tokio::time::interval(ACCESS_RECHECK);
     tick.tick().await;
-    loop {
+    let mut stale = room.stale.subscribe();
+    let mut fenced = *stale.borrow();
+    while !fenced {
         tokio::select! {
             frame = stream.next() => match frame {
-                Some(Ok(Ws::Binary(b))) => on_frame(&s, &room, me, &tx, &principal, write, &b),
+                Some(Ok(Ws::Binary(b))) => match on_frame(&s, &room, me, &tx, &principal, write, &b).await {
+                    Ok(()) => {}
+                    Err(e) if e.code == ErrorCode::Conflict => fenced = true,
+                    Err(e) => {
+                        // Not logged, so not relayed: the client still has the edit and resends it on reconnect.
+                        tracing::error!(note = %room.key.1, error = %e, "collab update not persisted");
+                        break;
+                    }
+                },
                 Some(Ok(Ws::Close(_))) | None | Some(Err(_)) => break,
                 _ => {}
             },
+            _ = stale.changed() => fenced = true,
             _ = tick.tick() => match recheck(&s, &principal, &room).await {
                 Ok(w) => write = write && w,
+                Err(e) if e.code == ErrorCode::Conflict => fenced = true,
                 Err(e) if e.code == ErrorCode::NotFound || e.code == ErrorCode::Forbidden => break,
                 Err(_) => {} // transient database error: keep the connection, retry next tick
             },
         }
+    }
+    if fenced {
+        retire(&s, &room);
+        room.state.lock().unwrap().peers.remove(&me);
+        let _ = tx.send(Vec::new()); // the writer turns this into a 4409 close
+        drop(tx);
+        let _ = tokio::time::timeout(Duration::from_secs(2), writer).await;
+        return;
     }
 
     {
@@ -345,7 +466,25 @@ async fn serve(socket: WebSocket, s: AppState, room: Arc<Room>, principal: Princ
     }
 }
 
-fn on_frame(
+/// Commit one update to the log, fenced on the room's epoch. Conflict means the page was restored since.
+async fn log_update(s: &AppState, room: &Room, update: &[u8]) -> CmdResult<i64> {
+    let mut tx = cnote_db::begin_tenant(&s.pool, room.key.0).await?;
+    let id: Option<i64> = sqlx::query_scalar(
+        "insert into core.note_updates (workspace_id, note_id, epoch, update)
+         select workspace_id, id, collab_epoch, $3 from core.notes
+         where id = $1 and collab_epoch = $2 and deleted_at is null
+         returning id",
+    )
+    .bind(room.key.1)
+    .bind(room.epoch)
+    .bind(update)
+    .fetch_optional(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    id.ok_or_else(|| CmdError::new(ErrorCode::Conflict, "page restored"))
+}
+
+async fn on_frame(
     s: &AppState,
     room: &Arc<Room>,
     me: u64,
@@ -353,9 +492,9 @@ fn on_frame(
     principal: &Principal,
     write: bool,
     frame: &[u8],
-) {
+) -> CmdResult<()> {
     let Ok(msg) = Message::decode_v1(frame) else {
-        return;
+        return Ok(());
     };
     match msg {
         Message::Sync(SyncMessage::SyncStep1(sv)) => {
@@ -370,18 +509,24 @@ fn on_frame(
         }
         Message::Sync(SyncMessage::SyncStep2(u) | SyncMessage::Update(u)) => {
             if !write {
-                return; // read-only: their edits never reach the shared doc
+                return Ok(()); // read-only: their edits never reach the shared doc
             }
             let Ok(update) = Update::decode_v1(&u) else {
-                return;
+                return Ok(());
             };
             {
-                let mut st = room.state.lock().unwrap();
+                let st = room.state.lock().unwrap();
                 let mut txn = st.doc.transact_mut();
                 if txn.apply_update(update).is_err() || !txn.has_changes() {
-                    return;
+                    return Ok(());
                 }
-                drop(txn);
+            }
+            // Durable before anyone else sees it. If this fails the connection closes; the sender still holds
+            // the edit and resends it on reconnect (sync step 2), and the in-memory doc reaches the next snapshot.
+            let id = log_update(s, room, &u).await?;
+            {
+                let mut st = room.state.lock().unwrap();
+                st.applied.push(id);
                 st.dirty = true;
                 st.last_edit = Instant::now();
                 st.editor = Some(principal.clone());
@@ -401,6 +546,7 @@ fn on_frame(
         }
         _ => {}
     }
+    Ok(())
 }
 
 /// Start the idle timer for this room unless one is already running.
@@ -439,7 +585,7 @@ fn kick(s: &AppState, room: &Arc<Room>) {
 /// Write the doc and its Markdown snapshot, bump the version, and emit note.updated as the last editor.
 async fn persist(s: &AppState, room: &Arc<Room>) -> CmdResult<()> {
     let _guard = room.persist.lock().await;
-    let (state, md_text, editor) = {
+    let (state, md_text, editor, applied) = {
         let mut st = room.state.lock().unwrap();
         if !st.dirty {
             return Ok(());
@@ -449,24 +595,36 @@ async fn persist(s: &AppState, room: &Arc<Room>) -> CmdResult<()> {
             .doc
             .transact()
             .encode_state_as_update_v1(&StateVector::default());
-        (bytes, md::to_markdown(&st.doc), st.editor.clone())
+        // Taken under the same lock as the state: the snapshot contains exactly these logged updates.
+        let applied = std::mem::take(&mut st.applied);
+        (bytes, md::to_markdown(&st.doc), st.editor.clone(), applied)
     };
-    let Some(editor) = editor else { return Ok(()) };
-    let result: CmdResult<()> = async {
+    let result: CmdResult<bool> = async {
         let mut tx = cnote_db::begin_tenant(&s.pool, room.key.0).await?;
         let version: Option<i32> = sqlx::query_scalar(
             "update core.notes set content_ydoc = $2, content_md = $3, version = version + 1, updated_at = now()
-             where id = $1 and deleted_at is null returning version",
+             where id = $1 and deleted_at is null and collab_epoch = $4 returning version",
         )
         .bind(room.key.1)
         .bind(&state)
         .bind(&md_text)
+        .bind(room.epoch)
         .fetch_optional(&mut *tx)
         .await?;
-        if let Some(v) = version {
+        let Some(v) = version else {
+            return Ok(false); // restored (or deleted) since this room loaded: fenced out
+        };
+        sqlx::query("delete from core.note_updates where id = any($1)")
+            .bind(&applied)
+            .execute(&mut *tx)
+            .await?;
+        let actor = editor.as_ref().and_then(|e| e.user_id);
+        cnote_core::notes::checkpoint(&mut tx, room.key.1, actor, cnote_core::notes::CHECKPOINT_EVERY_SECS)
+            .await?;
+        if let Some(editor) = &editor {
             events::emit(
                 &mut tx,
-                &editor,
+                editor,
                 "note.updated",
                 Some(room.key.1),
                 json!({"changed": ["content"], "version": v}),
@@ -474,12 +632,21 @@ async fn persist(s: &AppState, room: &Arc<Room>) -> CmdResult<()> {
             .await?;
         }
         tx.commit().await?;
-        Ok(())
+        Ok(true)
     }
     .await;
-    if let Err(e) = &result {
-        tracing::error!(note = %room.key.1, error = %e, "collab persist failed");
-        room.state.lock().unwrap().dirty = true;
+    match result {
+        Ok(true) => Ok(()),
+        Ok(false) => {
+            retire(s, room);
+            Ok(())
+        }
+        Err(e) => {
+            tracing::error!(note = %room.key.1, error = %e, "collab persist failed");
+            let mut st = room.state.lock().unwrap();
+            st.dirty = true;
+            st.applied.extend(applied);
+            Err(e)
+        }
     }
-    result
 }

@@ -521,10 +521,12 @@ name = "cnote-collab"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "chrono",
  "cnote-core",
  "cnote-db",
  "dotenvy",
  "futures",
+ "schemars",
  "serde",
  "serde_json",
  "sqlx",

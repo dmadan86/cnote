@@ -60,6 +60,8 @@ export type Note = {
   updated_at: string
   version: number
   restriction: 'none' | 'edit' | 'view'
+  /** Live-editing generation; a restore bumps it and open editors reload. */
+  collab_epoch: number
 }
 
 export type SharedNote = Note & { level: 'view' | 'edit' }

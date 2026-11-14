@@ -31,7 +31,7 @@ async fn env() -> (Env, Arc<Registry>) {
     let pool = cnote_db::connect(&std::env::var("DATABASE_URL").unwrap(), 5)
         .await
         .unwrap();
-    let reg = Registry::new(vec![cnote_core::module()]);
+    let reg = Registry::new(vec![cnote_core::module(), cnote_collab::module()]);
     let app =
         cnote_collab::router_with_debounce(pool.clone(), reg.clone(), Duration::from_millis(400));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -442,4 +442,242 @@ async fn page_restrictions_and_shares_bind_websocket_writers() {
     })
     .await;
     assert!(closed.is_ok(), "revoked user must be disconnected");
+}
+
+/// A second gateway on the same database: a fresh process after a crash (no rooms in memory).
+async fn gateway(pool: &PgPool, reg: &Arc<Registry>, debounce: Duration) -> std::net::SocketAddr {
+    let app = cnote_collab::router_with_debounce(pool.clone(), reg.clone(), debounce);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    addr
+}
+
+async fn connect_at(e: &Env, addr: std::net::SocketAddr, user: Uuid, query: &str) -> Sock {
+    let token = auth::create_session(&e.pool, user).await.unwrap();
+    let mut req = format!("ws://{addr}/collab/{}/{}{query}", e.ws, e.note)
+        .into_client_request()
+        .unwrap();
+    req.headers_mut()
+        .insert("cookie", format!("cn_session={token}").parse().unwrap());
+    connect_async(req).await.unwrap().0
+}
+
+/// The close code the server ends this socket with (None if it stays open).
+async fn close_code(s: &mut Sock) -> Option<u16> {
+    loop {
+        match tokio::time::timeout(Duration::from_millis(3000), s.next()).await {
+            Ok(Some(Ok(Ws::Close(f)))) => return f.map(|f| u16::from(f.code)),
+            Ok(Some(Ok(_))) => continue,
+            _ => return None,
+        }
+    }
+}
+
+async fn scalar<
+    T: for<'r> sqlx::Decode<'r, sqlx::Postgres> + sqlx::Type<sqlx::Postgres> + Send + Unpin,
+>(
+    e: &Env,
+    sql: &str,
+) -> T {
+    let mut tx = cnote_db::begin_tenant(&e.pool, e.ws).await.unwrap();
+    sqlx::query_scalar(sqlx::AssertSqlSafe(sql.to_string()))
+        .bind(e.note)
+        .fetch_one(&mut *tx)
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn relayed_edits_survive_a_crash_before_the_snapshot() {
+    let (e, reg) = env().await;
+    let user = e.owner.user_id.unwrap();
+    // This gateway never snapshots on its own (1 hour debounce): only the update log can save the edit.
+    let first = gateway(&e.pool, &reg, Duration::from_secs(3600)).await;
+    let (a, b) = (Doc::new(), Doc::new());
+    let mut ca = connect_at(&e, first, user, "").await;
+    sync(&mut ca, &a).await;
+    let mut cb = connect_at(&e, first, user, "").await;
+    sync(&mut cb, &b).await;
+    send(
+        &mut ca,
+        Message::Sync(SyncMessage::Update(append(&a, ", team"))),
+    )
+    .await;
+    assert!(
+        matches!(
+            recv(&mut cb).await,
+            Some(Message::Sync(SyncMessage::Update(_)))
+        ),
+        "relayed"
+    );
+    // Relayed means committed: the edit is in the log while the page row still has the old text.
+    let logged: i64 = scalar(
+        &e,
+        "select count(*) from core.note_updates where note_id = $1",
+    )
+    .await;
+    assert!(logged >= 1);
+    assert_eq!(e.note_row().await.0, "hello world");
+
+    // "Crash": a new gateway with no rooms in memory serves the page from snapshot + log.
+    let second = gateway(&e.pool, &reg, Duration::from_millis(300)).await;
+    let c = Doc::new();
+    let mut cc = connect_at(&e, second, user, "").await;
+    sync(&mut cc, &c).await;
+    assert!(text(&c).contains("hello world, team"), "{}", text(&c));
+    // It folds the recovered updates into a snapshot and clears exactly those from the log.
+    tokio::time::sleep(Duration::from_millis(1200)).await;
+    assert_eq!(e.note_row().await.0, "hello world, team");
+    let left: i64 = scalar(
+        &e,
+        "select count(*) from core.note_updates where note_id = $1",
+    )
+    .await;
+    assert_eq!(left, 0);
+}
+
+#[tokio::test]
+async fn restore_fences_open_editors_and_keeps_every_version() {
+    let (e, reg) = env().await;
+    let user = e.owner.user_id.unwrap();
+    let o = ExecOptions::default();
+    let a = Doc::new();
+    let mut ca = e.connect_session(user).await;
+    sync(&mut ca, &a).await;
+    send(
+        &mut ca,
+        Message::Sync(SyncMessage::Update(append(&a, " v2"))),
+    )
+    .await;
+    tokio::time::sleep(Duration::from_millis(1000)).await; // snapshot + first version
+    send(
+        &mut ca,
+        Message::Sync(SyncMessage::Update(append(&a, " v3"))),
+    )
+    .await;
+    tokio::time::sleep(Duration::from_millis(200)).await; // logged, not yet snapshotted
+
+    let revs = reg
+        .execute(
+            &e.pool,
+            "note.revisions",
+            json!({"note_id": e.note}),
+            &e.owner,
+            &o,
+        )
+        .await
+        .unwrap();
+    assert_eq!(revs.as_array().unwrap().len(), 1, "{revs}");
+    let v2 = revs[0]["id"].as_str().unwrap().to_string();
+
+    // A stale reviewer is refused; the real restore succeeds.
+    let stale = reg
+        .execute(
+            &e.pool,
+            "note.restore",
+            json!({"note_id": e.note, "revision_id": v2, "expected_epoch": 7}),
+            &e.owner,
+            &o,
+        )
+        .await;
+    assert!(stale.is_err());
+    let r = reg
+        .execute(
+            &e.pool,
+            "note.restore",
+            json!({"note_id": e.note, "revision_id": v2, "expected_epoch": 1}),
+            &e.owner,
+            &o,
+        )
+        .await
+        .unwrap();
+    assert_eq!(r["collab_epoch"], json!(2));
+
+    // The open editor is closed with 4409 (on its next edit or access re-check, whichever comes first).
+    send(
+        &mut ca,
+        Message::Sync(SyncMessage::Update(append(&a, " lost"))),
+    )
+    .await;
+    assert_eq!(
+        close_code(&mut ca).await,
+        Some(cnote_collab::CLOSE_STALE_EPOCH)
+    );
+    tokio::time::sleep(Duration::from_millis(800)).await;
+    assert_eq!(
+        e.note_row().await.0,
+        "hello world v2",
+        "the fenced room did not write"
+    );
+
+    // History: v2, the live state before the restore (with the unsnapshotted v3), and the restore.
+    let revs = reg
+        .execute(
+            &e.pool,
+            "note.revisions",
+            json!({"note_id": e.note}),
+            &e.owner,
+            &o,
+        )
+        .await
+        .unwrap();
+    let reasons: Vec<_> = revs
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["reason"].clone())
+        .collect();
+    assert_eq!(
+        reasons,
+        vec![json!("restore"), json!("before_restore"), json!("edit")]
+    );
+    let before = reg
+        .execute(
+            &e.pool,
+            "note.revision",
+            json!({"id": revs[1]["id"]}),
+            &e.owner,
+            &o,
+        )
+        .await
+        .unwrap();
+    assert_eq!(before["content_md"], json!("hello world v2 v3"));
+    assert_eq!(revs[0]["restored_from"], json!(v2));
+
+    // A tab still on the old epoch cannot save its stale copy over the restore through the API either.
+    let stale_save = reg
+        .execute(
+            &e.pool,
+            "note.update",
+            json!({"id": e.note, "content_md": "stale", "expected_epoch": 1}),
+            &e.owner,
+            &o,
+        )
+        .await;
+    assert!(stale_save.is_err());
+
+    // Versions are immutable for the app role.
+    let mut tx = cnote_db::begin_tenant(&e.pool, e.ws).await.unwrap();
+    let edit = sqlx::query("update core.note_revisions set content_md = 'x' where note_id = $1")
+        .bind(e.note)
+        .execute(&mut *tx)
+        .await;
+    assert!(edit.is_err(), "revisions must not be editable");
+    drop(tx);
+
+    // A client still holding the old document is refused; one on the new epoch sees the restored text.
+    let mut old = connect_at(&e, e.addr, user, "?epoch=1").await;
+    assert_eq!(
+        close_code(&mut old).await,
+        Some(cnote_collab::CLOSE_STALE_EPOCH)
+    );
+    let n = Doc::new();
+    let mut cn = connect_at(&e, e.addr, user, "?epoch=2").await;
+    sync(&mut cn, &n).await;
+    assert!(
+        text(&n).contains("hello world v2") && !text(&n).contains("v3"),
+        "{}",
+        text(&n)
+    );
 }

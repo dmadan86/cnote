@@ -44,10 +44,12 @@ pub struct Note {
     pub version: i32,
     /// none | edit | view (page restriction, see note.restrict)
     pub restriction: String,
+    /// Live-editing generation: a restore bumps it, and editors on an older one must reload (collab `?epoch=`).
+    pub collab_epoch: i32,
 }
 
 pub const NOTE_COLS: &str = "id, space_id, parent_id, title, types, content_md, owner_id, verify_by, verified_at, freshness, \
-     source_system, source_id, source_url, created_by, created_at, updated_at, version, restriction";
+     source_system, source_id, source_url, created_by, created_at, updated_at, version, restriction, collab_epoch";
 
 // ---------- spaces ----------
 
@@ -137,6 +139,11 @@ pub async fn insert_note(ctx: &mut Ctx, i: CreateNote) -> CmdResult<Note> {
     if let Some(parent) = i.parent_id {
         // a child inherits the parent's restrictions, so creating one is an edit of the parent
         assert_note_access(ctx, parent, true).await?;
+        if parent_space(ctx, parent).await? != i.space_id {
+            return Err(CmdError::invalid(
+                "a page's parent must be in the same space",
+            ));
+        }
     }
     let is_page = i.types.is_empty();
     let owner = i.owner_id.or(ctx.principal.user_id);
@@ -234,6 +241,72 @@ pub struct UpdateNote {
     /// Optimistic concurrency: fail with conflict if the note changed since this version.
     #[serde(default)]
     pub expected_version: Option<i32>,
+    /// The collab_epoch the caller's copy of the content belongs to. A content write from an older epoch (a tab
+    /// still showing a page that was restored since) is refused instead of overwriting the restore.
+    #[serde(default)]
+    pub expected_epoch: Option<i32>,
+}
+
+async fn parent_space(ctx: &mut Ctx, parent: Uuid) -> CmdResult<Uuid> {
+    sqlx::query_scalar("select space_id from core.notes where id = $1 and deleted_at is null")
+        .bind(parent)
+        .fetch_optional(&mut *ctx.tx)
+        .await?
+        .ok_or_else(|| CmdError::not_found("parent"))
+}
+
+/// A page may only move under a page of the same space that is not itself or one of its descendants.
+async fn check_move(ctx: &mut Ctx, n: &Note, parent: Uuid) -> CmdResult<()> {
+    if parent_space(ctx, parent).await? != n.space_id {
+        return Err(CmdError::invalid(
+            "a page's parent must be in the same space",
+        ));
+    }
+    let cycle: bool = sqlx::query_scalar(
+        "with recursive up as (select id, parent_id, 1 d from core.notes where id = $2
+           union all select p.id, p.parent_id, up.d + 1 from core.notes p join up on p.id = up.parent_id where up.d < 1000)
+         select exists(select 1 from up where id = $1)",
+    )
+    .bind(n.id)
+    .bind(parent)
+    .fetch_one(&mut *ctx.tx)
+    .await?;
+    if cycle {
+        return Err(CmdError::invalid(
+            "a page cannot move under itself or one of its own sub-pages",
+        ));
+    }
+    Ok(())
+}
+
+/// Seconds between automatic page-version checkpoints while someone keeps editing.
+pub const CHECKPOINT_EVERY_SECS: f64 = 600.0;
+
+/// Record the page's current content as a version (core.note_revisions) unless it is empty, unchanged since
+/// the last version, or the last version is younger than `min_gap_secs`. Call after writing content_md.
+pub async fn checkpoint(
+    conn: &mut sqlx::PgConnection,
+    note: Uuid,
+    actor: Option<Uuid>,
+    min_gap_secs: f64,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "insert into core.note_revisions (workspace_id, note_id, number, title, content_md, reason, created_by)
+         select n.workspace_id, n.id, coalesce((select max(number) from core.note_revisions r where r.note_id = n.id), 0) + 1,
+                n.title, n.content_md, 'edit', $2
+         from core.notes n
+         where n.id = $1 and n.content_md <> ''
+           and n.content_md is distinct from
+               (select content_md from core.note_revisions r where r.note_id = n.id order by number desc limit 1)
+           and not exists (select 1 from core.note_revisions r
+                           where r.note_id = n.id and r.created_at > now() - make_interval(secs => $3))",
+    )
+    .bind(note)
+    .bind(actor)
+    .bind(min_gap_secs)
+    .execute(conn)
+    .await?;
+    Ok(())
 }
 
 async fn note_update(ctx: &mut Ctx, i: UpdateNote) -> CmdResult<Note> {
@@ -242,6 +315,9 @@ async fn note_update(ctx: &mut Ctx, i: UpdateNote) -> CmdResult<Note> {
         assert_note_access(ctx, parent, true).await?;
     }
     let before = load_note(ctx, i.id).await?;
+    if let Some(parent) = i.parent_id {
+        check_move(ctx, &before, parent).await?;
+    }
     if let Some(v) = i.expected_version
         && v != before.version
     {
@@ -249,6 +325,14 @@ async fn note_update(ctx: &mut Ctx, i: UpdateNote) -> CmdResult<Note> {
             "note changed (version {} != {v})",
             before.version
         )));
+    }
+    if let Some(e) = i.expected_epoch
+        && i.content_md.is_some()
+        && e != before.collab_epoch
+    {
+        return Err(CmdError::conflict(
+            "the page was restored since this copy was opened",
+        ));
     }
     let n: Note = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "update core.notes set title = coalesce($2, title), content_md = coalesce($3, content_md),
@@ -287,6 +371,13 @@ async fn note_update(ctx: &mut Ctx, i: UpdateNote) -> CmdResult<Note> {
     )
     .await?;
     if n.content_md != before.content_md {
+        checkpoint(
+            &mut ctx.tx,
+            n.id,
+            ctx.principal.user_id,
+            CHECKPOINT_EVERY_SECS,
+        )
+        .await?;
         crate::notifications::notify_mentions(
             ctx,
             n.id,

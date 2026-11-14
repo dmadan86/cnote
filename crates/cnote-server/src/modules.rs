@@ -15,6 +15,7 @@ pub fn all_modules() -> Vec<Module> {
         cnote_ai::module(),
         cnote_importers::module(),
         cnote_mcp::apps::module(),
+        cnote_collab::module(),
         // MODULES: each crate exposes `pub fn module() -> cnote_core::Module`
     ]
 }

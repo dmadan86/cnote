@@ -24,6 +24,8 @@ import { useShell } from './shell'
 
 const COLLAB_URL = process.env.NEXT_PUBLIC_COLLAB_URL ?? 'ws://localhost:4000'
 const SYNC_TIMEOUT_MS = 2000
+/** Server close code: the page was restored, this document's epoch is over. */
+const STALE_EPOCH = 4409
 
 type Mode = 'connecting' | 'collab' | 'solo'
 
@@ -39,6 +41,8 @@ export function NoteEditor({
   editorRef,
   editable = true,
   comments,
+  epoch,
+  onStale,
 }: {
   ws: string
   id: string
@@ -48,14 +52,32 @@ export function NoteEditor({
   editable?: boolean
   /** Inline comments: open threads to highlight, and what to do on click / on a new selection comment. */
   comments?: InlineCommentProps
+  /** note.collab_epoch this editor's document belongs to. */
+  epoch?: number
+  /** The page was restored elsewhere: this document is obsolete (server closed it with 4409). */
+  onStale?: () => void
 }) {
   const [mode, setMode] = useState<Mode>('connecting')
   const doc = useRef<Y.Doc>(null)
+  const onStaleRef = useRef(onStale)
+  onStaleRef.current = onStale
   const provider = useRef<WebsocketProvider>(null)
 
   useEffect(() => {
     const d = new Y.Doc()
-    const p = new WebsocketProvider(`${COLLAB_URL}/collab`, `${ws}/${id}`, d)
+    const p = new WebsocketProvider(`${COLLAB_URL}/collab`, `${ws}/${id}`, d, {
+      params: epoch === undefined ? {} : { epoch: String(epoch) },
+      // No tab-to-tab BroadcastChannel: it is keyed by room name only, so a tab still holding a restored-away
+      // document would hand it to a fresh one past the server's epoch fence. The gateway relays everything.
+      disableBc: true,
+    })
+    // Never reconnect with an obsolete document: merging it would bring the replaced content back.
+    p.on('connection-close', (e) => {
+      if (e?.code === STALE_EPOCH) {
+        p.destroy()
+        onStaleRef.current?.()
+      }
+    })
     doc.current = d
     provider.current = p
     let decided = false
@@ -72,7 +94,7 @@ export function NoteEditor({
       p.destroy()
       d.destroy()
     }
-  }, [ws, id])
+  }, [ws, id, epoch])
 
   if (mode === 'connecting') return <p className="text-muted">Loading editor...</p>
   return (
@@ -84,6 +106,7 @@ export function NoteEditor({
       editorRef={editorRef}
       editable={editable}
       comments={comments}
+      epoch={epoch}
       ydoc={mode === 'collab' ? doc.current : null}
       provider={mode === 'collab' ? provider.current : null}
     />
@@ -100,6 +123,7 @@ function Surface({
   ydoc,
   provider,
   comments,
+  epoch,
 }: {
   ws: string
   id: string
@@ -110,12 +134,13 @@ function Surface({
   comments?: InlineCommentProps
   ydoc: Y.Doc | null
   provider: WebsocketProvider | null
+  epoch?: number
 }) {
   const { me } = useShell()
   // Extensions are created once; read the latest callbacks through a ref.
   const commentsRef = useRef(comments)
   commentsRef.current = comments
-  const [status, setStatus] = useState<'saved' | 'saving' | 'error' | 'denied'>('saved')
+  const [status, setStatus] = useState<'saved' | 'saving' | 'error' | 'denied' | 'offline'>('saved')
   const last = useRef(initialMd)
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined)
   const pending = useRef<(() => string) | null>(null) // set until the latest edit is saved
@@ -171,7 +196,8 @@ function Surface({
         }
         setStatus('saving')
         try {
-          await cmd(ws, 'note.update', { id, content_md: md })
+          // expected_epoch: after a restore the server refuses this tab's stale copy.
+          await cmd(ws, 'note.update', { id, content_md: md, expected_epoch: epoch })
           pending.current = null
           last.current = md
           setStatus('saved')
@@ -202,7 +228,7 @@ function Surface({
           keepalive: true,
           credentials: 'same-origin',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ id, content_md: md }),
+          body: JSON.stringify({ id, content_md: md, expected_epoch: epoch }),
         }).catch(() => {})
       } catch {} // editor already destroyed: nothing left to read
     }
@@ -213,7 +239,15 @@ function Surface({
       window.removeEventListener('beforeunload', flush)
       flush()
     }
-  }, [ws, id])
+  }, [ws, id, epoch])
+
+  // Live: an edit is saved once the gateway has it; while disconnected, edits wait in this tab.
+  useEffect(() => {
+    if (!provider) return
+    const on = ({ status }: { status: string }) => setStatus(status === 'connected' ? 'saved' : 'offline')
+    provider.on('status', on)
+    return () => provider.off('status', on)
+  }, [provider])
 
   const threads = comments?.threads
   useEffect(() => {
@@ -236,9 +270,11 @@ function Surface({
             : 'Read only'
           : status === 'saving'
             ? 'Saving...'
-            : status === 'denied'
-              ? 'You no longer have permission to edit this page; your last changes were not saved'
-              : 'Could not save, retrying on next edit'}
+            : status === 'offline'
+              ? 'Offline: your edits are kept here and sync when the connection returns'
+              : status === 'denied'
+                ? 'You no longer have permission to edit this page; your last changes were not saved'
+                : 'Could not save, retrying on next edit'}
         {ydoc ? ' · live' : ''}
       </p>
     </div>
