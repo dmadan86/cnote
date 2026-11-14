@@ -47,3 +47,12 @@ func AddRelation(c *command.Ctx, from, to, kind string) error {
 
 // NormValue is command.Norm for jsonb read back through serde_json::Value (numbers re-printed as serde does).
 func NormValue(raw []byte) (json.RawMessage, error) { return normValue(raw) }
+
+func (x Obj) OptInt64(k string) (*int64, error)          { return x.o.optInt(k, 64) }
+func (x Obj) OptValue(k string) (json.RawMessage, error) { return x.o.optValue(k) }
+
+// Strings is `Vec<String>` with #[serde(default)]: missing is empty, null is an error.
+func (x Obj) Strings(k string) ([]string, error) { return x.o.types(k) }
+
+// Has reports a key that is present and not null.
+func (x Obj) Has(k string) bool { _, ok := x.o.get(k); return ok }

@@ -1,5 +1,5 @@
 // Package docs ports the living-page and template commands of crates/cnote-docs (commands.rs, templates.rs).
-// doc.ask and doc.capture call the AI provider and stay in Rust; the event handlers, jobs and sweeps
+// doc.ask and doc.capture (ask.go) use the process AI provider; the event handlers, jobs and sweeps
 // (bindings, freshness) and the seed_templates workspace hook stay in the Rust worker.
 package docs
 
@@ -31,6 +31,8 @@ func Commands() []command.Command {
 		command.NewCommand("doc.archived", r, docArchived),
 		command.NewCommand("doc.restore", w, docRestore),
 		command.NewCommand("doc.freshness_score", r, docFreshnessScore),
+		command.NewCommand("doc.ask", r, docAsk),
+		command.NewCommand("doc.capture", w, docCapture),
 		command.NewCommand("capture.list", r, captureList),
 		command.NewCommand("capture.answer", w, captureAnswer),
 		command.NewCommand("template.save", w, templateSave),
