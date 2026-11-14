@@ -132,7 +132,8 @@ func summary(c *command.Ctx, input json.RawMessage) (any, error) {
 			return nil, command.DB(err)
 		}
 		tiles["new_inquiries"] = map[string]any{"count": cnt}
-		if err := r.add("select n.id::text, n.title, d.amount_minor, n.created_at::date::text"+w+" order by n.created_at desc limit 10", base[:3],
+		// a lead already due for follow-up is listed once, as the follow-up below
+		if err := r.add("select n.id::text, n.title, d.amount_minor, n.created_at::date::text"+w+" and (d.next_follow_up is null or d.next_follow_up > $4::date) order by n.created_at desc limit 10", base,
 			func(rs pgx.Rows) (Item, error) {
 				it := Item{Kind: "deal", Severity: "info", Reason: "New inquiry"}
 				var amt int64
@@ -141,6 +142,35 @@ func summary(c *command.Ctx, input json.RawMessage) (any, error) {
 				it.Date = &d
 				if amt > 0 {
 					it.AmountMinor = &amt
+				}
+				return it, err
+			}); err != nil {
+			return nil, err
+		}
+	}
+
+	// ---- follow-ups: open deals whose next follow-up date is today or earlier (crm, leads). Same audience as the
+	// inquiries above: members see their own deals, admins every readable one, guests none.
+	if on("crm") && role >= command.Member {
+		const w = ` from crm.deals d join core.notes n on n.id = d.note_id
+			 where d.next_follow_up <= $4::date and d.stage not in ('won','lost') and ($3 or d.owner_id = $2::uuid) and` + vis
+		var due, late int64
+		if err := c.Tx.QueryRow(c.Context, `select count(*), count(*) filter (where d.next_follow_up < $4::date)`+w, base...).Scan(&due, &late); err != nil {
+			return nil, command.DB(err)
+		}
+		tiles["follow_ups"] = map[string]any{"count": due, "overdue": late}
+		if err := r.add(`select n.id::text, n.title, coalesce(d.next_step,''), d.next_follow_up::text, ($4::date - d.next_follow_up)`+w+` order by d.next_follow_up, n.created_at limit 10`, base,
+			func(rs pgx.Rows) (Item, error) {
+				it := Item{Kind: "deal", Severity: "due"}
+				var step, d string
+				err := rs.Scan(&it.ID, &it.Title, &step, &d, &it.DaysOverdue)
+				it.Date = &d
+				it.Reason = "Follow up today"
+				if it.DaysOverdue > 0 {
+					it.Severity, it.Reason = "overdue", "Follow-up overdue by "+days(it.DaysOverdue)
+				}
+				if step != "" {
+					it.Reason += ": " + step
 				}
 				return it, err
 			}); err != nil {

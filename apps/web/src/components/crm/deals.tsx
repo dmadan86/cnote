@@ -21,6 +21,7 @@ import { btn, btnPrimary, ErrorText, Field, inputCls, Modal } from '@/components
 import { cmd } from '@/lib/api'
 import { useCmd } from '@/lib/hooks'
 import { NeedSpace } from './contacts'
+import { type Activity, ActivityList, type FollowUp, LogActivity, LostSheet, niceDate } from './leads'
 
 const STAGES: [key: string, label: string, dot: string][] = [
   ['lead', 'Lead', 'bg-slate-400'],
@@ -191,6 +192,7 @@ export function Board() {
   const contacts = useCmd<Contact[]>(ws, 'contact.list', { limit: 500 })
   const [moved, setMoved] = useState<Record<string, string>>({}) // optimistic stage per deal
   const [adding, setAdding] = useState<string>()
+  const [losing, setLosing] = useState<Deal>()
   const [err, setErr] = useState<string>()
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
@@ -203,6 +205,7 @@ export function Board() {
     const to = e.over && String(e.over.id)
     const deal = deals.data?.find((d) => d.id === id)
     if (!to || !deal || (moved[id] ?? deal.stage) === to) return
+    if (to === 'lost') return setLosing(deal) // a reason first; Cancel leaves the card where it was
     setMoved((m) => ({ ...m, [id]: to }))
     try {
       await cmd(ws, 'deal.move_stage', { id, stage: to })
@@ -231,6 +234,17 @@ export function Board() {
           ))}
         </div>
       </DndContext>
+      {losing && (
+        <LostSheet
+          dealId={losing.id}
+          title={losing.title}
+          onClose={() => setLosing(undefined)}
+          onSaved={() => {
+            setLosing(undefined)
+            deals.reload()
+          }}
+        />
+      )}
       {adding && (
         <DealForm
           stage={adding}
@@ -253,6 +267,10 @@ export function DealDetail({ id }: { id: string }) {
   const contacts = useCmd<Contact[]>(ws, 'contact.list', { limit: 500 })
   const [err, setErr] = useState<string>()
   const [msg, setMsg] = useState<string>()
+  const [logging, setLogging] = useState(false)
+  const [losing, setLosing] = useState(false)
+  const plan = useCmd<FollowUp[]>(ws, 'followup.list', { note_id: id })
+  const acts = useCmd<Activity[]>(ws, 'activity.list', { note_id: id })
   const deal = list.data?.find((d) => d.id === id)
   if (list.error) return <ErrorText error={list.error} />
   if (!list.data) return <p className="p-6 text-muted">Loading...</p>
@@ -289,6 +307,30 @@ export function DealDetail({ id }: { id: string }) {
         </button>
       </div>
       <ErrorText error={err} />
+      <section
+        aria-label="Next step"
+        className="flex flex-wrap items-center gap-3 rounded-lg border border-line p-4"
+      >
+        <p className="min-w-0 flex-1 text-[14px]">
+          {plan.data?.[0]?.next_follow_up ? (
+            <>
+              <span className="font-medium">Next: {plan.data[0].next_step || 'Follow up'}</span>{' '}
+              <span className="text-muted">on {niceDate(plan.data[0].next_follow_up)}</span>
+            </>
+          ) : (
+            <span className="text-muted">
+              {['won', 'lost'].includes(deal.stage) ? 'Closed.' : 'No follow-up planned.'}
+            </span>
+          )}
+        </p>
+        <button
+          type="button"
+          className={`${btnPrimary} min-h-11 px-4 text-[14px]`}
+          onClick={() => setLogging(true)}
+        >
+          Log activity
+        </button>
+      </section>
       <form
         key={`${deal.title}${deal.amount_minor}${deal.contact_id}${deal.stage}`}
         className="grid grid-cols-2 gap-3 rounded-lg border border-line p-4"
@@ -306,6 +348,7 @@ export function DealDetail({ id }: { id: string }) {
               expected_close: f.expected_close || undefined,
               probability: Number(f.probability),
             })
+            if (f.stage === 'lost' && deal.stage !== 'lost') return setLosing(true) // saved fields first, reason next
             if (f.stage !== deal.stage) await cmd(ws, 'deal.move_stage', { id, stage: f.stage })
             setErr(undefined)
             setMsg('Saved')
@@ -393,6 +436,34 @@ export function DealDetail({ id }: { id: string }) {
           )}
         </div>
       </form>
+      <section aria-label="Activity" className="rounded-lg border border-line p-4">
+        <h2 className="mb-2 text-[14px] font-semibold">Activity</h2>
+        <ActivityList rows={acts.data ?? []} />
+      </section>
+      {logging && (
+        <LogActivity
+          noteId={id}
+          title={deal.title}
+          onClose={() => setLogging(false)}
+          onSaved={() => {
+            setLogging(false)
+            plan.reload()
+            acts.reload()
+          }}
+        />
+      )}
+      {losing && (
+        <LostSheet
+          dealId={id}
+          title={deal.title}
+          onClose={() => setLosing(false)}
+          onSaved={() => {
+            setLosing(false)
+            list.reload()
+            plan.reload()
+          }}
+        />
+      )}
     </div>
   )
 }
