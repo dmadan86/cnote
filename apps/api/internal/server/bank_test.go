@@ -436,8 +436,14 @@ func TestBankSplitMatchSumInvariantUnmatchAndDoubleUse(t *testing.T) {
 	eq(t, back["split"], false)
 	eq(t, len(back["matches"].([]any)), 0)
 	eq(t, len(parts(back)), len(ps))
-	b.ok("bank.match", map[string]any{"line_id": second["id"], "match_kind": ps[0]["kind"], "match_id": ps[0]["id"]}) // a freed payment matches alone
-	b.errIs("bank.match", map[string]any{"line_id": id, "matches": refs(ps)}, 409, "conflict")                        // but the split now misses it
+	var p50 map[string]any // parts come in no fixed order: take the one SECOND 50K equals
+	for _, p := range ps {
+		if n(p["amount_minor"]) == 50_000 {
+			p50 = p
+		}
+	}
+	b.ok("bank.match", map[string]any{"line_id": second["id"], "match_kind": p50["kind"], "match_id": p50["id"]}) // a freed payment matches alone
+	b.errIs("bank.match", map[string]any{"line_id": id, "matches": refs(ps)}, 409, "conflict")                    // but the split now misses it
 	b.assertTBZero()
 }
 
