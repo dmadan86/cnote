@@ -72,3 +72,15 @@ radius (6px), pills for status/priority, one accent color for primary actions, d
 - C Note: restriction select with three plain options (anyone in the space / anyone views, listed people edit /
   only listed people), "Inherited from <page>" notice, lock icon beside restricted pages in the sidebar tree,
   "Shared with me" sidebar section, and a read-only editor for view-only people.
+
+## Leads and follow-ups (WP3)
+
+References (Mobbin): contact timeline with day-grouped activity cards and a details rail
+(Calendly, https://mobbin.com/screens/8158ffb0-f197-4691-8149-271f7a1ab997), task/phone-call engagement card
+(Unify, https://mobbin.com/screens/8c875cb9-3095-4047-afce-c0e89038dfa9), work-item activity feed with a log-work
+popover (Plane, https://mobbin.com/screens/e7d1109a-c28d-4c7c-8e6c-3329fcdd6a2b), short contact form with optional
+fields (Base44, https://mobbin.com/screens/5aceb3d1-f931-4b3e-93d1-1cfe441a56a7).
+Codex consult applied: Inbox rows are phone cards with call and WhatsApp links and "Log outcome" (an unanswered lead
+leaves the Inbox only when something is logged); follow-ups default to Today, a "No date" tab keeps unplanned deals
+visible, snooze shows the new date with Undo; the summary is optional and chips show real dates; Lost asks for a reason
+only after Lost is chosen and Cancel changes nothing; 44px targets and 16px inputs; honeypot out of tab order.

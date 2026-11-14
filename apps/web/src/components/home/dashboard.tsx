@@ -13,6 +13,7 @@ type Summary = {
     tasks_due?: { count: number; overdue: number }
     payments_pending?: { count: number; total_minor: number; overdue_count: number; overdue_minor: number }
     new_inquiries?: { count: number }
+    follow_ups?: { count: number; overdue: number }
     approvals?: { count: number; confirmations: number; quotes_awaiting: number }
     bills_due?: { count: number; total_minor: number; overdue_count: number }
     urgent?: { count: number; overdue_tasks: number; overdue_invoices: number }
@@ -143,10 +144,20 @@ export function HomeDashboard() {
     t.new_inquiries && (
       <TileLink
         key="inq"
-        href={`${base}/crm/deals`}
+        href={`${base}/crm/inbox`}
         label="New inquiries"
         value={String(t.new_inquiries.count)}
         detail="New leads in the last 7 days"
+      />
+    ),
+    t.follow_ups && (
+      <TileLink
+        key="fu"
+        href={`${base}/crm/follow-ups`}
+        label="Follow-ups"
+        value={String(t.follow_ups.count)}
+        detail={t.follow_ups.count ? 'Due today or earlier' : 'Nothing due'}
+        alert={t.follow_ups.overdue ? `${t.follow_ups.overdue} overdue` : undefined}
       />
     ),
     t.urgent && (

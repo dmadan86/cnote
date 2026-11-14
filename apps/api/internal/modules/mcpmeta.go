@@ -54,6 +54,16 @@ type meta struct {
 var idOnly = schema([]string{"id"}, props{"id": id})
 
 var mcpMeta = map[string]meta{
+	"activity.log": {"Log a call, visit, WhatsApp, email or note on a deal or contact; optionally set the next follow-up.", schema([]string{"note_id", "kind", "summary"}, props{
+		"note_id": id, "kind": props{"type": "string", "enum": []string{"call", "visit", "whatsapp", "email", "note"}}, "summary": str, "happened_at": props{"type": "string", "description": "RFC 3339; default now"},
+		"next_follow_up": date, "next_step": str})},
+	"activity.list": {"List logged activities for a deal or contact, newest first.", schema(nil, props{"note_id": id, "contact_id": id})},
+	"followup.list": {"Deals needing follow-up: overdue, today, week, unplanned (no date) or inbox (new leads not yet answered).", schema(nil, props{
+		"due": props{"type": "string", "enum": []string{"overdue", "today", "week", "unplanned", "inbox"}}, "owner_id": id, "note_id": id, "contact_id": id})},
+	"followup.set":     {"Set or clear a deal's next follow-up date, next step and lead source.", schema([]string{"id"}, props{"id": id, "next_follow_up": date, "next_step": str, "source": str})},
+	"deal.lose":        {"Mark a deal lost with a reason.", schema([]string{"id", "lost_reason"}, props{"id": id, "lost_reason": str})},
+	"inquiry_form.get": {"Read the workspace's public inquiry form settings and link (admins).", schema(nil, props{})},
+	"inquiry_form.set": {"Configure the public inquiry form: target space, owner, on/off, or rotate its link (admins).", schema(nil, props{"space_id": id, "owner_id": id, "enabled": flag, "rotate": flag})},
 	"quote.create_draft": {"Create a draft quotation (estimate) for a contact. Never posts to the ledger.", schema([]string{"space_id", "contact_id", "lines"}, props{
 		"space_id": id, "contact_id": id, "lines": lines, "quote_date": date, "valid_until": date, "place_of_supply": str, "reverse_charge": flag, "notes": str})},
 	"quote.update_draft": {"Update a draft quotation; sending `lines` replaces all lines.", schema([]string{"id"}, props{

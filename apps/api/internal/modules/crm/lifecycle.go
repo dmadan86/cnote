@@ -47,12 +47,20 @@ func lifecycle(c *command.Ctx, raw json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	activities, err := section("activity.list", map[string]any{}) // the contact's own and its deals' calls, visits, messages
+	if err != nil {
+		return nil, err
+	}
+	followUps, err := section("followup.list", map[string]any{}) // open deals with their next step and date
+	if err != nil {
+		return nil, err
+	}
 	for _, rows := range [][]map[string]any{deals, quotes} {
 		if err := addCreated(c, rows); err != nil {
 			return nil, err
 		}
 	}
-	res := map[string]any{"deals": deals, "quotes": quotes, "invoices": invoices, "projects": nil, "payments": nil, "outstanding_minor": nil}
+	res := map[string]any{"deals": deals, "activities": activities, "follow_ups": followUps, "quotes": quotes, "invoices": invoices, "projects": nil, "payments": nil, "outstanding_minor": nil}
 
 	// Projects: only items created from this contact's visible quotes (items carry no contact of their own).
 	if quotes != nil {

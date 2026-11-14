@@ -12,6 +12,7 @@ import { cmd } from '@/lib/api'
 import { ago, useCmd } from '@/lib/hooks'
 import { ContactForm } from './contacts'
 import { DealForm } from './deals'
+import { type Activity, type FollowUp, kindLabel, LogActivity, niceDate } from './leads'
 
 const Row = ({ k, v, mono }: { k: string; v?: string | null; mono?: boolean }) => (
   <div className="flex justify-between gap-4 py-1.5 text-[14px]">
@@ -48,6 +49,8 @@ type Payment = {
 /** contact.lifecycle: a section is null when the caller may not read it (so money is never shown to them). */
 type Lifecycle = {
   deals: (Deal & { created_at: string })[] | null
+  activities: Activity[] | null
+  follow_ups: FollowUp[] | null
   quotes: Quote[] | null
   invoices: Invoice[] | null
   projects: Project[] | null
@@ -85,6 +88,7 @@ export function ContactDetail({ id }: { id: string }) {
   const life = useCmd<Lifecycle>(ws, 'contact.lifecycle', { id })
   const [editing, setEditing] = useState(false)
   const [dealing, setDealing] = useState(false)
+  const [logging, setLogging] = useState(false)
   const [err, setErr] = useState<string>()
   if (c.error) return <p className="p-6 text-bad">{c.error.message}</p>
   if (!c.data) return <p className="p-6 text-muted">Loading...</p>
@@ -112,12 +116,20 @@ export function ContactDetail({ id }: { id: string }) {
     )
 
   const deals = L?.deals ?? []
+  const activities = L?.activities ?? []
+  const followUps = L?.follow_ups ?? []
   const quotes = L?.quotes ?? []
   const invoices = L?.invoices ?? []
   const projects = L?.projects ?? []
   const payments = L?.payments ?? []
   const iNo = (i: Invoice) => `${i.kind === 'credit_note' ? 'Credit note' : 'Invoice'} ${i.number}`
   const timeline: Event[] = [
+    ...activities.map((a) => ({
+      at: a.happened_at,
+      kind: kindLabel(a.kind),
+      text: a.summary,
+      href: a.note_id === id ? undefined : `${base}/crm/deals/${a.note_id}`,
+    })),
     ...deals.map((d) => ({
       at: d.created_at,
       kind: 'Deal',
@@ -213,6 +225,9 @@ export function ContactDetail({ id }: { id: string }) {
           >
             New deal
           </button>
+          <button type="button" className={btn} onClick={() => setLogging(true)}>
+            Log activity
+          </button>
           <button type="button" className={btn} onClick={newQuote} disabled={!spaces.length}>
             New quotation
           </button>
@@ -246,6 +261,12 @@ export function ContactDetail({ id }: { id: string }) {
                 {d.title}
               </Link>
               <span className="capitalize text-muted">{d.stage}</span>
+              {followUps.find((f) => f.id === d.id)?.next_follow_up && (
+                <span className="text-[13px] text-muted">
+                  Next: {followUps.find((f) => f.id === d.id)?.next_step || 'follow up'} on{' '}
+                  {niceDate(followUps.find((f) => f.id === d.id)?.next_follow_up ?? '')}
+                </span>
+              )}
               {money_ && <span className="ml-auto tabular-nums">{money(d.amount_minor)}</span>}
             </li>
           ))}
@@ -343,6 +364,17 @@ export function ContactDetail({ id }: { id: string }) {
           onClose={() => setDealing(false)}
           onSaved={() => {
             setDealing(false)
+            life.reload()
+          }}
+        />
+      )}
+      {logging && (
+        <LogActivity
+          noteId={id}
+          title={k.name}
+          onClose={() => setLogging(false)}
+          onSaved={() => {
+            setLogging(false)
             life.reload()
           }}
         />
