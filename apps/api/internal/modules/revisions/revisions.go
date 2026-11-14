@@ -1,5 +1,6 @@
-// Package revisions ports the read side of crates/cnote-collab/src/revisions.rs: note.revisions and note.revision.
-// note.restore stays in Rust: it needs the live Yjs document rendered to Markdown (yrs), which Go cannot do.
+// Package revisions ports crates/cnote-collab/src/revisions.rs: note.revisions, note.revision and note.restore.
+// note.restore needs the live Yjs document rendered to Markdown; Go has no Yjs, so the collab service renders it
+// (restore.go).
 package revisions
 
 import (
@@ -18,6 +19,7 @@ func Commands() []command.Command {
 	return []command.Command{
 		command.NewCommand("note.revisions", command.GroupRead, list),
 		command.NewCommand("note.revision", command.GroupRead, get),
+		restoreCommand(),
 	}
 }
 
@@ -76,9 +78,17 @@ func get(c *command.Ctx, input json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	r, err := load(c, id)
+	if err != nil {
+		return nil, err
+	}
+	return *r, nil
+}
+
+func load(c *command.Ctx, id string) (*revision, error) {
 	var r revision
 	var at time.Time
-	err = c.Tx.QueryRow(c.Context, `select `+cols+`, r.content_md from core.note_revisions r left join core.users u on u.id = r.created_by
+	err := c.Tx.QueryRow(c.Context, `select `+cols+`, r.content_md from core.note_revisions r left join core.users u on u.id = r.created_by
 		where r.id = $1::uuid`, id).Scan(&r.ID, &r.NoteID, &r.Number, &r.Title, &r.Reason, &r.RestoredFrom, &r.CreatedBy, &r.CreatedByName, &at, &r.ContentMD)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, command.ErrNotFound("version")
@@ -95,5 +105,5 @@ func get(c *command.Ctx, input json.RawMessage) (any, error) {
 		}
 		return nil, err
 	}
-	return r, nil
+	return &r, nil
 }

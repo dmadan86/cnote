@@ -8,8 +8,8 @@ import (
 	"time"
 )
 
-// Twin-fixture differential tests for the commands ported late: note.revisions/note.revision (note.restore stays in
-// Rust and is proxied), oauth_app.*, and import.*. Same method as TestDifferentialDocs: one script through Rust on
+// Twin-fixture differential tests for the commands ported late: note.revisions/note.revision/note.restore (restore renders
+// the live document through the collab service, started here), oauth_app.*, and import.*. Same method as TestDifferentialDocs: one script through Rust on
 // fixture A and through Go on fixture B; normalized responses and resulting rows must be equal.
 
 func runTwin(t *testing.T, script func(r *runner), dump map[string]string, minOK, minErr int) (rust, gov *runner) {
@@ -33,6 +33,7 @@ func (r *runner) list(caller, cmd string, in any) []map[string]any {
 }
 
 func TestDifferentialRevisions(t *testing.T) {
+	startCollab(t)
 	script := func(r *runner) {
 		sp := r.f.space
 		ph := "00000000-0000-4000-8000-000000000001"
@@ -81,7 +82,6 @@ func TestDifferentialRevisions(t *testing.T) {
 			r.raw("owner", "note.revisions", body)
 			r.raw("owner", "note.revision", body)
 		}
-		// note.restore stays in Rust: through the Go server it is proxied
 		r.call("member", "note.restore", map[string]any{"note_id": r.v("p1"), "revision_id": ids["p1"][1]})
 		r.call("owner", "note.restore", map[string]any{"note_id": r.v("p1"), "revision_id": ids["p1"][2], "expected_epoch": 99})
 		r.call("owner", "note.restore", map[string]any{"note_id": r.v("p1"), "revision_id": ids["p1"][2]})
@@ -90,10 +90,26 @@ func TestDifferentialRevisions(t *testing.T) {
 			r.call(c, "note.revisions", map[string]any{"note_id": r.v("p1")})
 		}
 	}
-	runTwin(t, script, map[string]string{
+	_, gov := runTwin(t, script, map[string]string{
 		"revisions": `select (to_jsonb(x) - 'id')::text from core.note_revisions x order by x.created_at, x.number`,
 		"events":    `select (to_jsonb(x) - 'id')::text from core.events x where x.actor_type in ('user','agent') and x.kind <> 'command.denied' order by x.id`,
 	}, 40, 30)
+	_ = gov
+}
+
+// Without COLLAB_URL/COLLAB_INTERNAL_SECRET Go cannot render the live document and hands note.restore to Rust.
+func TestRestoreFallsBackToRustWithoutCollab(t *testing.T) {
+	t.Setenv("COLLAB_URL", "")
+	t.Setenv("COLLAB_INTERNAL_SECRET", "")
+	e := newEnv(t)
+	r := &runner{e: e, base: e.gosv.URL, f: e.fixture(), vars: map[string]string{}, toks: map[string]string{}}
+	r.id("n", "owner", "note.create", map[string]any{"space_id": r.f.space, "title": "T", "content_md": "a"})
+	r.call("owner", "note.update", map[string]any{"id": r.v("n"), "content_md": "b"})
+	revs := r.list("owner", "note.revisions", map[string]any{"note_id": r.v("n")})
+	got := r.call("owner", "note.restore", map[string]any{"note_id": r.v("n"), "revision_id": revs[len(revs)-1]["id"]})
+	if got["version"] == nil || !e.proxied.has("note.restore") {
+		t.Fatalf("expected the proxied Rust answer: %v", got)
+	}
 }
 
 func TestDifferentialOAuthApps(t *testing.T) {
