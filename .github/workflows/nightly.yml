@@ -54,12 +54,15 @@ jobs:
           SECRET=$(openssl rand -hex 16)
           echo "::add-mask::$SECRET"
           echo "COLLAB_INTERNAL_SECRET=$SECRET" >> "$GITHUB_ENV"
+          MK=$(openssl rand -base64 32)
+          echo "::add-mask::$MK"
+          echo "CNOTE_MASTER_KEY=$MK" >> "$GITHUB_ENV" # per run; the API and the Go tests share it
       - run: pnpm install --frozen-lockfile
       - name: Migrate, then start the Go API (worker included) and collab
         run: |
           (cd apps/api && go run ./cmd/api migrate && go build -o ../../cnote-api ./cmd/api && go build -o ../../loadtest ./cmd/loadtest)
           echo "alter role cnote_app password :'pw';" | psql "$DATABASE_ADMIN_URL" -v pw="$DB_APP_PASSWORD"
-          CNOTE_MASTER_KEY=$(openssl rand -base64 32) AUTH_SIGNUP_FREE=100000 AUTH_IP_FREE=100000 PORT=4100 WITH_WORKER=1 COLLAB_URL=http://localhost:4300 COLLAB_INTERNAL_SECRET=$COLLAB_INTERNAL_SECRET ./cnote-api > go-api.log 2>&1 &
+          AUTH_SIGNUP_FREE=100000 AUTH_IP_FREE=100000 PORT=4100 WITH_WORKER=1 COLLAB_URL=http://localhost:4300 COLLAB_INTERNAL_SECRET=$COLLAB_INTERNAL_SECRET ./cnote-api > go-api.log 2>&1 &
           COLLAB_PORT=4300 pnpm --filter @cnote/collab start > collab.log 2>&1 &
           npx --yes wait-on -t 120000 http://localhost:4100/healthz http://localhost:4300/healthz
         env:
