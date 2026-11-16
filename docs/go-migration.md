@@ -17,11 +17,12 @@ the proxy and the differential tests that compared the two servers. Those no lon
   with sqlx's advisory lock. The migrations create the `cnote_app` role without a password; set it afterwards
   (`scripts/setup-db.sh`, or `ALTER ROLE cnote_app PASSWORD '...'` in CI and deploys).
 - MCP protocol: the server speaks 2024-11-05, 2025-03-26, 2025-06-18 and 2025-11-25 and offers only those in
-  `initialize`, so a client that prefers a newer version downgrades. The 2026-07-28 request-metadata lifecycle
-  (stateless requests carrying `_meta` protocol version, elicitation as an `input_required` round trip) is not
-  served: such requests get a clear 400 ("the 2026-07-28 request-metadata lifecycle is not supported; use
-  MCP-Protocol-Version 2025-11-25"). The Rust server got it from its MCP library; there is no reference
-  implementation left to port from, so it needs a spec-driven implementation if clients start requiring it.
+  `initialize`, so a client that starts with `initialize` downgrades. It also serves 2026-07-28 the way rmcp 3.9
+  does (apps/api/internal/mcp/lifecycle.go): no initialize, version and client capabilities in each request's
+  `_meta`, `Mcp-Method`/`Mcp-Name` headers checked against the body, `server/discover`, `resultType` and cache hints
+  on results, and a confirmation returned as an `input_required` elicitation whose answer is never approval.
+  Not served: `subscriptions/listen` (no subscriptions in any version) and `Mcp-Param-*` headers (no tool declares
+  one).
   Approval requests (`confirmation_required` results) work on every served version without elicitation.
 - Tests: integration tests create fixtures through the Go server itself (an in-process `httptest` server around
   `server.New`, plus a background Go worker). The differential tests against Rust were removed with it. Run
@@ -579,8 +580,7 @@ catalogue Go needs for that (names, descriptions, groups, schemas of the command
 `curl -s localhost:4000/api/commands > apps/api/internal/mcp/catalog.json`. Executing a command that Go has ported runs
 through `Registry.Execute` (the REST gate: role, scopes, tool groups, rate limit, idempotency, confirmation, usage). What
 Go proxies to Rust unchanged: execution of commands only Rust has (AI, importers, ...), anything declined with
-`ErrFallback`, the 2026-07-28 request-metadata lifecycle (`_meta`, `Mcp-*` headers, elicitation round trips,
-`server/discover`), unknown `MCP-Protocol-Version`, batches, JSON-RPC responses, other methods, invalid JSON, `GET`/`DELETE`.
+`ErrFallback`, unknown `MCP-Protocol-Version`, batches, JSON-RPC responses, other methods, invalid JSON, `GET`/`DELETE`.
 Discover is the one deliberate difference from Rust: it lists Go-only commands too.
 
 Reference for differential tests: Rust throttles registration/token/consent per client address and :4000 is shared, so
@@ -806,9 +806,6 @@ every refusal identical except the tagged-enum commands the test skips, see belo
   only for the endpoints above that declare all-default fields.
 - Redirect URIs the strict recognizer declines are judged by `net/url`, not the `url` crate (for example `127.1` is
   not seen as loopback, so Go refuses an `http://127.1/cb` redirect that Rust would allow; stricter, never looser).
-- The 2026-07-28 MCP request-metadata lifecycle (`_meta` with `io.modelcontextprotocol/protocolVersion`,
-  `Mcp-*` headers, elicitation round trips) is not served: Go answers 400 like Rust does when the header is missing
-  and an empty 400 otherwise. Legacy lifecycles (2024-11-05 to 2025-11-25) are unchanged.
 - Tax ids: Rust upper-cases with full Unicode rules (`ß` becomes `SS`), Go per character; a non-ASCII id is refused
   either way, only the wording can differ. A report period with a year outside 1..9999 is refused as a bad period.
 - `serdecheck` does not reproduce chrono's messages for `date-time` strings and custom deserializers.

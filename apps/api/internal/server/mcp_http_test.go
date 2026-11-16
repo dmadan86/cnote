@@ -5,6 +5,7 @@ package server_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -214,19 +215,133 @@ func TestMCPOutboundCommandsNeedHumanApprovalInCNote(t *testing.T) {
 	eq(t, again["isError"], true) // approval is single use
 }
 
-// The 2026-07-28 request-metadata lifecycle (elicitation round trips) is not served by Go: the answer says so instead
-// of pretending, and the legacy confirmation flow (human approves in the app) is what clients get.
-func TestMCPRequestMetadataLifecycleIsRefusedClearly(t *testing.T) {
-	m := newMCPEnv(t)
-	key := m.agent("mailer", "read", "manage_invoices")
-	meta := map[string]any{"io.modelcontextprotocol/protocolVersion": "2026-07-28"}
-	st, _, b := m.send(m.gosv.URL, mcpReq{key: key, body: rpc(1, "tools/call", map[string]any{"name": "invoke", "_meta": meta,
-		"arguments": map[string]any{"command": "space.list"}}),
-		headers: map[string]string{"MCP-Protocol-Version": "2026-07-28", "Mcp-Method": "tools/call", "Mcp-Name": "invoke"}})
-	eq(t, st, 400)
-	if !strings.Contains(string(b), "2026-07-28 request-metadata lifecycle is not supported") {
-		t.Fatalf("%s", b)
+// modern sends a 2026-07-28 request: version and capabilities in _meta, SEP-2243 headers matching the body.
+func (m *mcpEnv) modern(key, method string, params map[string]any, caps map[string]any) (int, map[string]any) {
+	m.t.Helper()
+	if params == nil {
+		params = map[string]any{}
 	}
+	params["_meta"] = map[string]any{"io.modelcontextprotocol/protocolVersion": "2026-07-28",
+		"io.modelcontextprotocol/clientInfo": map[string]any{"name": "t", "version": "1"}, "io.modelcontextprotocol/clientCapabilities": caps}
+	h := map[string]string{"MCP-Protocol-Version": "2026-07-28", "Mcp-Method": method}
+	if n, ok := params["name"].(string); ok {
+		h["Mcp-Name"] = n
+	}
+	if u, ok := params["uri"].(string); ok {
+		h["Mcp-Name"] = u
+	}
+	st, _, b := m.send(m.gosv.URL, mcpReq{key: key, body: rpc(1, method, params), headers: h})
+	var out map[string]any
+	_ = json.Unmarshal(b, &out)
+	return st, out
+}
+
+func TestMCP20260728DiscoverListAndCall(t *testing.T) {
+	m := newMCPEnv(t)
+	st, d := m.modern(m.key, "server/discover", nil, map[string]any{})
+	eq(t, st, 200)
+	res := d["result"].(map[string]any)
+	eq(t, res["resultType"], "complete")
+	if !strings.Contains(fmt.Sprint(res["supportedVersions"]), "2026-07-28") || res["capabilities"].(map[string]any)["tools"] == nil {
+		t.Fatal(res)
+	}
+	eq(t, res["_meta"].(map[string]any)["io.modelcontextprotocol/serverInfo"].(map[string]any)["name"], "rmcp")
+
+	st, l := m.modern(m.key, "tools/list", nil, map[string]any{})
+	eq(t, st, 200)
+	lr := l["result"].(map[string]any)
+	eq(t, lr["resultType"], "complete")
+	eq(t, lr["cacheScope"], "private")
+	eq(t, lr["ttlMs"], float64(0))
+
+	st, c := m.modern(m.key, "tools/call", map[string]any{"name": "discover", "arguments": map[string]any{"query": "space"}}, map[string]any{})
+	eq(t, st, 200)
+	cr := c["result"].(map[string]any)
+	eq(t, cr["resultType"], "complete")
+	eq(t, cr["isError"], false)
+
+	// ping belongs to the initialize lifecycle; a missing resource is plain invalid params now
+	_, p := m.modern(m.key, "ping", nil, map[string]any{})
+	eq(t, p["error"].(map[string]any)["code"], float64(-32601))
+	_, r := m.modern(m.key, "resources/read", map[string]any{"uri": "cnote://ws/00000000-0000-0000-0000-000000000000/note/00000000-0000-0000-0000-000000000000"}, map[string]any{})
+	if e, ok := r["error"].(map[string]any); ok && e["code"] == float64(-32002) {
+		t.Fatal(r)
+	}
+}
+
+func TestMCP20260728TransportRules(t *testing.T) {
+	m := newMCPEnv(t)
+	meta := map[string]any{"io.modelcontextprotocol/protocolVersion": "2026-07-28", "io.modelcontextprotocol/clientCapabilities": map[string]any{}}
+	cases := []struct {
+		name    string
+		method  string
+		params  map[string]any
+		headers map[string]string
+		status  int
+		code    float64
+		want    string
+	}{
+		{"no Mcp-Method", "tools/list", map[string]any{"_meta": meta}, map[string]string{"MCP-Protocol-Version": "2026-07-28"}, 400, -32020, "missing required Mcp-Method header"},
+		{"wrong Mcp-Method", "tools/list", map[string]any{"_meta": meta}, map[string]string{"MCP-Protocol-Version": "2026-07-28", "Mcp-Method": "tools/call"}, 400, -32020, "does not match body method"},
+		{"wrong Mcp-Name", "tools/call", map[string]any{"_meta": meta, "name": "discover", "arguments": map[string]any{"query": ""}}, map[string]string{"MCP-Protocol-Version": "2026-07-28", "Mcp-Method": "tools/call", "Mcp-Name": "invoke"}, 400, -32020, "Mcp-Name header `invoke` does not match body value `discover`"},
+		{"base64 Mcp-Name", "tools/call", map[string]any{"_meta": meta, "name": "discover", "arguments": map[string]any{"query": ""}}, map[string]string{"MCP-Protocol-Version": "2026-07-28", "Mcp-Method": "tools/call", "Mcp-Name": "=?base64?ZGlzY292ZXI=?="}, 200, 0, ""},
+		{"meta without header", "tools/list", map[string]any{"_meta": meta}, nil, 400, -32020, "requires MCP-Protocol-Version header"},
+		{"header without meta", "tools/list", nil, map[string]string{"MCP-Protocol-Version": "2026-07-28", "Mcp-Method": "tools/list"}, 400, -32602, "io.modelcontextprotocol/protocolVersion"},
+		{"discover without meta", "server/discover", nil, nil, 400, -32602, "request _meta is missing"},
+		{"no capabilities", "tools/list", map[string]any{"_meta": map[string]any{"io.modelcontextprotocol/protocolVersion": "2026-07-28"}}, map[string]string{"MCP-Protocol-Version": "2026-07-28", "Mcp-Method": "tools/list"}, 200, -32602, "clientCapabilities"},
+	}
+	for _, c := range cases {
+		st, _, b := m.send(m.gosv.URL, mcpReq{key: m.key, body: rpc(1, c.method, c.params), headers: c.headers})
+		var out map[string]any
+		_ = json.Unmarshal(b, &out)
+		if st != c.status {
+			t.Errorf("%s: status %d %s", c.name, st, b)
+			continue
+		}
+		if c.code == 0 {
+			if out["error"] != nil {
+				t.Errorf("%s: %s", c.name, b)
+			}
+			continue
+		}
+		e, _ := out["error"].(map[string]any)
+		if e["code"] != c.code || !strings.Contains(fmt.Sprint(e["message"]), c.want) {
+			t.Errorf("%s: %s", c.name, b)
+		}
+	}
+}
+
+// Port of elicitation_capable_client_is_asked_but_its_answer_is_not_approval: a client that can elicit is asked
+// through an input_required result; its "accept" on the retry yields the pending confirmation, never the send.
+func TestMCPElicitationCapableClientIsAskedButItsAnswerIsNotApproval(t *testing.T) {
+	m := newMCPEnvWith(t, sendMsgCommand())
+	m.must(m.owner, "workspace.update", map[string]any{"settings": map[string]any{"agent_tool_groups": []string{"read", "send_messages"}}})
+	key := m.agent("mailer", "read", "send_messages")
+	caps := map[string]any{"elicitation": map[string]any{}}
+	args := map[string]any{"command": "test.send", "arguments": map[string]any{"to": "a@example.com"}}
+	st, first := m.modern(key, "tools/call", map[string]any{"name": "invoke", "arguments": args}, caps)
+	eq(t, st, 200)
+	res := first["result"].(map[string]any)
+	eq(t, res["resultType"], "input_required")
+	ask := res["inputRequests"].(map[string]any)["approval"].(map[string]any)
+	eq(t, ask["method"], "elicitation/create")
+	if !strings.Contains(ask["params"].(map[string]any)["message"].(string), "approve") {
+		t.Fatal(res)
+	}
+	state := res["requestState"].(string)
+	if !strings.HasPrefix(state, "confirmation:") {
+		t.Fatal(state)
+	}
+	_, retry := m.modern(key, "tools/call", map[string]any{"name": "invoke", "arguments": args, "requestState": state,
+		"inputResponses": map[string]any{"approval": map[string]any{"action": "accept"}}}, caps)
+	pending := sc(retry["result"].(map[string]any))
+	eq(t, pending["confirmation_required"], true)
+	if _, sent := pending["sent_to"]; sent {
+		t.Fatal(pending)
+	}
+	// A client that cannot elicit gets the ordinary pending confirmation.
+	_, plain := m.modern(key, "tools/call", map[string]any{"name": "invoke", "arguments": args}, map[string]any{})
+	eq(t, sc(plain["result"].(map[string]any))["confirmation_required"], true)
 }
 
 // A client that prefers 2026-07-28 gets a version the server serves, so it downgrades instead of failing.

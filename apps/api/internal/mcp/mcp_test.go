@@ -125,21 +125,23 @@ func TestConfirmationResultCarriesTheApprovalMessage(t *testing.T) {
 	}
 }
 
-func TestParseMessageAcceptsOnlyTheLegacyLifecycle(t *testing.T) {
+func TestParseMessageAcceptsOnlyKnownShapes(t *testing.T) {
 	ok := []string{
 		`{"jsonrpc":"2.0","id":1,"method":"ping"}`, `{"jsonrpc":"2.0","id":"a","method":"tools/list","params":{"cursor":"c"}}`,
 		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"x","arguments":null}}`, `{"jsonrpc":"2.0","method":"notifications/initialized"}`,
 		`{"jsonrpc":"2.0","id":1,"method":"ping","extra":1}`, `{"jsonrpc":"2.0","id":1,"method":"ping","params":{"_meta":{"progressToken":1}}}`, // rmcp ignores both
 		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"t","version":"1"}}}`,
+		`{"jsonrpc":"2.0","id":1,"method":"ping","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28"}}}`, `{"jsonrpc":"2.0","id":1,"method":"server/discover"}`,
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"x","requestState":"s","inputResponses":{}}}`,
 	}
 	for _, b := range ok {
 		if _, good := parseMessage([]byte(b)); !good {
 			t.Errorf("%s declined", b)
 		}
 	}
-	for _, b := range []string{`[]`, `{}`, `not json`, `{"jsonrpc":"2.0","id":1.5,"method":"ping"}`, `{"jsonrpc":"2.0","id":null,"method":"ping"}`, `{"jsonrpc":"2.0","id":1,"method":"ping","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28"}}}`,
+	for _, b := range []string{`[]`, `{}`, `not json`, `{"jsonrpc":"2.0","id":1.5,"method":"ping"}`, `{"jsonrpc":"2.0","id":null,"method":"ping"}`,
 		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"arguments":{}}}`,
-		`{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"cursor":5}}`, `{"jsonrpc":"2.0","id":1,"id":2,"method":"ping"}`, `{"jsonrpc":"2.0","id":1,"method":"server/discover"}`,
+		`{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"cursor":5}}`, `{"jsonrpc":"2.0","id":1,"id":2,"method":"ping"}`,
 		`{"jsonrpc":"2.0","id":1,"result":{}}`, `{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":1}}`, `{"jsonrpc":"2.0","id":1,"method":"initialize"}`,
 		`{"jsonrpc":"1.0","id":1,"method":"ping"}`, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":null}}`, `{"jsonrpc":"2.0","id":1,"method":"resources/read","params":{"uri":null}}`,
 		`{"jsonrpc":"2.0","id":1,"method":null}`, `{"jsonrpc":null,"id":1,"method":"ping"}`} {

@@ -331,8 +331,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.decline(w, r, buf) // protocol corner cases: bad JSON, unrecognized messages, responses, unknown methods
 		return
 	}
-	if vs := r.Header.Values("MCP-Protocol-Version"); len(vs) > 1 || (len(vs) == 1 && !slices.Contains(legacyVersions, vs[0])) {
-		versionHeader(w, r, m.id, vs)
+	if vs := r.Header.Values("MCP-Protocol-Version"); len(vs) > 1 || (len(vs) == 1 && !slices.Contains(knownVersions, vs[0]) && m.metaVersion == "") {
+		text(w, http.StatusBadRequest, "Bad Request: Unsupported MCP-Protocol-Version: "+strings.Join(vs, ", "))
 		return
 	} else if len(vs) == 1 && m.method == "initialize" && vs[0] != m.initVersion {
 		w.Header().Set("Content-Type", "application/json")
@@ -340,11 +340,31 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		jsonRPCStatus400(w, m.id, -32600, "Invalid Request: MCP-Protocol-Version header ("+vs[0]+") does not match initialize params.protocolVersion ("+m.initVersion+")")
 		return
 	}
+	if lifecycleRefusal(w, r, m) {
+		return
+	}
 	if m.notification {
 		w.WriteHeader(http.StatusAccepted)
 		return
 	}
-	s.dispatch(w, r, p, m)
+	if handlerRefusal(w, m) {
+		return
+	}
+	if !m.modern() {
+		s.dispatch(w, r, p, m)
+		return
+	}
+	rec := &recorder{h: w.Header(), status: http.StatusOK}
+	s.dispatch(rec, r, p, m)
+	w.WriteHeader(rec.status)
+	_, _ = w.Write(modernize(m.method, rec.body.Bytes()))
+}
+
+func btoi(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 // ---------- request parsing ----------
@@ -355,6 +375,9 @@ type message struct {
 	notification bool
 	params       map[string]json.RawMessage
 	initVersion  string
+	// the 2026-07-28 per-request lifecycle, from params._meta
+	metaVersion         string
+	metaCaps, canElicit bool
 }
 
 var idRe = regexp.MustCompile(`^(0|-?[1-9][0-9]{0,17})$`)
@@ -378,8 +401,11 @@ func parseMessage(b []byte) (m message, ok bool) {
 		if json.Unmarshal(raw, &ps) != nil || ps == nil {
 			return m, false
 		}
-		if meta, has := ps["_meta"]; has && (!isObjectRaw(meta) || bytes.Contains(meta, []byte("io.modelcontextprotocol/"))) {
-			return m, false // the 2026 request-metadata lifecycle is not served (see decline)
+		if meta, has := ps["_meta"]; has {
+			if !isObjectRaw(meta) {
+				return m, false
+			}
+			m.parseMeta(meta)
 		}
 		m.params = ps
 	}
@@ -398,6 +424,13 @@ func parseMessage(b []byte) (m message, ok bool) {
 	}
 	switch m.method {
 	case "ping":
+		return m, true
+	case "server/discover":
+		for k := range m.params {
+			if k != "_meta" {
+				return m, false
+			}
+		}
 		return m, true
 	case "tools/list", "resources/list", "resources/templates/list", "prompts/list":
 		for k, v := range m.params {
@@ -431,6 +464,10 @@ func parseMessage(b []byte) (m message, ok bool) {
 				if !isString(v) || json.Unmarshal(v, &rs) != nil {
 					return m, false
 				}
+			case "inputResponses": // the client's answers on a 2026-07-28 retry; approval never comes from them
+				if !isObjectRaw(v) {
+					return m, false
+				}
 			default:
 				return m, false
 			}
@@ -439,7 +476,8 @@ func parseMessage(b []byte) (m message, ok bool) {
 		return m, hasName
 	case "resources/read":
 		var u string
-		if len(m.params) != 1 || !isString(m.params["uri"]) || json.Unmarshal(m.params["uri"], &u) != nil {
+		_, hasMeta := m.params["_meta"]
+		if len(m.params) != 1+btoi(hasMeta) || !isString(m.params["uri"]) || json.Unmarshal(m.params["uri"], &u) != nil {
 			return m, false
 		}
 		return m, true
@@ -512,6 +550,8 @@ func (s *Server) dispatch(w http.ResponseWriter, r *http.Request, p command.Prin
 	switch m.method {
 	case "ping":
 		respond(w, m.id, map[string]any{})
+	case "server/discover":
+		respond(w, m.id, discoverResult())
 	case "initialize":
 		v := m.initVersion
 		if !slices.Contains(legacyVersions, v) {
@@ -659,6 +699,8 @@ func (s *Server) exec(w http.ResponseWriter, r *http.Request, p command.Principa
 	out, err := s.Registry.Execute(r.Context(), s.Pool, name, args, p, command.ExecOptions{IdempotencyKey: idem, ConfirmationID: confirm})
 	var ce *command.Error
 	switch {
+	case err == nil && m.modern() && m.canElicit && confirmationID(out) != "":
+		respond(w, m.id, inputRequired(confirmationID(out)))
 	case err == nil:
 		respond(w, m.id, shape(out))
 	case errors.Is(err, command.ErrFallback): // the handler declined an input serde would reject
@@ -677,16 +719,31 @@ func shape(out []byte) callResult {
 	var v map[string]any
 	dec := json.NewDecoder(bytes.NewReader(out))
 	dec.UseNumber()
-	if dec.Decode(&v) == nil && v != nil && v["confirmation_required"] == true {
-		if id, _ := v["confirmation_id"].(string); parseUUID(id) != nil {
-			id = *parseUUID(id)
-			v["message"] = fmt.Sprintf("This action needs human approval. Ask the person to approve request %s in C Note "+
-				"(Settings > Confirmations). Your acceptance here is not approval. After they approve, call `invoke` "+
-				"again with the same command and confirmation_id %s.", id, id)
+	if dec.Decode(&v) == nil && v != nil {
+		if id := confirmationID(out); id != "" {
+			v["message"] = approvalMessage(id)
 			return toolOK(norm(v))
 		}
 	}
 	return toolOK(out)
+}
+
+// confirmationID is the canonical id of a confirmation_required result, or "".
+func confirmationID(out []byte) string {
+	var v struct {
+		Required bool   `json:"confirmation_required"`
+		ID       string `json:"confirmation_id"`
+	}
+	if json.Unmarshal(out, &v) != nil || !v.Required || parseUUID(v.ID) == nil {
+		return ""
+	}
+	return *parseUUID(v.ID)
+}
+
+func approvalMessage(id string) string {
+	return fmt.Sprintf("This action needs human approval. Ask the person to approve request %s in C Note "+
+		"(Settings > Confirmations). Your acceptance here is not approval. After they approve, call `invoke` "+
+		"again with the same command and confirmation_id %s.", id, id)
 }
 
 // ---------- discover ----------
@@ -747,25 +804,10 @@ func (s *Server) discover(w http.ResponseWriter, id json.RawMessage, args map[st
 
 func isObjectRaw(b json.RawMessage) bool { return len(b) > 0 && b[0] == '{' }
 
-// versionHeader answers a request whose MCP-Protocol-Version is not one of the legacy lifecycles: an unknown value
-// is refused like rmcp does; 2026-07-28 (request-metadata lifecycle, elicitation round trips) is not served here.
-func versionHeader(w http.ResponseWriter, r *http.Request, id json.RawMessage, vs []string) {
-	v := strings.Join(vs, ", ")
-	if len(vs) == 1 && vs[0] == "2026-07-28" {
-		code, msg := -32020, "missing required Mcp-Method header"
-		if r.Header.Get("Mcp-Method") != "" {
-			code, msg = -32600, "the 2026-07-28 request-metadata lifecycle is not supported; use MCP-Protocol-Version 2025-11-25"
-		}
-		jsonRPCStatus400(w, id, code, msg)
-		return
-	}
-	text(w, http.StatusBadRequest, "Bad Request: Unsupported MCP-Protocol-Version: "+v)
-}
-
 // decline answers what the fast path does not recognize, the way rmcp's streamable-HTTP server (stateless mode)
 // does: unparsable bodies are a 415 "fail to deserialize" text, JSON-RPC responses a 400 error, notifications are
 // accepted and ignored, and every request whose method or params rmcp cannot type is "method not found" naming
-// the method. The 2026-07-28 request-metadata lifecycle (`_meta` protocolVersion) is not served.
+// the method, after the 2026-07-28 transport checks (lifecycle.go).
 func (s *Server) decline(w http.ResponseWriter, r *http.Request, buf []byte) {
 	deser := func(msg string) { text(w, http.StatusUnsupportedMediaType, "fail to deserialize request body "+msg) }
 	if e := serdejson.Check(buf, false); e != nil {
@@ -816,12 +858,11 @@ func (s *Server) decline(w http.ResponseWriter, r *http.Request, buf []byte) {
 		deser("unrecognized JSON-RPC message")
 		return
 	}
-	if meta, has := params["_meta"]; has && bytes.Contains(meta, []byte("io.modelcontextprotocol/protocolVersion")) {
-		if len(r.Header.Values("MCP-Protocol-Version")) == 0 {
-			jsonRPCStatus400(w, id, -32020, "request _meta protocolVersion requires MCP-Protocol-Version header")
-			return
-		}
-		versionHeader(w, r, id, r.Header.Values("MCP-Protocol-Version"))
+	m := message{id: id, method: name, params: params}
+	if meta, has := params["_meta"]; has && isObjectRaw(meta) {
+		m.parseMeta(meta)
+	}
+	if lifecycleRefusal(w, r, m) {
 		return
 	}
 	respondErr(w, id, -32601, name)
@@ -841,5 +882,9 @@ func jsonRPCStatus400(w http.ResponseWriter, id json.RawMessage, code int, msg s
 		Code    int    `json:"code"`
 		Message string `json:"message"`
 	}{code, msg})
+	if id == nil { // a notification: rmcp omits the id
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","error":` + string(e) + `}`))
+		return
+	}
 	_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":` + string(id) + `,"error":` + string(e) + `}`))
 }
