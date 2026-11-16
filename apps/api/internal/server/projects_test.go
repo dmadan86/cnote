@@ -279,7 +279,7 @@ func TestProjectsCNQLListRespectsPrivateSpacesAndFilters(t *testing.T) {
 	p.item(private, "Secret login plan", nil)
 
 	q := func(s string) map[string]any { return map[string]any{"cnql": s} }
-	pjEq(t, pjKeys(p.asList(p.owner, "item.list", q("text ~ login"))), []string{"ENG-1", "SEC-1"}, "owner sees private spaces")
+	pjEq(t, pjKeys(p.asList(p.owner, "item.list", q("text ~ login ORDER BY key"))), []string{"ENG-1", "SEC-1"}, "owner sees private spaces")
 	pjEq(t, pjKeys(p.asList(member, "item.list", q("text ~ login"))), []string{"ENG-1"}, "member does not see the private space")
 	pjEq(t, len(p.asList(member, "item.list", q("project = SEC"))), 0, "member project = SEC")
 	p.fail(member, "item.get", map[string]any{"key": "SEC-1"}, 404, "not_found")
