@@ -1,4 +1,5 @@
 import {
+  BarChart3,
   BookOpen,
   FileText,
   FolderKanban,
@@ -18,11 +19,12 @@ export const MODULES: ModuleDef[] = [
   { key: 'projects', label: 'Projects', icon: FolderKanban },
   { key: 'crm', label: 'CRM', icon: Users },
   { key: 'billing', label: 'Billing', icon: Receipt },
+  { key: 'reports', label: 'Reports', icon: BarChart3 },
   { key: 'whiteboard', label: 'Whiteboard', icon: Presentation },
 ]
 
-/** settings.modules: missing = all enabled. Home is always on. */
+/** settings.modules: missing = all enabled. Home and Reports are always on (Reports hides datasets of switched-off modules itself). */
 export const moduleOn = (enabled: string[] | null | undefined, key: string) =>
-  !key || !enabled || enabled.includes(key)
+  !key || key === 'reports' || !enabled || enabled.includes(key)
 
 export const PageIcon = FileText
