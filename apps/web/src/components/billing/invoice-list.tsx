@@ -8,7 +8,7 @@ import { NeedSpace } from '@/components/crm/contacts'
 import { useShell } from '@/components/shell'
 import { btn, btnPrimary, EmptyState, ErrorText, Field, inputCls, Modal, Pill } from '@/components/ui'
 import { useCmd } from '@/lib/hooks'
-import { newDraft } from './bits'
+import { hits, newDraft, SearchBox } from './bits'
 import { FilterBanner, today } from './filter'
 import { type Contact, type Invoice, money, STATUS_LABEL, STATUS_TONE } from './fmt'
 
@@ -105,13 +105,14 @@ export function InvoiceList() {
   const { ws, spaces } = useShell()
   const [adding, setAdding] = useState(false)
   const [branch, setBranch] = useState('')
+  const [q, setQ] = useState('')
   const { data: all, error } = useCmd<Invoice[]>(ws, 'invoice.list', {
     limit: 500,
     ...(branch && { branch_id: branch }),
   })
   // home tiles link here with ?filter=outstanding|overdue
   const filter = useSearchParams().get('filter')
-  const data =
+  const base =
     filter === 'outstanding' || filter === 'overdue'
       ? all?.filter(
           (i) =>
@@ -123,9 +124,21 @@ export function InvoiceList() {
       : all
   const contacts = useCmd<Contact[]>(ws, 'contact.list', { limit: 500 })
   const names = new Map(contacts.data?.map((c) => [c.id, c.name]))
+  const data = q.trim()
+    ? base?.filter((i) =>
+        hits(
+          q,
+          i.number,
+          i.contact_id && names.get(i.contact_id),
+          STATUS_LABEL[i.status],
+          i.total_minor / 100,
+        ),
+      )
+    : base
   return (
     <div>
       <div className="mb-3 flex items-center gap-2">
+        <SearchBox label="Search invoices" value={q} onChange={setQ} />
         <BranchSelect ws={ws} value={branch} onChange={setBranch} />
         <button
           type="button"
@@ -136,7 +149,7 @@ export function InvoiceList() {
           <Plus size={14} /> New invoice
         </button>
       </div>
-      {data !== all && (
+      {base !== all && (
         <FilterBanner
           label={filter === 'overdue' ? 'overdue invoices' : 'unpaid invoices'}
           href={`/w/${ws}/billing`}

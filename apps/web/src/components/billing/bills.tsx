@@ -8,7 +8,7 @@ import { NeedSpace } from '@/components/crm/contacts'
 import { useShell } from '@/components/shell'
 import { btn, btnPrimary, EmptyState, ErrorText, Field, inputCls, Modal, Pill } from '@/components/ui'
 import { useCmd } from '@/lib/hooks'
-import { Confirm, run } from './bits'
+import { Confirm, hits, run, SearchBox } from './bits'
 import { Totals } from './editor'
 import { FilterBanner } from './filter'
 import { dayIST, type Line, money, parseMinor, toRupees } from './fmt'
@@ -129,22 +129,29 @@ export function BillList() {
   const { ws, spaces } = useShell()
   const [adding, setAdding] = useState(false)
   const [status, setStatus] = useState('')
+  const [q, setQ] = useState('')
   const { data: all, error } = useCmd<Bill[]>(ws, 'bill.list', { limit: 500 })
   // home tile: ?due=soon is unpaid bills due within 7 days or overdue
   const soon = useSearchParams().get('due') === 'soon'
   const today = dayIST()
   const limit = dayIST(7)
-  const data = all?.filter(
+  const base = all?.filter(
     (b) =>
       (!status || b.status === status) &&
       (!soon || (['recorded', 'partly_paid'].includes(b.status) && b.due_date <= limit)),
   )
   const vendors = useCmd<Vendor[]>(ws, 'vendor.list', {})
   const names = new Map(vendors.data?.map((v) => [v.id, v.name]))
+  const data = q.trim()
+    ? base?.filter((b) =>
+        hits(q, b.vendor_bill_number, names.get(b.vendor_id), LABEL[b.status], b.total_minor / 100),
+      )
+    : base
   return (
     <div>
       {soon && <FilterBanner label="bills due within 7 days or overdue" href={`/w/${ws}/billing/bills`} />}
-      <div className="mb-3 flex gap-2">
+      <div className="mb-3 flex items-center gap-2">
+        <SearchBox label="Search bills" value={q} onChange={setQ} />
         <select
           aria-label="Filter by status"
           value={status}
@@ -172,14 +179,18 @@ export function BillList() {
       {data?.length === 0 && spaces.length > 0 && (
         <EmptyState
           icon={Receipt}
-          title="No bills yet"
+          title={all?.length ? 'No bills match' : 'No bills yet'}
           action={
-            <button type="button" className={btnPrimary} onClick={() => setAdding(true)}>
-              <Plus size={14} /> Add first bill
-            </button>
+            all?.length ? undefined : (
+              <button type="button" className={btnPrimary} onClick={() => setAdding(true)}>
+                <Plus size={14} /> Add first bill
+              </button>
+            )
           }
         >
-          Bills from your vendors, and when they are due, show up here.
+          {all?.length
+            ? 'Try a different search or status.'
+            : 'Bills from your vendors, and when they are due, show up here.'}
         </EmptyState>
       )}
       {!!data?.length && (

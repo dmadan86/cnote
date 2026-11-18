@@ -1,9 +1,41 @@
 'use client'
+import { Search } from 'lucide-react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useState } from 'react'
-import { btn, btnPrimary, ErrorText, Modal } from '@/components/ui'
+import { btn, btnPrimary, ErrorText, inputCls, Modal } from '@/components/ui'
 import { cmd } from '@/lib/api'
+
+/** Search field for billing lists; filtering is client-side over the loaded page (up to 500 rows). */
+export function SearchBox({
+  label,
+  value,
+  onChange,
+}: {
+  label: string
+  value: string
+  onChange: (v: string) => void
+}) {
+  return (
+    <label className="relative">
+      <span className="sr-only">{label}</span>
+      <Search size={14} aria-hidden className="absolute top-2.5 left-2.5 text-muted" />
+      <input
+        type="search"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={label}
+        className={`${inputCls} w-64 pl-8`}
+      />
+    </label>
+  )
+}
+
+/** True when q is empty or any field contains it (case-insensitive). */
+export const hits = (q: string, ...xs: (string | number | null | undefined)[]) => {
+  const t = q.trim().toLowerCase()
+  return !t || xs.some((x) => x != null && String(x).toLowerCase().includes(t))
+}
 
 /** Section tabs shared by the CRM and Billing pages. */
 export function SubNav({ label, items }: { label: string; items: [href: string, text: string][] }) {

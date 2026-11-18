@@ -8,7 +8,7 @@ import { NeedSpace } from '@/components/crm/contacts'
 import { useShell } from '@/components/shell'
 import { btn, btnPrimary, EmptyState, ErrorText, Field, inputCls, Modal, Pill } from '@/components/ui'
 import { useCmd } from '@/lib/hooks'
-import { Confirm, run } from './bits'
+import { Confirm, hits, run, SearchBox } from './bits'
 import { Totals } from './editor'
 import { FilterBanner } from './filter'
 import { type Contact, type Line, money, parseMinor, toRupees } from './fmt'
@@ -109,12 +109,22 @@ export function QuoteList() {
   const { ws, spaces } = useShell()
   const [adding, setAdding] = useState(false)
   const status = useSearchParams().get('status') // home tile: ?status=sent
-  const { data, error } = useCmd<Quote[]>(ws, 'quote.list', { limit: 500, ...(status ? { status } : {}) })
+  const [q, setQ] = useState('')
+  const { data: all, error } = useCmd<Quote[]>(ws, 'quote.list', {
+    limit: 500,
+    ...(status ? { status } : {}),
+  })
   const contacts = useCmd<Contact[]>(ws, 'contact.list', { limit: 500 })
   const names = new Map(contacts.data?.map((c) => [c.id, c.name]))
+  const data = q.trim()
+    ? all?.filter((x) =>
+        hits(q, x.number, x.contact_id && names.get(x.contact_id), x.status, x.total_minor / 100),
+      )
+    : all
   return (
     <div>
-      <div className="mb-3 flex">
+      <div className="mb-3 flex items-center gap-2">
+        <SearchBox label="Search quotes" value={q} onChange={setQ} />
         <button
           type="button"
           className={`${btnPrimary} ml-auto`}
@@ -130,9 +140,9 @@ export function QuoteList() {
       {data?.length === 0 && spaces.length > 0 && (
         <EmptyState
           icon={FileText}
-          title={status ? 'No quotes match' : 'No quotes yet'}
+          title={status || q.trim() ? 'No quotes match' : 'No quotes yet'}
           action={
-            status ? undefined : (
+            status || q.trim() ? undefined : (
               <button type="button" className={btnPrimary} onClick={() => setAdding(true)}>
                 <Plus size={14} /> Create first quote
               </button>
