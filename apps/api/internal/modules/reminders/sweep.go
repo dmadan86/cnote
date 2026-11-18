@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -53,7 +54,7 @@ func sweepWorkspace(ctx context.Context, pool *pgxpool.Pool, reg *command.Regist
 	c.Principal = command.Principal{Kind: command.KindSystem, WorkspaceID: ws, Role: command.Owner}
 	// A mail job that ran out of retries leaves its reminder queued: record the failure.
 	if _, err := tx.Exec(ctx, `update billing.reminder_log l set status = 'failed', error = left(coalesce(j.last_error, 'send failed'), 300)
-		from core.jobs j where l.status = 'queued' and j.kind = 'mail.send' and j.status = 'failed' and j.payload->>'notify' = 'reminder:' || l.id::text`); err != nil {
+		from core.jobs j where l.status in ('queued','sending') and j.kind = 'mail.send' and j.status = 'failed' and j.payload->>'notify' = 'reminder:' || l.id::text`); err != nil {
 		return err
 	}
 	if now.Hour() >= sendHour && mailer.Configured() {
@@ -64,9 +65,12 @@ func sweepWorkspace(ctx context.Context, pool *pgxpool.Pool, reg *command.Regist
 	return tx.Commit(ctx)
 }
 
+// maxAttempts caps the same-day retries of an invoice that failed to enqueue.
+const maxAttempts = 5
+
 type due struct {
-	id, number, email string
-	step              int
+	id, number, email, contact string
+	step                       int
 }
 
 func sendToday(c *command.Ctx, now time.Time) error {
@@ -75,12 +79,16 @@ func sendToday(c *command.Ctx, now time.Time) error {
 		return err
 	}
 	today := now.Format(time.DateOnly)
-	tag, err := c.Tx.Exec(c.Context, `insert into billing.reminder_runs (workspace_id, day) values ($1::uuid, $2::date) on conflict do nothing`, c.WorkspaceID(), today)
-	if err != nil {
+	if _, err := c.Tx.Exec(c.Context, `insert into billing.reminder_runs (workspace_id, day) values ($1::uuid, $2::date) on conflict do nothing`, c.WorkspaceID(), today); err != nil {
 		return command.DB(err)
 	}
-	if tag.RowsAffected() == 0 {
-		return nil // already done today (or another sweep is doing it)
+	var done bool
+	err = c.Tx.QueryRow(c.Context, `select done from billing.reminder_runs where day = $1::date for update skip locked`, today).Scan(&done)
+	if errors.Is(err, pgx.ErrNoRows) || done {
+		return nil // finished today, or another sweep holds the day
+	}
+	if err != nil {
+		return command.DB(err)
 	}
 	var owner string
 	err = c.Tx.QueryRow(c.Context, `select user_id::text from core.memberships where workspace_id = $1::uuid and role = 'owner' order by created_at limit 1`, c.WorkspaceID()).Scan(&owner)
@@ -95,8 +103,10 @@ func sendToday(c *command.Ctx, now time.Time) error {
 		}
 	}
 	// today - due = the step's offset
-	rows, err := c.Tx.Query(c.Context, `select i.note_id::text, coalesce(i.number,''), ct.email, ($1::date - coalesce(i.due_date, i.invoice_date))::int
-		from `+eligibleFrom+` and ($1::date - coalesce(i.due_date, i.invoice_date)) = any($2::int[]) order by i.note_id`, today, offsets)
+	rows, err := c.Tx.Query(c.Context, `select i.note_id::text, coalesce(i.number,''), ct.email, ct.note_id::text, ($1::date - coalesce(i.due_date, i.invoice_date))::int
+		from `+eligibleFrom+` and ($1::date - coalesce(i.due_date, i.invoice_date)) = any($2::int[])
+		  and not exists (select 1 from billing.reminder_log l where l.invoice_note_id = i.note_id and l.status <> 'cancelled' and l.due_date = $1::date)
+		order by i.note_id`, today, offsets)
 	if err != nil {
 		return command.DB(err)
 	}
@@ -104,7 +114,7 @@ func sendToday(c *command.Ctx, now time.Time) error {
 	for rows.Next() {
 		var d due
 		var delta int
-		if err := rows.Scan(&d.id, &d.number, &d.email, &delta); err != nil {
+		if err := rows.Scan(&d.id, &d.number, &d.email, &d.contact, &delta); err != nil {
 			rows.Close()
 			return command.DB(err)
 		}
@@ -119,13 +129,28 @@ func sendToday(c *command.Ctx, now time.Time) error {
 	if err := rows.Err(); err != nil {
 		return command.DB(err)
 	}
+	retry := false
 	for _, d := range todo {
+		var tries int
+		if err := c.Tx.QueryRow(c.Context, `select coalesce((select attempts from billing.reminder_attempts where invoice_note_id = $1::uuid and step = $2), 0)`, d.id, d.step).Scan(&tries); err != nil {
+			return command.DB(err)
+		}
+		if tries >= maxAttempts {
+			continue // given up for today
+		}
 		if err := enqueueOne(c, s, d, today); err != nil {
-			// shortcut: a failure skips this invoice for today (no retry until tomorrow's step); upgrade by releasing the claim.
-			slog.Warn("reminder skipped", "invoice", d.id, "step", d.step, "error", err)
+			slog.Warn("reminder enqueue failed", "invoice", d.id, "step", d.step, "attempt", tries+1, "error", err)
+			if _, err := c.Tx.Exec(c.Context, `insert into billing.reminder_attempts (workspace_id, invoice_note_id, step, attempts, last_error)
+				values ($1::uuid, $2::uuid, $3, 1, left($4, 300)) on conflict (workspace_id, invoice_note_id, step) do update set attempts = billing.reminder_attempts.attempts + 1, last_error = excluded.last_error`,
+				c.WorkspaceID(), d.id, d.step, err.Error()); err != nil {
+				return command.DB(err)
+			}
+			retry = retry || tries+1 < maxAttempts
 		}
 	}
-	return nil
+	// The day stays open while a failed invoice has attempts left: the next sweep (5 minutes later) retries it.
+	_, err = c.Tx.Exec(c.Context, `update billing.reminder_runs set done = $2 where day = $1::date`, today, !retry)
+	return command.DB(err)
 }
 
 // enqueueOne writes the log row and the outbox mail in one savepoint.
@@ -145,9 +170,9 @@ func enqueueOne(c *command.Ctx, s Settings, d due, today string) (err error) {
 	if err = sp.QueryRow(c.Context, `select gen_random_uuid()::text, '<' || gen_random_uuid()::text || '@cnote>'`).Scan(&logID, &mid); err != nil {
 		return err
 	}
-	tag, err := sp.Exec(c.Context, `insert into billing.reminder_log (id, workspace_id, invoice_note_id, step, message_id, to_email, due_date)
-		values ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6, $7::date) on conflict (workspace_id, invoice_note_id, step) do nothing`,
-		logID, c.WorkspaceID(), d.id, d.step, mid, d.email, today)
+	tag, err := sp.Exec(c.Context, `insert into billing.reminder_log (id, workspace_id, invoice_note_id, step, message_id, contact_id, to_email, due_date)
+		values ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6::uuid, $7, $8::date) on conflict (workspace_id, invoice_note_id, step) do nothing`,
+		logID, c.WorkspaceID(), d.id, d.step, mid, d.contact, d.email, today)
 	if err != nil {
 		return err
 	}
@@ -181,15 +206,64 @@ func enqueueOne(c *command.Ctx, s Settings, d due, today string) (err error) {
 	return sp.Commit(c.Context)
 }
 
-// BeforeSend is the mail.send hook: the last eligibility check, in the job's own transaction. Not eligible: the
-// reminder is cancelled and nothing is sent.
+// Pool is where BeforeSend commits the `sending` mark on its own connection (set by the worker). Nil (tests that drive
+// the hook inside one transaction): the mark rides in the job's transaction.
+var Pool *pgxpool.Pool
+
+// sendingStale is how long a `sending` mark may sit before a retry reads it as "the send probably happened".
+const sendingStale = 10 * time.Minute
+
+// markSending sets status 'sending' (or back to 'queued') in a transaction of its own that commits at once.
+func markSending(c *command.Ctx, ref, from, to string) error {
+	q := `update billing.reminder_log set status = $3, sending_at = case when $3 = 'sending' then now() end where id = $1::uuid and status = $2`
+	if Pool == nil {
+		_, err := c.Tx.Exec(c.Context, q, ref, from, to)
+		return command.DB(err)
+	}
+	ctx := context.WithoutCancel(c.Context)
+	tx, err := db.BeginTenant(ctx, Pool, c.WorkspaceID())
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, q, ref, from, to); err != nil {
+		return command.DB(err)
+	}
+	return tx.Commit(ctx)
+}
+
+// BeforeSend is the mail.send hook: the last eligibility check, in the job's own transaction. It locks the invoice
+// row first, so a payment either committed before this check (the reminder is cancelled) or waits for this job. Not
+// eligible, or the recipient changed since enqueue: the reminder is cancelled and nothing is sent. Then `sending` is
+// committed before the SMTP call.
 func BeforeSend(c *command.Ctx, ref string) (bool, error) {
-	var inv, status string
-	err := c.Tx.QueryRow(c.Context, `select invoice_note_id::text, status from billing.reminder_log where id = $1::uuid for update`, ref).Scan(&inv, &status)
-	if errors.Is(err, pgx.ErrNoRows) || status != "queued" {
+	var inv, status, toEmail string
+	var contact string
+	var sendingAt *time.Time
+	err := c.Tx.QueryRow(c.Context, `select invoice_note_id::text, status, to_email, contact_id::text, sending_at from billing.reminder_log where id = $1::uuid`, ref).
+		Scan(&inv, &status, &toEmail, &contact, &sendingAt)
+	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
 	}
 	if err != nil {
+		return false, command.DB(err)
+	}
+	if _, err := c.Tx.Exec(c.Context, `select 1 from billing.invoices where note_id = $1::uuid for update`, inv); err != nil {
+		return false, command.DB(err)
+	}
+	switch status {
+	case "queued":
+	case "sending": // a retry after a crash that may have come after the SMTP send: prefer a missed duplicate to a double send
+		if sendingAt != nil && time.Since(*sendingAt) < sendingStale {
+			return false, errors.New("reminder is being sent")
+		}
+		_, err = c.Tx.Exec(c.Context, `update billing.reminder_log set status = 'sent', sent_at = now(), error = 'possibly sent: retried after a crash' where id = $1::uuid and status = 'sending'`, ref)
+		return false, command.DB(err)
+	default:
+		return false, nil
+	}
+	cancel := func(reason string) (bool, error) {
+		_, err := c.Tx.Exec(c.Context, `update billing.reminder_log set status = 'cancelled', error = $2 where id = $1::uuid`, ref, reason)
 		return false, command.DB(err)
 	}
 	ok, err := eligible(c, inv)
@@ -204,11 +278,21 @@ func BeforeSend(c *command.Ctx, ref string) (bool, error) {
 		ok = s.Enabled
 	}
 	if !ok {
-		_, err = c.Tx.Exec(c.Context, `update billing.reminder_log set status = 'cancelled', error = 'no longer eligible' where id = $1::uuid`, ref)
+		return cancel("no longer eligible")
+	}
+	var curContact, curEmail string
+	if err := c.Tx.QueryRow(c.Context, `select ct.note_id::text, coalesce(ct.email,'') from billing.invoices i join crm.contacts ct on ct.note_id = i.contact_id where i.note_id = $1::uuid`, inv).Scan(&curContact, &curEmail); err != nil {
 		return false, command.DB(err)
 	}
-	return true, nil
+	if curContact != contact || !strings.EqualFold(curEmail, toEmail) {
+		return cancel("recipient changed since the reminder was queued")
+	}
+	return true, markSending(c, ref, "queued", "sending")
 }
+
+// SendFailed is the mail.send hook for a send that failed: the reminder goes back to queued so the retry sends it.
+// (A crash never reaches here, which is how a retry tells "failed" from "maybe sent".)
+func SendFailed(c *command.Ctx, ref string) error { return markSending(c, ref, "sending", "queued") }
 
 // AfterSend marks the reminder sent and emits invoice.reminder_sent, in the transaction that completes the job.
 func AfterSend(c *command.Ctx, ref, messageID string) error {

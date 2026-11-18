@@ -3,11 +3,15 @@ package server_test
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/cnote/api/internal/command"
+	"github.com/cnote/api/internal/db"
 	"github.com/cnote/api/internal/modules"
 	"github.com/cnote/api/internal/modules/reminders"
 )
@@ -180,8 +184,8 @@ func TestReminderRecheckAndCancelQueued(t *testing.T) {
 	r := newRem(t)
 	queue := func(inv string) string {
 		id := r.dbStrings(r.owner.ws, "select gen_random_uuid()::text")[0]
-		adminSQL(r.env, r.owner.ws, `insert into billing.reminder_log (id, workspace_id, invoice_note_id, step, message_id, to_email, due_date)
-			values ($1::uuid,$2::uuid,$3::uuid,1,'<x'||$1||'@cnote>','buyer@customer.example.test',$4::date)`, id, r.owner.ws, inv, day(0))
+		adminSQL(r.env, r.owner.ws, `insert into billing.reminder_log (id, workspace_id, invoice_note_id, step, message_id, contact_id, to_email, due_date)
+			select $1::uuid,$2::uuid,$3::uuid,1,'<x'||$1||'@cnote>',contact_id,'buyer@customer.example.test',$4::date from billing.invoices where note_id = $3::uuid`, id, r.owner.ws, inv, day(0))
 		return id
 	}
 	status := func(id string) string {
@@ -199,7 +203,8 @@ func TestReminderRecheckAndCancelQueued(t *testing.T) {
 	a := r.dueIn(r.contact, 5)
 	la := queue(a)
 	eq(t, before(la), true)
-	eq(t, status(la), "queued")
+	eq(t, status(la), "sending") // committed before the SMTP call
+	adminSQL(r.env, r.owner.ws, "update billing.reminder_log set status='queued', sending_at=null where id=$1::uuid", la)
 	// paid between enqueue and dispatch: cancelled, nothing sent (the payment event may already have cancelled it)
 	r.ok("payment.record", map[string]any{"invoice_id": a, "amount_minor": r.ok("invoice.get", map[string]any{"id": a})["total_minor"]})
 	eq(t, before(la), false)
@@ -294,11 +299,11 @@ func TestCollectionsAgentBriefsAndDraftsOnlyForOldInvoices(t *testing.T) {
 	if tp := r.okList("agent.templates", map[string]any{}); !strings.Contains(fmt.Sprint(tp), "collections") {
 		t.Fatalf("templates %v", tp)
 	}
-	// a public channel with a member who has no finance access is not a safe place for money
 	m := r.memberAs("Mia", "member")
 	r.ok("member.update", map[string]any{"user_id": m.userID, "finance_access": false})
 	pub := r.ok("chat.channel_create", map[string]any{"name": "ops"})["id"].(string)
-	ag := r.ok("agent.install", map[string]any{"template": "collections", "channel_id": pub})
+	r.errIs("agent.install", map[string]any{"template": "collections", "channel_id": pub}, 400, "invalid") // no channel for receivables
+	ag := r.ok("agent.install", map[string]any{"template": "collections"})
 	id := ag["id"].(string)
 	eq(t, r.dbStrings(r.owner.ws, "select (extract(isodow from next_run_at at time zone 'Asia/Kolkata'))::text || to_char(next_run_at at time zone 'Asia/Kolkata','HH24:MI') from core.agents where id=$1::uuid", id), []string{"109:30"})
 	eq(t, ag["every_minutes"], float64(10080))
@@ -310,10 +315,207 @@ func TestCollectionsAgentBriefsAndDraftsOnlyForOldInvoices(t *testing.T) {
 	if !strings.Contains(seen, "<untrusted_data>") || !strings.Contains(seen, "attacker@evil.test") {
 		t.Fatalf("customer text must reach the model marked untrusted: %q", seen)
 	}
-	// the brief went to the owner's private channel, not the public one with a non-finance member
-	posts := func(name string) string {
-		return r.dbStrings(r.owner.ws, `select count(*)::text from chat.messages m join chat.channels c on c.id=m.channel_id where m.agent_id=$1::uuid and c.name=$2`, id, name)[0]
+	// the brief went to the owner as a direct message that only the owner is in; no channel got a post
+	eq(t, r.dbStrings(r.owner.ws, `select count(*)::text from chat.messages m join chat.channels c on c.id=m.channel_id
+		where m.agent_id=$1::uuid and c.kind <> 'dm'`, id), []string{"0"})
+	eq(t, r.dbStrings(r.owner.ws, `select count(*)::text from chat.messages m join chat.channels c on c.id=m.channel_id join chat.members cm on cm.channel_id=c.id
+		where m.agent_id=$1::uuid and c.kind = 'dm' and cm.user_id=$2::uuid`, id, r.owner.userID), []string{"1"})
+	eq(t, r.dbStrings(r.owner.ws, `select count(*)::text from chat.members cm join chat.channels c on c.id=cm.channel_id where c.dm_key like 'agent:%'`), []string{"1"})
+	eq(t, r.dbStrings(r.owner.ws, "select count(*)::text from chat.channels where name = 'collections'"), []string{"0"})
+}
+
+// A mention in a channel is answered privately, and only for people with finance access; nobody else gets numbers.
+func TestCollectionsMentionRepliesByDMOnlyWithFinance(t *testing.T) {
+	r := newRem(t)
+	r.dueIn(r.contact, -70)
+	model := newScriptedModel(t, func(q modelReq) []map[string]any {
+		if q.Turn == 0 {
+			return []map[string]any{muse("a1", "report_receivables_ageing", map[string]any{})}
+		}
+		return []map[string]any{mtext("₹1.0L overdue across 1 customer.")}
+	})
+	r.env.useModel(r.owner, model)
+	id := r.ok("agent.install", map[string]any{"template": "collections"})["id"].(string)
+	pub := r.ok("chat.channel_create", map[string]any{"name": "ops"})["id"].(string)
+	r.ok("chat.agent_add", map[string]any{"channel_id": pub, "agent_id": id})
+	fin := r.memberAs("Fin", "member")
+	nofin := r.memberAs("Nina", "member")
+	r.ok("member.update", map[string]any{"user_id": nofin.userID, "finance_access": false})
+	r.okAs(fin, "chat.send", map[string]any{"channel_id": pub, "body": "[@Collections](/w/" + r.owner.ws + "/agents/" + id + ") how are we doing?"})
+	r.okAs(nofin, "chat.send", map[string]any{"channel_id": pub, "body": "[@Collections](/w/" + r.owner.ws + "/agents/" + id + ") how are we doing?"})
+	settled(t, "reply", func() bool {
+		return r.dbStrings(r.owner.ws, `select count(*)::text from chat.messages where agent_id=$1::uuid`, id)[0] == "2"
+	})
+	r.env.settle(r.owner.ws)
+	// the finance person's brief is a DM to them
+	eq(t, r.dbStrings(r.owner.ws, `select count(*)::text from chat.messages m join chat.channels c on c.id=m.channel_id join chat.members cm on cm.channel_id=c.id
+		where m.agent_id=$1::uuid and c.kind='dm' and cm.user_id=$2::uuid and m.body like '%overdue%'`, id, fin.userID), []string{"1"})
+	// the other person gets the refusal in the channel, with no figures, and no run was started for them
+	eq(t, r.dbStrings(r.owner.ws, `select count(*)::text from chat.messages m where m.agent_id=$1::uuid and m.channel_id=$2::uuid
+		and m.body = 'I can only share collections details with people who have finance access.'`, id, pub), []string{"1"})
+	eq(t, r.dbStrings(r.owner.ws, `select count(*)::text from chat.messages m where m.agent_id=$1::uuid and m.channel_id=$2::uuid and m.body like '%₹%'`, id, pub), []string{"0"})
+	eq(t, r.dbStrings(r.owner.ws, `select count(*)::text from core.agent_runs where agent_id=$1::uuid and on_behalf_of=$2::uuid`, id, nofin.userID), []string{"0"})
+}
+
+// A payment that commits between enqueue and dispatch cancels the reminder: nothing is mailed.
+func TestReminderPaymentBetweenEnqueueAndDispatch(t *testing.T) {
+	r := newRem(t)
+	inv := r.dueIn(r.contact, -3)
+	r.sweep(at(10, 30))
+	eq(t, r.logs()[inv], "2:queued ")
+	r.ok("payment.record", map[string]any{"invoice_id": inv, "amount_minor": r.ok("invoice.get", map[string]any{"id": inv})["total_minor"]})
+	adminSQL(r.env, r.owner.ws, "update billing.reminder_log set status='queued' where invoice_note_id=$1::uuid", inv) // as if the event had not cancelled it
+	r.settle(r.owner.ws)
+	eq(t, r.logs()[inv], "2:cancelled ")
+	eq(t, countMail(r.sink, "buyer@customer.example.test"), 0)
+}
+
+// The dispatch check holds the invoice row: a payment in flight makes it wait, then it sees the payment.
+func TestReminderDispatchLocksInvoice(t *testing.T) {
+	r := newRem(t)
+	inv := r.dueIn(r.contact, 5)
+	id := r.dbStrings(r.owner.ws, "select gen_random_uuid()::text")[0]
+	adminSQL(r.env, r.owner.ws, `insert into billing.reminder_log (id, workspace_id, invoice_note_id, step, message_id, contact_id, to_email, due_date)
+		select $1::uuid,$2::uuid,$3::uuid,1,'<l'||$1||'@cnote>',contact_id,'buyer@customer.example.test',$4::date from billing.invoices where note_id = $3::uuid`, id, r.owner.ws, inv, day(5))
+	ctx := context.Background()
+	pay, err := db.BeginTenant(ctx, r.pool, r.owner.ws)
+	if err != nil {
+		t.Fatal(err)
 	}
-	eq(t, posts("ops"), "0")
-	eq(t, posts("collections"), "1")
+	defer pay.Rollback(ctx)                                                                                           //nolint:errcheck
+	if _, err := pay.Exec(ctx, "select 1 from billing.invoices where note_id=$1::uuid for update", inv); err != nil { // what payment.record does first
+		t.Fatal(err)
+	}
+	res := make(chan bool, 1)
+	go func() {
+		var ok bool
+		p := command.Principal{Kind: command.KindSystem, WorkspaceID: r.owner.ws, Role: command.Owner}
+		_ = modules.Registry().WithTx(ctx, r.pool, p, func(c *command.Ctx) (e error) { ok, e = reminders.BeforeSend(c, id); return })
+		res <- ok
+	}()
+	select {
+	case <-res:
+		t.Fatal("dispatch must wait for the invoice row")
+	case <-time.After(500 * time.Millisecond):
+	}
+	if _, err := pay.Exec(ctx, "update billing.invoices set paid_minor = total_minor, status = 'paid' where note_id=$1::uuid", inv); err != nil {
+		t.Fatal(err)
+	}
+	if err := pay.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	eq(t, <-res, false)
+	eq(t, r.dbStrings(r.owner.ws, "select status from billing.reminder_log where id=$1::uuid", id), []string{"cancelled"})
+}
+
+// The recipient is fixed at enqueue: a changed contact email cancels the reminder at dispatch.
+func TestReminderRecipientChangedCancels(t *testing.T) {
+	r := newRem(t)
+	inv := r.dueIn(r.contact, -3)
+	r.sweep(at(10, 30))
+	eq(t, r.dbStrings(r.owner.ws, "select (contact_id = $2::uuid and to_email = 'buyer@customer.example.test')::text from billing.reminder_log where invoice_note_id=$1::uuid", inv, r.contact), []string{"true"})
+	r.ok("contact.update", map[string]any{"id": r.contact, "email": "someone.else@customer.example.test"})
+	r.settle(r.owner.ws)
+	eq(t, r.logs()[inv], "2:cancelled ")
+	eq(t, r.dbStrings(r.owner.ws, "select error from billing.reminder_log where invoice_note_id=$1::uuid", inv), []string{"recipient changed since the reminder was queued"})
+	eq(t, countMail(r.sink, "customer.example.test"), 0)
+}
+
+// A retry that finds `sending` old reads it as possibly sent (no resend); a young one waits; a failed send goes back to queued.
+func TestReminderSendingMarkAndCrashRetry(t *testing.T) {
+	r := newRem(t)
+	inv := r.dueIn(r.contact, -3)
+	r.sweep(at(10, 30))
+	logID := r.dbStrings(r.owner.ws, "select id::text from billing.reminder_log where invoice_note_id=$1::uuid", inv)[0]
+	run := func(f func(c *command.Ctx) error) error {
+		p := command.Principal{Kind: command.KindSystem, WorkspaceID: r.owner.ws, Role: command.Owner}
+		return modules.Registry().WithTx(context.Background(), r.pool, p, f)
+	}
+	hook := func() (ok bool, err error) {
+		err = run(func(c *command.Ctx) (e error) { ok, e = reminders.BeforeSend(c, logID); return })
+		return
+	}
+	status := func() string {
+		return r.dbStrings(r.owner.ws, "select status from billing.reminder_log where id=$1::uuid", logID)[0]
+	}
+	ok, err := hook() // dispatch: marks sending (committed) and goes ahead
+	eq(t, ok, true)
+	eq(t, err, nil)
+	eq(t, status(), "sending")
+	_ = run(func(c *command.Ctx) error { return reminders.SendFailed(c, logID) }) // SMTP refused: back to queued
+	eq(t, status(), "queued")
+	ok, _ = hook()
+	eq(t, ok, true)
+	ok, err = hook() // crash right after the mark, retried within the lease: not ours to resend yet
+	eq(t, ok, false)
+	if err == nil {
+		t.Fatal("a young sending mark must make the retry wait")
+	}
+	adminSQL(r.env, r.owner.ws, "update billing.reminder_log set sending_at = now() - interval '11 minutes' where id=$1::uuid", logID)
+	ok, err = hook() // crash after SMTP, reclaimed later: possibly sent, never resent
+	eq(t, ok, false)
+	eq(t, err, nil)
+	eq(t, status(), "sent")
+	eq(t, countMail(r.sink, "buyer@customer.example.test"), 0)
+}
+
+// A transient enqueue failure does not spend the day: the next sweep retries the same invoice, up to a cap.
+func TestReminderEnqueueFailureRetriesSameDay(t *testing.T) {
+	r := newRem(t)
+	inv := r.dueIn(r.contact, -3)
+	other := r.dueIn(r.contact, -7)
+	ddl(t, "create function billing.boom() returns trigger language plpgsql as $$ begin if new.step = 2 then raise exception 'boom'; end if; return new; end $$")
+	ddl(t, "create trigger boom before insert on billing.reminder_log for each row execute function billing.boom()")
+	broken := true
+	t.Cleanup(func() {
+		if broken {
+			ddl(t, "drop trigger boom on billing.reminder_log")
+			ddl(t, "drop function billing.boom()")
+		}
+	})
+	r.sweep(at(10, 0))
+	got := r.logs()
+	eq(t, got[inv], "")
+	eq(t, got[other], "3:queued ") // the healthy invoice went out
+	eq(t, r.dbStrings(r.owner.ws, "select done::text from billing.reminder_runs"), []string{"false"})
+	ddl(t, "drop trigger boom on billing.reminder_log")
+	ddl(t, "drop function billing.boom()")
+	broken = false
+	r.sweep(at(10, 5))
+	eq(t, r.logs()[inv], "2:queued ")
+	eq(t, r.logs()[other], "3:queued ") // not sent twice
+	eq(t, r.dbStrings(r.owner.ws, "select done::text from billing.reminder_runs"), []string{"true"})
+	r.settle(r.owner.ws)
+	eq(t, r.dbStrings(r.owner.ws, "select count(*)::text from billing.reminder_log where status = 'sent'"), []string{"2"}) // each once
+}
+
+// The retries are capped: a permanently failing invoice stops holding the day open.
+func TestReminderEnqueueRetryCap(t *testing.T) {
+	r := newRem(t)
+	inv := r.dueIn(r.contact, -3)
+	ddl(t, "create function billing.boom() returns trigger language plpgsql as $$ begin raise exception 'boom'; end $$")
+	ddl(t, "create trigger boom before insert on billing.reminder_log for each row execute function billing.boom()")
+	t.Cleanup(func() {
+		ddl(t, "drop trigger boom on billing.reminder_log")
+		ddl(t, "drop function billing.boom()")
+	})
+	for i := 0; i < 7; i++ {
+		r.sweep(at(10, i))
+	}
+	eq(t, r.dbStrings(r.owner.ws, "select attempts::text from billing.reminder_attempts where invoice_note_id=$1::uuid", inv), []string{"5"})
+	eq(t, r.dbStrings(r.owner.ws, "select done::text from billing.reminder_runs"), []string{"true"})
+}
+
+// ddl runs one statement as the schema owner (the tenant connection cannot change schemas).
+func ddl(t *testing.T, sql string) {
+	t.Helper()
+	ctx := context.Background()
+	conn, err := pgx.Connect(ctx, os.Getenv("DATABASE_ADMIN_URL"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close(ctx)
+	if _, err := conn.Exec(ctx, sql); err != nil {
+		t.Fatal(err)
+	}
 }

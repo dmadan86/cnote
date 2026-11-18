@@ -282,7 +282,7 @@ func install(c *command.Ctx, raw json.RawMessage) (any, error) {
 	if v, ok := m["quotes"]; ok && json.Unmarshal(v, &quotes) != nil {
 		return nil, command.ErrInvalid("quotes must be true or false")
 	}
-	if (hasAt || hasChannel) && !d.ChatAgents || quotes && d.Key != TemplateLeadResponder {
+	if (hasAt || hasChannel) && !d.ChatAgents || hasChannel && d.Key == TemplateCollections || quotes && d.Key != TemplateLeadResponder {
 		return nil, command.ErrInvalid("at and channel_id are for the briefing, quotes is for the lead responder")
 	}
 	var exists bool
@@ -344,19 +344,8 @@ func install(c *command.Ctx, raw json.RawMessage) (any, error) {
 			return nil, err
 		}
 	}
-	if d.ChatAgents {
-		if d.Key == TemplateCollections { // the brief has money in it: a private channel of its own unless the owner picks one
-			priv, err := privateChannel(c)
-			if err != nil {
-				return nil, err
-			}
-			if _, err := c.Call("chat.agent_add", props{"channel_id": priv, "agent_id": id}); err != nil {
-				return nil, err
-			}
-			if !hasChannel {
-				channel = priv
-			}
-		} else if !hasChannel {
+	if d.ChatAgents && d.Key != TemplateCollections { // the collections brief goes by direct message, never to a channel
+		if !hasChannel {
 			if channel, err = briefingChannel(c); err != nil {
 				return nil, err
 			}
@@ -427,28 +416,6 @@ func briefingChannel(c *command.Ctx) (string, error) {
 	var out struct{ ID string }
 	if json.Unmarshal(b, &out) != nil || out.ID == "" {
 		return "", command.ErrInvalid("could not create the briefing channel")
-	}
-	return out.ID, nil
-}
-
-// privateChannel finds or creates the owner's private #collections channel (only the owner is in it).
-func privateChannel(c *command.Ctx) (string, error) {
-	rows, err := channels(c)
-	if err != nil {
-		return "", err
-	}
-	for _, r := range rows {
-		if r.Kind == "private" && r.Name == collectionsChannel {
-			return r.ID, nil
-		}
-	}
-	b, err := c.Call("chat.channel_create", props{"name": collectionsChannel, "private": true})
-	if err != nil {
-		return "", err
-	}
-	var out struct{ ID string }
-	if json.Unmarshal(b, &out) != nil || out.ID == "" {
-		return "", command.ErrInvalid("could not create the collections channel")
 	}
 	return out.ID, nil
 }

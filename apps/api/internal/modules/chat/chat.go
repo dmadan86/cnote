@@ -36,6 +36,7 @@ func Commands() []command.Command {
 		mk("chat.messages", R, messages),
 		mk("chat.channel_create", W, channelCreate),
 		mk("chat.dm_open", W, dmOpen),
+		mk("chat.agent_dm", W, agentDM),
 		mk("chat.member_add", W, memberAdd),
 		mk("chat.thread", R, thread),
 		mk("chat.channel_agents", R, channelAgents),
@@ -160,7 +161,7 @@ func channelList(c *command.Ctx, raw json.RawMessage) (any, error) {
 	u := *w.user
 	// A public channel nobody opened yet counts unread from the later of its creation and your joining the workspace.
 	rows, err := c.Tx.Query(c.Context,
-		`select c.id::text, c.kind, coalesce(c.name, (select u.name from chat.members cm join core.users u on u.id = cm.user_id
+		`select c.id::text, c.kind, coalesce(c.name, (select a.name from core.agents a where c.dm_key like 'agent:%' and a.id = split_part(c.dm_key, ':', 2)::uuid), (select u.name from chat.members cm join core.users u on u.id = cm.user_id
 		        where cm.channel_id = c.id and cm.user_id <> $1::uuid limit 1), 'Just you'),
 		        (select cm.user_id::text from chat.members cm where c.kind = 'dm' and cm.channel_id = c.id and cm.user_id <> $1::uuid limit 1),
 		        (select count(*) from chat.messages m where m.channel_id = c.id and m.deleted_at is null and m.user_id is distinct from $1::uuid
@@ -315,6 +316,54 @@ func dmOpen(c *command.Ctx, raw json.RawMessage) (any, error) {
 		return nil, command.DB(err)
 	}
 	return map[string]any{"id": id, "kind": "dm"}, nil
+}
+
+// agentDM {user_id, body}: an agent writes privately to one person, in a direct message that only that person can read
+// (dm_key agent:<agent>:<user>). It is how money-bearing output (the collections brief) reaches someone without a channel.
+func agentDM(c *command.Ctx, raw json.RawMessage) (any, error) {
+	w, err := who(c)
+	if err != nil {
+		return nil, err
+	}
+	if w.agent == nil {
+		return nil, command.ErrForbidden("only an agent writes this way")
+	}
+	var in struct {
+		UserID string `json:"user_id"`
+		Body   string `json:"body"`
+	}
+	if err := parse(raw, &in); err != nil {
+		return nil, err
+	}
+	user, err := uid("user_id", in.UserID)
+	if err != nil {
+		return nil, err
+	}
+	text, err := body(in.Body)
+	if err != nil {
+		return nil, err
+	}
+	key := "agent:" + *w.agent + ":" + user
+	var id string
+	err = c.Tx.QueryRow(c.Context, `select id::text from chat.channels where kind = 'dm' and dm_key = $1`, key).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		if err = c.Tx.QueryRow(c.Context,
+			`insert into chat.channels (workspace_id, kind, dm_key, created_by) values ($1::uuid,'dm',$2,$3::uuid) returning id::text`,
+			c.WorkspaceID(), key, user).Scan(&id); err != nil {
+			return nil, command.DB(err)
+		}
+		if err := addMember(c, id, user); err != nil {
+			return nil, err
+		}
+	} else if err != nil {
+		return nil, command.DB(err)
+	}
+	var mid string
+	if err := c.Tx.QueryRow(c.Context, `insert into chat.messages (workspace_id, channel_id, agent_id, body) values ($1::uuid,$2::uuid,$3::uuid,$4) returning id::text`,
+		c.WorkspaceID(), id, *w.agent, text).Scan(&mid); err != nil {
+		return nil, command.DB(err)
+	}
+	return map[string]any{"id": mid, "channel_id": id}, nil
 }
 
 func memberAdd(c *command.Ctx, raw json.RawMessage) (any, error) {

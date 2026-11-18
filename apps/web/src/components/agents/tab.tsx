@@ -122,6 +122,11 @@ function InstallDialog({
             </Field>
           </>
         )}
+        {t.key === 'collections' && (
+          <p className="text-[13px]">
+            Sent to you as a direct message. Receivables are never posted in a channel.
+          </p>
+        )}
         {t.key === 'lead_responder' && (
           <label className="flex items-center gap-2 text-[13px]">
             <input type="checkbox" name="quotes" /> Also draft quotes
