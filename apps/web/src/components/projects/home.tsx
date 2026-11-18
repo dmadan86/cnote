@@ -1,10 +1,10 @@
 'use client'
-import { Plus } from 'lucide-react'
+import { CircleCheck, FolderKanban, Plus } from 'lucide-react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useState } from 'react'
 import { useShell } from '@/components/shell'
-import { btn, btnPrimary, ErrorText, Field, inputCls, Modal, Pill } from '@/components/ui'
+import { btn, btnPrimary, EmptyState, ErrorText, Field, inputCls, Modal, Pill } from '@/components/ui'
 import { cmd, type Space } from '@/lib/api'
 import { useCmd } from '@/lib/hooks'
 import { type Item, PROJECT_TEMPLATES } from './shared'
@@ -110,7 +110,11 @@ export function ProjectsHome() {
           <h2 id="due-me" className="mb-2 text-[13px] font-semibold text-muted">
             My tasks due or overdue
           </h2>
-          {mineDue.data?.length === 0 && <p className="text-muted">Nothing due. You are caught up.</p>}
+          {mineDue.data?.length === 0 && (
+            <EmptyState compact icon={CircleCheck} title="Nothing due">
+              You are caught up.
+            </EmptyState>
+          )}
           <ul className="space-y-1">
             {mineDue.data?.map((i) => (
               <li key={i.id} className="flex gap-2">
@@ -124,7 +128,9 @@ export function ProjectsHome() {
         </section>
       )}
       {mine.length === 0 && (
-        <p className="text-muted">No projects yet. Create one to start tracking items.</p>
+        <EmptyState icon={FolderKanban} title="No projects yet">
+          Create one to start tracking items.
+        </EmptyState>
       )}
       <ul className="grid gap-3 sm:grid-cols-2">
         {mine.map((s) => (

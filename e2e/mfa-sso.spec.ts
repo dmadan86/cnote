@@ -149,7 +149,10 @@ test('SSO sign-in against a provider configured in workspace settings', async ({
     const me = await (await page.request.get('/api/auth/me')).json()
     const slug: string = me.workspaces[0].slug
     await page.getByRole('link', { name: 'Settings' }).first().click()
-    await page.getByRole('tab', { name: 'Security' }).click()
+    await page
+      .getByRole('navigation', { name: 'Settings' })
+      .getByRole('link', { name: 'Sign-in & security', exact: true })
+      .click()
     // the domain must be proven first: the TXT record is shown, and verification fails until DNS has it
     await page.getByLabel('Domain to add').fill('e2e-sso.test')
     await page.getByRole('button', { name: 'Add domain' }).click()
@@ -167,7 +170,10 @@ test('SSO sign-in against a provider configured in workspace settings', async ({
       { stdio: 'pipe' },
     )
     await page.reload()
-    await page.getByRole('tab', { name: 'Security' }).click()
+    await page
+      .getByRole('navigation', { name: 'Settings' })
+      .getByRole('link', { name: 'Sign-in & security', exact: true })
+      .click()
     await expect(page.getByText('Verified', { exact: true })).toBeVisible()
     await page.getByLabel('Issuer URL').fill(idp.base)
     await page.getByLabel('Client ID').fill(clientId)

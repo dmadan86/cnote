@@ -1,11 +1,11 @@
 'use client'
-import { Plus } from 'lucide-react'
+import { Plus, Wallet } from 'lucide-react'
 import Link from 'next/link'
 import { useState } from 'react'
 import { ApprovalBanner } from '@/components/approvals/banner'
 import { BranchSelect } from '@/components/company/branch-filter'
 import { useShell } from '@/components/shell'
-import { btn, btnPrimary, ErrorText, Field, inputCls, Modal, Pill } from '@/components/ui'
+import { btn, btnPrimary, EmptyState, ErrorText, Field, inputCls, Modal, Pill } from '@/components/ui'
 import { CmdFailure } from '@/lib/api'
 import { useCmd } from '@/lib/hooks'
 import { run } from './bits'
@@ -537,11 +537,11 @@ export function ExpenseList() {
       </div>
       <ErrorText error={error} />
       {data && rows.length === 0 && (
-        <p className="py-8 text-center text-muted">
+        <EmptyState icon={Wallet} title={tab === 'mine' ? 'No expenses yet' : 'Nothing waiting here'}>
           {tab === 'mine'
-            ? 'No expenses yet. Add one when you pay for something for the business.'
-            : 'Nothing waiting here.'}
-        </p>
+            ? 'Add one when you pay for something for the business.'
+            : 'Claims that need action will appear in this tab.'}
+        </EmptyState>
       )}
       <ul aria-label="Expenses" className="divide-y divide-line">
         {rows.map((x) => (

@@ -1,8 +1,9 @@
 'use client'
+import { Repeat } from 'lucide-react'
 import Link from 'next/link'
 import { useState } from 'react'
 import { useShell } from '@/components/shell'
-import { btn, btnPrimary, ErrorText, Field, inputCls, Modal, Pill } from '@/components/ui'
+import { btn, btnPrimary, EmptyState, ErrorText, Field, inputCls, Modal, Pill } from '@/components/ui'
 import { useCmd } from '@/lib/hooks'
 import { run } from './bits'
 import { type Contact, parseMinor } from './fmt'
@@ -58,7 +59,9 @@ export function RecurringList() {
       </button>
       <ErrorText error={error ?? err} />
       {data?.length === 0 && (
-        <p className="text-muted">No recurring invoices yet. Create one to bill a customer on a schedule.</p>
+        <EmptyState icon={Repeat} title="No recurring invoices yet">
+          Create one to bill a customer on a schedule.
+        </EmptyState>
       )}
       {!!data?.length && (
         <table className="w-full text-left text-[14px]">

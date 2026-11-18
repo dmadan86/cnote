@@ -1,8 +1,9 @@
 'use client'
+import { Inbox } from 'lucide-react'
 import Link from 'next/link'
 import { useState } from 'react'
 import { useShell } from '@/components/shell'
-import { btnPrimary, ErrorText } from '@/components/ui'
+import { btnPrimary, EmptyState, ErrorText } from '@/components/ui'
 import { cmd } from '@/lib/api'
 import { ago, useCmd } from '@/lib/hooks'
 import { AssigneeSelect, assigneeInput, type Item, PRIORITIES, useAgents } from './shared'
@@ -67,7 +68,11 @@ export function TriageView() {
         </p>
       </div>
       {list.error && <ErrorText error={list.error} />}
-      {list.data?.length === 0 && <p className="p-6 text-muted">Inbox zero. Nothing to triage.</p>}
+      {list.data?.length === 0 && (
+        <EmptyState icon={Inbox} title="Inbox zero">
+          Nothing to triage.
+        </EmptyState>
+      )}
       <ul>
         {list.data?.map((i) => (
           <Row key={i.id} item={i} onDone={list.reload} />

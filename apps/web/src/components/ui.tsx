@@ -1,5 +1,5 @@
 'use client'
-import { X } from 'lucide-react'
+import { type LucideIcon, X } from 'lucide-react'
 import { useEffect, useId, useRef } from 'react'
 
 export const btn =
@@ -123,5 +123,36 @@ export function ErrorText({ error }: { error?: Error | string | null }) {
     <p role="alert" className="text-[13px] text-bad">
       {typeof error === 'string' ? error : error.message}
     </p>
+  )
+}
+
+/** Quiet empty state: icon tile, short title, one-line hint, optional actions. `compact` for cards and side panels. */
+export function EmptyState({
+  icon: Icon,
+  title,
+  children,
+  action,
+  compact,
+}: {
+  icon: LucideIcon
+  title: string
+  children?: React.ReactNode
+  action?: React.ReactNode
+  compact?: boolean
+}) {
+  return (
+    <div
+      className={`mx-auto flex flex-col items-center text-center ${compact ? 'gap-1.5 py-5' : 'gap-2 py-14'}`}
+    >
+      <span
+        aria-hidden="true"
+        className={`mb-1 flex items-center justify-center rounded-xl border border-line bg-hover text-muted ${compact ? 'h-8 w-8' : 'h-11 w-11'}`}
+      >
+        <Icon size={compact ? 16 : 20} strokeWidth={1.75} />
+      </span>
+      <p className="text-[14px] font-semibold">{title}</p>
+      {children ? <div className="max-w-[42ch] text-[13px] text-muted">{children}</div> : null}
+      {action ? <div className="mt-2 flex flex-wrap items-center justify-center gap-2">{action}</div> : null}
+    </div>
   )
 }
