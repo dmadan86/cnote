@@ -149,40 +149,38 @@ func TestScheduledAutomationsSweep(t *testing.T) {
 	}
 }
 
-// Automation actions run through the command gate with the author's role.
-func TestAutomationActionsUseCreatorPermissions(t *testing.T) {
+// The run-command action is gone: the API refuses to store one, and an old rule that still has one fails
+// with "unknown action" without running anything (the migration disables such rules; this is the backstop).
+func TestAutomationHasNoCommandAction(t *testing.T) {
 	e := newEnv(t)
 	w := e.signup("Tess")
-	member := e.signup("Mo")
-	e.apiCmd(w, "member.add", map[string]any{"email": member.email, "role": "member"})
 	e.settle(w.ws)
 	g := e.newGoSide(w)
 	sp := str(g.cmd("space.create", map[string]any{"key": "ENG", "name": "Engineering", "template": "software"}), "id")
 	g.cmd("item.create", map[string]any{"space_id": sp, "title": "work"})
-	// an admin-only action in a rule authored by a member: stored through the owner, then the author is switched
-	// to the member, as an imported or edited rule would be
-	id := str(g.cmd("automation.create", map[string]any{"space_id": sp, "name": "escalate",
+	in := map[string]any{"space_id": sp, "name": "cmd",
 		"trigger": map[string]any{"kind": "event", "event": "item.assigned"},
-		"actions": []any{map[string]any{"type": "command", "name": "workflow.update", "input": map[string]any{"space_id": sp, "definition": map[string]any{"statuses": []any{map[string]any{"name": "X", "category": "todo"}}, "transitions": []any{}}}}}}), "id")
-	if _, err := g.c.Tx.Exec(g.c.Context, "update projects.automations set created_by = $2::uuid where id = $1::uuid", id, member.userID); err != nil {
+		"actions": []any{map[string]any{"type": "command", "name": "space.create", "input": map[string]any{"key": "ZZZ", "name": "Z", "template": "software"}}}}
+	g.c.Principal = g.user
+	if _, err := g.c.Call("automation.create", in); err == nil || !strings.Contains(err.Error(), "run-command") {
+		t.Fatalf("automation.create must refuse a command action, got %v", err)
+	}
+	out, err := g.insertAutomation(in) // an old row
+	if err != nil {
 		t.Fatal(err)
 	}
-	count := func() (n int) {
-		_ = g.c.Tx.QueryRow(g.c.Context, "select count(*) from projects.workflows").Scan(&n)
-		return
-	}
-	before := count()
+	var row struct{ ID string }
+	_ = json.Unmarshal(out, &row)
 	g.cmd("item.assign", map[string]any{"key": "ENG-1", "user_id": w.userID})
 	g.drain(100)
 	var status, log string
-	if err := g.c.Tx.QueryRow(g.c.Context, "select status, log::text from projects.automation_runs where automation_id = $1::uuid", id).Scan(&status, &log); err != nil {
+	if err := g.c.Tx.QueryRow(g.c.Context, "select status, log::text from projects.automation_runs where automation_id = $1::uuid", row.ID).Scan(&status, &log); err != nil {
 		t.Fatal(err)
 	}
-	if status != "failed" || !strings.Contains(log, "requires role admin") {
-		t.Fatalf("a member's rule must not run an admin command: %s %s", status, log)
-	}
-	if count() != before {
-		t.Fatal("workflow was changed by a member's rule")
+	var n int
+	_ = g.c.Tx.QueryRow(g.c.Context, "select count(*) from projects.spaces where key = 'ZZZ'").Scan(&n)
+	if status != "failed" || !strings.Contains(log, "unknown action") || n != 0 {
+		t.Fatalf("command action must not run: %s %s spaces=%d", status, log, n)
 	}
 }
 
@@ -396,5 +394,175 @@ func TestClaimSharesQueue(t *testing.T) {
 		if j.ID == ev {
 			t.Fatal("job claimed twice")
 		}
+	}
+}
+
+// long lanes: insert a committed job of a unique kind (cleaned up after), state read back without a tenant tx.
+func laneJob(t *testing.T, e *env, ws, kind string, status string, attempts int) jobs.Job {
+	t.Helper()
+	ctx := context.Background()
+	tx, err := beginTenant(e, ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var j jobs.Job
+	if err := tx.QueryRow(ctx, `insert into core.jobs (workspace_id, kind, status, attempts, run_at)
+		values ($1::uuid,$2,$3,$4, now() - interval '1 minute') returning id, workspace_id::text, kind, payload, attempts, max_attempts`,
+		ws, kind, status, attempts).Scan(&j.ID, &j.WorkspaceID, &j.Kind, &j.Payload, &j.Attempts, &j.MaxAttempts); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { cleanup(e, ws, j.ID) })
+	return j
+}
+
+func jobState(t *testing.T, e *env, ws string, id int64) (st string, attempts int, ageSecs float64) {
+	t.Helper()
+	tx, _ := beginTenant(e, ws)
+	defer tx.Rollback(context.Background())
+	if err := tx.QueryRow(context.Background(), "select status, attempts, extract(epoch from now() - updated_at) from core.jobs where id = $1", id).Scan(&st, &attempts, &ageSecs); err != nil {
+		t.Fatal(err)
+	}
+	return
+}
+
+func TestLongLanesClaimOnlyTheirKinds(t *testing.T) {
+	e := newEnv(t)
+	w := e.signup("Tess")
+	e.settle(w.ws)
+	ctx := context.Background()
+	kind := fmt.Sprintf("test.long.%d", time.Now().UnixNano())
+	wk := newWorker(e.w.Pool, nil)
+	wk.OnLong(kind, 2, func(context.Context, jobs.Job) error { return nil })
+	lj := laneJob(t, e, w.ws, kind, "queued", 0)
+	nj := laneJob(t, e, w.ws, "event.dispatch", "queued", 0)
+	// normal drain (Claim) must not take the long kind
+	tx, err := e.w.Pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	got, err := wk.Claim(ctx, tx, 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	has := map[int64]bool{}
+	for _, j := range got {
+		has[j.ID] = true
+	}
+	if has[lj.ID] || !has[nj.ID] {
+		t.Fatalf("normal claim: long=%v normal=%v", has[lj.ID], has[nj.ID])
+	}
+	_ = tx.Rollback(ctx)
+	// the lane takes its kind and nothing else
+	list, err := claimKinds(ctx, e.w.Pool, []string{kind}, 10)
+	if err != nil || len(list) != 1 || list[0].ID != lj.ID {
+		t.Fatalf("lane claim: %v %v", list, err)
+	}
+	if st, _, _ := jobState(t, e, w.ws, nj.ID); st != "queued" {
+		t.Fatal("lane claimed a normal job:", st)
+	}
+	if !strings.Contains(strings.Join(wk.Kinds(), ","), kind) {
+		t.Fatal("Kinds must include lane kinds so reclaim covers them")
+	}
+}
+
+func TestLongLaneRunsAndRecordsOutcome(t *testing.T) {
+	e := newEnv(t)
+	w := e.signup("Tess")
+	e.settle(w.ws)
+	kind := fmt.Sprintf("test.long.%d", time.Now().UnixNano())
+	wk := newWorker(e.w.Pool, nil)
+	wk.Idle = 20 * time.Millisecond
+	wk.OnLong(kind, 1, func(ctx context.Context, j jobs.Job) error {
+		if id, ok := jobs.JobID(ctx); !ok || id != j.ID {
+			return fmt.Errorf("job id missing from ctx")
+		}
+		return nil
+	})
+	lj := laneJob(t, e, w.ws, kind, "queued", 0)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { wk.laneLoop(ctx, kind); close(done) }()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		if st, _, _ := jobState(t, e, w.ws, lj.ID); st == "done" {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	cancel()
+	<-done
+	if st, _, _ := jobState(t, e, w.ws, lj.ID); st != "done" {
+		t.Fatal("lane job not done:", st)
+	}
+}
+
+// 16.7: once the job is reclaimed and claimed again (attempts moves on), the old executor can neither complete it
+// nor keep its lease alive; its handler ctx is cancelled.
+func TestLongJobFencing(t *testing.T) {
+	e := newEnv(t)
+	w := e.signup("Tess")
+	e.settle(w.ws)
+	ctx := context.Background()
+	kind := fmt.Sprintf("test.long.%d", time.Now().UnixNano())
+	wk := newWorker(e.w.Pool, nil)
+	wk.Lease = 300 * time.Millisecond // heartbeat every 100ms
+	old := laneJob(t, e, w.ws, kind, "running", 1)
+	bump := func() { // reclaim + a second claim by someone else
+		tx, _ := beginTenant(e, w.ws)
+		defer tx.Commit(ctx)
+		if _, err := tx.Exec(ctx, "update core.jobs set attempts = attempts + 1, updated_at = now() - interval '1 hour' where id = $1", old.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	wk.OnLong(kind, 1, func(c context.Context, j jobs.Job) error {
+		bump()
+		select { // the heartbeat finds the token gone and cancels us
+		case <-c.Done():
+			return nil // a lost executor that "succeeds" anyway
+		case <-time.After(5 * time.Second):
+			return fmt.Errorf("lease loss not signalled")
+		}
+	})
+	if err := wk.RunLong(ctx, old); err != nil {
+		t.Fatal(err)
+	}
+	st, attempts, age := jobState(t, e, w.ws, old.ID)
+	if st != "running" || attempts != 2 {
+		t.Fatalf("old executor completed a reclaimed job: %s attempts=%d", st, attempts)
+	}
+	if age < 3000 { // the old heartbeat must not have refreshed the lease
+		t.Fatalf("old heartbeat touched the job: age %.0fs", age)
+	}
+}
+
+func TestLongJobHeartbeatExtendsLease(t *testing.T) {
+	e := newEnv(t)
+	w := e.signup("Tess")
+	e.settle(w.ws)
+	kind := fmt.Sprintf("test.long.%d", time.Now().UnixNano())
+	wk := newWorker(e.w.Pool, nil)
+	wk.Lease = 300 * time.Millisecond
+	j := laneJob(t, e, w.ws, kind, "running", 1)
+	var seen float64
+	wk.OnLong(kind, 1, func(context.Context, jobs.Job) error {
+		tx, _ := beginTenant(e, w.ws)
+		_, _ = tx.Exec(context.Background(), "update core.jobs set updated_at = now() - interval '1 hour' where id = $1", j.ID)
+		_ = tx.Commit(context.Background())
+		time.Sleep(600 * time.Millisecond)
+		_, _, seen = jobState(t, e, w.ws, j.ID)
+		return nil
+	})
+	if err := wk.RunLong(context.Background(), j); err != nil {
+		t.Fatal(err)
+	}
+	if seen > 60 {
+		t.Fatalf("lease not extended while running: age %.0fs", seen)
+	}
+	if st, _, _ := jobState(t, e, w.ws, j.ID); st != "done" {
+		t.Fatal("expected done:", st)
 	}
 }

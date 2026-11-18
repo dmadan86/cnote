@@ -11,6 +11,7 @@ import (
 
 	"github.com/cnote/api/internal/access"
 	"github.com/cnote/api/internal/command"
+	"github.com/cnote/api/internal/notify"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -431,11 +432,11 @@ type request struct {
 }
 
 // slotFor is the approver slot of the current step this person may fill, or false. Nobody decides their own request
-// or the same step twice; a named slot (a member or a resolved department head) is theirs alone, admins fill it only
+// or the same step twice (an owner may decide a request their own agent opened in their name); a named slot (a member or a resolved department head) is theirs alone, admins fill it only
 // after escalation, admins fill open role slots, and so does the fallback approver after an escalation.
 func slotFor(p command.Principal, requester string, st command.ApprovalStep, taken map[int]string, approver *string, escalated bool) (int, bool) {
 	uid := *p.UserID
-	if requester == uid {
+	if requester == uid && p.Role < command.Owner {
 		return 0, false
 	}
 	for _, u := range taken {
@@ -550,6 +551,7 @@ type pending struct {
 	escalated          bool
 	steps              []command.ApprovalStep
 	step               int
+	agent, kind        *string // the machine that made the request, when one did
 }
 
 // takenSlots: who has already approved each slot of a step. Rows are read before the loop's next query.
@@ -576,9 +578,9 @@ func lockPending(c *command.Ctx, id string) (pending, error) {
 	var status string
 	err := c.Tx.QueryRow(c.Context,
 		`select id::text, command, requested_by, input, note_id::text, amount_minor, approver_user_id::text, status,
-		        escalated_at is not null, steps, step_idx
+		        escalated_at is not null, steps, step_idx, requested_by_agent::text, requested_by_kind
 		   from core.confirmations where id = $1::uuid and kind = 'approval' for update`, id).Scan(
-		&p.id, &p.cmd, &p.requester, &p.input, &p.note, &p.amount, &p.approver, &status, &p.escalated, &p.steps, &p.step)
+		&p.id, &p.cmd, &p.requester, &p.input, &p.note, &p.amount, &p.approver, &status, &p.escalated, &p.steps, &p.step, &p.agent, &p.kind)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return p, command.ErrNotFound("approval")
 	}
@@ -605,10 +607,12 @@ func finish(c *command.Ctx, p pending, status, reason, label string) error {
 	if p.requester == *c.Principal.UserID {
 		return nil
 	}
-	_, err := c.Tx.Exec(c.Context,
-		`insert into core.notifications (workspace_id, user_id, kind, note_id, actor_user_id, title)
-		 values ($1::uuid, $2::uuid, 'approval_decided', $3::uuid, $4::uuid, $5 || ': ' || coalesce((select title from core.notes where id = $3::uuid), ''))`,
-		c.WorkspaceID(), p.requester, p.note, c.Principal.UserID, label)
+	var title string
+	if err := c.Tx.QueryRow(c.Context, `select coalesce((select title from core.notes where id = $1::uuid), '')`, p.note).Scan(&title); err != nil {
+		return command.DB(err)
+	}
+	_, err := notify.Send(c.Context, c.Tx, notify.Notification{WorkspaceID: c.WorkspaceID(), UserID: p.requester, Kind: "approval_decided",
+		NoteID: p.note, ActorUserID: c.Principal.UserID, Title: label + ": " + title})
 	return command.DB(err)
 }
 
@@ -691,10 +695,28 @@ func decide(c *command.Ctx, input json.RawMessage) (any, error) {
 		}
 		return map[string]any{"status": "pending", "step": p.step + 1}, nil
 	}
+	// A machine's request is replayed with that machine's rights as they are now; when it may no longer do this, the
+	// request ends here instead of running with a person's privileges.
+	if p.kind != nil {
+		if _, err := c.ApprovedCtx(p.requester, p.cmd, p.agent, *p.kind); err != nil {
+			var ce *command.Error
+			if !errors.As(err, &ce) {
+				return nil, err
+			}
+			if err := finish(c, p, "expired", "no longer allowed: "+ce.Message, "Expired"); err != nil {
+				return nil, err
+			}
+			return map[string]any{"status": "expired", "reason": ce.Message}, nil
+		}
+	}
 	if err := finish(c, p, "confirmed", why, "Approved"); err != nil {
 		return nil, err
 	}
-	res, err := c.RunApproved(p.requester, p.cmd, p.input)
+	kind := ""
+	if p.kind != nil {
+		kind = *p.kind
+	}
+	res, err := c.RunApproved(p.requester, p.cmd, p.input, p.agent, kind)
 	if err != nil {
 		return nil, err // rolls back: the request stays pending and the approver sees the reason
 	}

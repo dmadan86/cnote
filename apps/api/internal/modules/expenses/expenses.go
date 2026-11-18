@@ -26,6 +26,7 @@ import (
 	"github.com/cnote/api/internal/command"
 	"github.com/cnote/api/internal/modules/billing"
 	"github.com/cnote/api/internal/modules/notes"
+	inapp "github.com/cnote/api/internal/notify" // this file has its own notify func
 )
 
 const acctReimbursements = "2150"
@@ -524,9 +525,8 @@ func notify(c *command.Ctx, user *string, kind, id, title string) error {
 	if user == nil || c.Principal.UserID == nil || *user == *c.Principal.UserID {
 		return nil
 	}
-	_, err := c.Tx.Exec(c.Context,
-		`insert into core.notifications (workspace_id, user_id, kind, note_id, actor_user_id, title) values ($1::uuid,$2::uuid,$3,$4::uuid,$5::uuid,$6)`,
-		c.WorkspaceID(), *user, kind, id, *c.Principal.UserID, title)
+	_, err := inapp.Send(c.Context, c.Tx, inapp.Notification{
+		WorkspaceID: c.WorkspaceID(), UserID: *user, Kind: kind, Title: title, NoteID: &id, ActorUserID: c.Principal.UserID})
 	return command.DB(err)
 }
 

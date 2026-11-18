@@ -101,13 +101,9 @@ func IndexJob(c *command.Ctx, payload json.RawMessage) error {
 	return err
 }
 
-// ProposeEdit asks the process provider (no audit, no metering, like Rust's ctx.registry.ai) for a revised page.
+// ProposeEdit asks for a revised page through Complete: the workspace's key, redaction, audit and metering apply.
 func ProposeEdit(c *command.Ctx, msgs []Message, maxTokens uint32) (Completion, error) {
-	out, err := Process().Complete(c.Context, "propose_edit", msgs, maxTokens)
-	if err != nil {
-		return out, providerErr(err)
-	}
-	return out, nil
+	return complete(c, "propose_edit", msgs, maxTokens)
 }
 
 func validUUID(s string) bool {

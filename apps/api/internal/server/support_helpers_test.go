@@ -261,3 +261,102 @@ func raw(t *testing.T, method, url, ct, body string, hdr map[string]string) (int
 }
 
 const missingID = "00000000-0000-4000-8000-000000000000"
+
+// modelReq is what an agent sent to the scripted model: the tool names it was offered, its system prompt, the first
+// user turn, how many assistant turns came before, and the tool results of the last user turn.
+type modelReq struct {
+	Tools         []string
+	System, First string
+	Turn          int
+	Results       []string
+}
+
+// scriptedModel is an Anthropic-shaped fake whose answers a test scripts per request (blocks from mtext and muse).
+type scriptedModel struct {
+	srv  *httptest.Server
+	mu   sync.Mutex
+	reqs []modelReq
+}
+
+func mtext(s string) map[string]any { return map[string]any{"type": "text", "text": s} }
+
+func muse(id, name string, in any) map[string]any {
+	return map[string]any{"type": "tool_use", "id": id, "name": name, "input": in}
+}
+
+func newScriptedModel(t *testing.T, script func(modelReq) []map[string]any) *scriptedModel {
+	m := &scriptedModel{}
+	m.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			System   string `json:"system"`
+			Messages []struct {
+				Role    string          `json:"role"`
+				Content json.RawMessage `json:"content"`
+			} `json:"messages"`
+			Tools []struct {
+				Name string `json:"name"`
+			} `json:"tools"`
+		}
+		b, _ := io.ReadAll(r.Body)
+		if r.URL.Path != "/v1/messages" || json.Unmarshal(b, &body) != nil || len(body.Messages) == 0 {
+			w.WriteHeader(404)
+			return
+		}
+		req := modelReq{System: body.System}
+		for _, x := range body.Tools {
+			req.Tools = append(req.Tools, x.Name)
+		}
+		for i, msg := range body.Messages {
+			if msg.Role == "assistant" {
+				req.Turn++
+			}
+			var s string
+			if i == 0 && json.Unmarshal(msg.Content, &s) == nil {
+				req.First = s
+			}
+		}
+		var blocks []struct{ Type, Content string }
+		if last := body.Messages[len(body.Messages)-1]; json.Unmarshal(last.Content, &blocks) == nil {
+			for _, x := range blocks {
+				if x.Type == "tool_result" {
+					req.Results = append(req.Results, x.Content)
+				}
+			}
+		}
+		m.mu.Lock()
+		m.reqs = append(m.reqs, req)
+		m.mu.Unlock()
+		out := script(req)
+		stop := "end_turn"
+		for _, x := range out {
+			if x["type"] == "tool_use" {
+				stop = "tool_use"
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"model": "fake-claude", "content": out, "stop_reason": stop,
+			"usage": map[string]any{"input_tokens": 20, "output_tokens": 10}})
+	}))
+	t.Cleanup(m.srv.Close)
+	return m
+}
+
+// useModel points the workspace at the scripted model as its own (BYO) Anthropic endpoint.
+func (e *env) useModel(o who, m *scriptedModel) {
+	e.t.Helper()
+	e.t.Setenv("AI_ALLOW_PRIVATE_ENDPOINTS", "1")
+	e.must(o, "ai.set_provider", map[string]any{"provider": "anthropic", "base_url": m.srv.URL, "api_key": "sk-" + rnd()})
+}
+
+// waitRun waits for a finished run matching where ("$1" is the first arg) and returns its id.
+func (e *env) waitRun(ws, where string, args ...any) string {
+	e.t.Helper()
+	for i := 0; i < 300; i++ {
+		if l := e.dbStrings(ws, "select id::text from core.agent_runs where status in ('completed','held','failed','skipped','cancelled') and "+where+" order by created_at limit 1", args...); len(l) > 0 {
+			return l[0]
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	e.t.Fatalf("no finished run where %s", where)
+	return ""
+}

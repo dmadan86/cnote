@@ -199,10 +199,11 @@ func TestApprovalAgentsAndConfirmationsStayApart(t *testing.T) {
 	key := b.apiKey(b.owner)
 	b.errAs(key, "approval.rule_set", map[string]any{"command": "quote.send"}, 403, "forbidden")
 	q := b.quote(b.contact, "")
-	// a machine at or above the threshold is refused: it can't open an approval request, and its own confirmation
-	// could be decided by the member who owns it
-	b.errAs(key, "quote.send", map[string]any{"id": q}, 403, "forbidden")
+	// a machine with a person behind it, at or above the threshold, opens an approval request in that person's name
+	kr := b.sendReq(key, q)
 	eq(t, b.ok("quote.get", map[string]any{"id": q})["status"], "draft")
+	eq(t, b.dbStrings(b.owner.ws, "select requested_by from core.confirmations where id = $1::uuid", kr["confirmation_id"]), []string{b.owner.userID})
+	b.errAs(key, "approval.decide", map[string]any{"id": kr["confirmation_id"], "decision": "approve"}, 403, "forbidden") // a machine never decides
 
 	member := b.addMember(b.owner, b.signup("Mia", false), "member")
 	q2 := b.quote(b.contact, "")
@@ -299,4 +300,75 @@ func TestApprovalHomeTileCountsDecidableRequests(t *testing.T) {
 	}
 	b.ok("approval.decide", map[string]any{"id": id, "decision": "reject", "reason": "no"})
 	eq(t, tile(t, b.home(b.owner), "approvals")["to_approve"], float64(0))
+}
+
+// An agent above the threshold opens the request in its person's name (no refusal); that person, when not an owner,
+// cannot approve their own agent's request, and the run link is the agent's step (confirmation_id).
+func TestApprovalAgentAboveThresholdRoutesInPersonsName(t *testing.T) {
+	b := newBT(t, false)
+	b.rule(map[string]any{"min_amount_minor": 1})
+	b.must(b.owner, "workspace.update", map[string]any{"settings": map[string]any{"agent_tool_groups": []string{"read", "manage_crm", "manage_invoices", "admin"}}})
+	adm := b.addMember(b.owner, b.signup("Ada", false), "admin")
+	created := b.must(adm, "agent.create", map[string]any{"name": "Biller", "scopes": []string{"*"}})
+	agent := who{ws: b.owner.ws, bearer: created["api_key"].(string)}
+	q := b.quote(b.contact, "")
+	r := b.sendReq(agent, q)
+	id := r["confirmation_id"].(string)
+	eq(t, b.ok("quote.get", map[string]any{"id": q})["status"], "draft")
+	eq(t, b.dbStrings(b.owner.ws, "select requested_by from core.confirmations where id = $1::uuid", id), []string{adm.userID})
+	eq(t, b.dbStrings(b.owner.ws, "select actor_type || ':' || (payload->>'agent_id') from core.events where kind = 'approval.requested' and note_id = $1::uuid", q),
+		[]string{"agent:" + created["agent_id"].(string)})
+	b.errAs(adm, "approval.decide", map[string]any{"id": id, "decision": "approve"}, 403, "forbidden") // not their own request
+	eq(t, b.okAs(b.owner, "approval.decide", map[string]any{"id": id, "decision": "approve"})["status"], "approved")
+	eq(t, b.ok("quote.get", map[string]any{"id": q})["status"], "sent")
+}
+
+// An approved machine request replays with the machine's rights as they are at the final approval, never as the person.
+func TestApprovalAgentReplayIsRegated(t *testing.T) {
+	setup := func() (*bt, who, string, string, string) {
+		b := newBT(t, false)
+		b.rule(map[string]any{"min_amount_minor": 1})
+		b.must(b.owner, "workspace.update", map[string]any{"settings": map[string]any{"agent_tool_groups": []string{"read", "manage_crm", "manage_invoices", "admin"}}})
+		adm := b.addMember(b.owner, b.signup("Ada", false), "admin")
+		created := b.must(adm, "agent.create", map[string]any{"name": "Biller", "scopes": []string{"*"}})
+		agent := who{ws: b.owner.ws, bearer: created["api_key"].(string)}
+		q := b.quote(b.contact, "")
+		id := b.sendReq(agent, q)["confirmation_id"].(string)
+		eq(t, b.dbStrings(b.owner.ws, "select requested_by_agent::text || ':' || requested_by_kind from core.confirmations where id = $1::uuid", id),
+			[]string{created["agent_id"].(string) + ":Agent"})
+		return b, adm, created["agent_id"].(string), q, id
+	}
+	t.Run("still allowed executes", func(t *testing.T) {
+		b, _, _, q, id := setup()
+		eq(t, b.okAs(b.owner, "approval.decide", map[string]any{"id": id, "decision": "approve"})["status"], "approved")
+		eq(t, b.ok("quote.get", map[string]any{"id": q})["status"], "sent")
+	})
+	t.Run("paused agent does not execute", func(t *testing.T) {
+		b, _, agent, q, id := setup()
+		b.agentSQL("update core.agents set enabled = false where id = $1::uuid", agent)
+		r := b.okAs(b.owner, "approval.decide", map[string]any{"id": id, "decision": "approve"})
+		eq(t, r["status"], "expired")
+		eq(t, b.ok("quote.get", map[string]any{"id": q})["status"], "draft")
+		eq(t, b.dbStrings(b.owner.ws, "select status from core.confirmations where id = $1::uuid", id), []string{"expired"})
+	})
+	t.Run("scope removed does not execute", func(t *testing.T) {
+		b, _, agent, q, id := setup()
+		b.agentSQL("update core.agents set scopes = '{read}' where id = $1::uuid", agent)
+		eq(t, b.okAs(b.owner, "approval.decide", map[string]any{"id": id, "decision": "approve"})["status"], "expired")
+		eq(t, b.ok("quote.get", map[string]any{"id": q})["status"], "draft")
+	})
+}
+
+func (b *bt) agentSQL(q string, args ...any) {
+	b.t.Helper()
+	tx, err := dbTenant(b.env, b.owner.ws)
+	if err == nil {
+		_, err = tx.Exec(context.Background(), q, args...)
+	}
+	if err == nil {
+		err = tx.Commit(context.Background())
+	}
+	if err != nil {
+		b.t.Fatal(err)
+	}
 }

@@ -1,12 +1,11 @@
 'use client'
 import Link from 'next/link'
 import { useEffect, useRef, useState } from 'react'
-import type { Member } from '@/lib/api'
 import { useShell } from './shell'
 import { Avatar } from './ui'
 
 // Stored like page mentions, so the server notifies and links them the same way.
-const LINK = /\[@([^\]]+)\]\((\/w\/[0-9a-f-]{36}\/people\/[0-9a-f-]{36})\)/g
+const LINK = /\[@([^\]]+)\]\((\/w\/[0-9a-f-]{36}\/(?:people|agents)\/[0-9a-f-]{36})\)/g
 
 /** Comment text with @mentions shown as links (hover shows the person's card). */
 export function CommentBody({ body }: { body: string }) {
@@ -25,6 +24,8 @@ export function CommentBody({ body }: { body: string }) {
   return <>{parts}</>
 }
 
+type Opt = { id: string; name: string; sub: string; kind: 'people' | 'agents' }
+
 /**
  * A comment box with an @ picker. People see "@Asha Rao"; the hidden field named `name` carries the stored form
  * "[@Asha Rao](/w/<ws>/people/<id>)", so forms keep reading FormData as before.
@@ -33,14 +34,20 @@ export function MentionField({
   name,
   multiline,
   className,
+  agents = [],
   ...rest
-}: { name: string; multiline?: boolean; className?: string; rows?: number } & Omit<
-  React.InputHTMLAttributes<HTMLElement>,
-  'name' | 'value' | 'onChange'
->) {
+}: {
+  name: string
+  multiline?: boolean
+  className?: string
+  rows?: number
+  /** Installed agents of the channel; picking one stores /agents/<id>, which the server turns into chat.agent_mentioned. */
+  agents?: { id: string; name: string }[]
+} & Omit<React.InputHTMLAttributes<HTMLElement>, 'name' | 'value' | 'onChange'>) {
   const { ws, members } = useShell()
   const [text, setText] = useState('')
-  const [picked, setPicked] = useState<Member[]>([])
+  const [picked, setPicked] = useState<Opt[]>([])
+  const [pickedAgents, setPickedAgents] = useState<{ id: string; name: string }[]>([])
   const [query, setQuery] = useState<{ q: string; at: number } | null>(null)
   const [active, setActive] = useState(0)
   const ref = useRef<HTMLTextAreaElement & HTMLInputElement>(null)
@@ -51,18 +58,23 @@ export function MentionField({
     const clear = () => {
       setText('')
       setPicked([])
+      setPickedAgents([])
       setQuery(null)
     }
     f?.addEventListener('reset', clear)
     return () => f?.removeEventListener('reset', clear)
   }, [])
 
+  const people: Opt[] = members.map((m) => ({ id: m.user_id, name: m.name, sub: m.email, kind: 'people' }))
+  const bots: Opt[] = agents.map((a) => ({ id: a.id, name: a.name, sub: 'Ask agent', kind: 'agents' }))
   const options = query
-    ? members.filter((m) => `${m.name} ${m.email}`.toLowerCase().includes(query.q.toLowerCase())).slice(0, 6)
+    ? [...people, ...bots]
+        .filter((m) => `${m.name} ${m.sub}`.toLowerCase().includes(query.q.toLowerCase()))
+        .slice(0, 6)
     : []
 
-  const stored = picked.reduce(
-    (s, m) => s.split(`@${m.name}`).join(`[@${m.name}](/w/${ws}/people/${m.user_id})`),
+  const stored = [...picked, ...pickedAgents.map((a) => ({ ...a, kind: 'agents' }))].reduce(
+    (s, m) => s.split(`@${m.name}`).join(`[@${m.name}](/w/${ws}/${m.kind}/${m.id})`),
     text,
   )
 
@@ -73,12 +85,13 @@ export function MentionField({
     setActive(0)
   }
 
-  function pick(m: Member) {
+  function pick(m: Opt) {
     if (!query) return
     const caret = query.at + 1 + query.q.length
     const v = `${text.slice(0, query.at)}@${m.name} ${text.slice(caret)}`
     setText(v)
-    setPicked((p) => (p.some((x) => x.user_id === m.user_id) ? p : [...p, m]))
+    if (m.kind === 'agents') setPickedAgents((p) => (p.some((x) => x.id === m.id) ? p : [...p, m]))
+    else setPicked((p) => (p.some((x) => x.id === m.id) ? p : [...p, { ...m, kind: 'people' }]))
     setQuery(null)
     requestAnimationFrame(() => {
       const pos = query.at + m.name.length + 2
@@ -118,7 +131,7 @@ export function MentionField({
         >
           {options.map((m, i) => (
             <button
-              key={m.user_id}
+              key={m.id}
               type="button"
               role="option"
               aria-selected={i === active}
@@ -128,7 +141,7 @@ export function MentionField({
             >
               <Avatar name={m.name} size={20} />
               <span className="truncate">{m.name}</span>
-              <span className="ml-auto truncate text-[11px] text-muted">{m.email}</span>
+              <span className="ml-auto truncate text-[11px] text-muted">{m.sub}</span>
             </button>
           ))}
         </div>

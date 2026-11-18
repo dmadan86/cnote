@@ -11,9 +11,11 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/cnote/api/internal/command"
@@ -42,6 +44,7 @@ type Worker struct {
 	Registry *command.Registry // used by handlers that run commands (automations): same gate as Rust ctx.call
 	events   []eventHandler
 	jobs     map[string]JobHandler
+	long     map[string]longLane
 	sweeps   []Sweep
 	Limit    int           // jobs claimed per poll (Rust: 20)
 	Idle     time.Duration // sleep when the queue is empty (Rust: 500ms)
@@ -49,17 +52,41 @@ type Worker struct {
 }
 
 func newWorker(pool *pgxpool.Pool, reg *command.Registry) *Worker {
-	return &Worker{Pool: pool, Registry: reg, jobs: map[string]JobHandler{}, Limit: 20, Idle: 500 * time.Millisecond, Lease: 10 * time.Minute}
+	return &Worker{Pool: pool, Registry: reg, jobs: map[string]JobHandler{}, long: map[string]longLane{}, Limit: 20, Idle: 500 * time.Millisecond, Lease: 10 * time.Minute}
 }
 
 func (w *Worker) OnEvent(prefix string, h EventHandler) {
 	w.events = append(w.events, eventHandler{prefix, h})
 }
 func (w *Worker) OnJob(kind string, h JobHandler) { w.jobs[kind] = h }
-func (w *Worker) AddSweep(s Sweep)                { w.sweeps = append(w.sweeps, s) }
 
-// Kinds are the job kinds this worker claims. Anything else stays queued for another worker (Rust).
+type longLane struct {
+	n int
+	h func(ctx context.Context, j jobs.Job) error
+}
+
+// OnLong registers a handler for a long-running kind (a model loop). It runs on its own lane of n goroutines that
+// claim only that kind, with no transaction held across h (h opens its own short ones). The lease is heartbeated
+// while h runs; the claim token is core.jobs.attempts (each claim bumps it), and completion and heartbeat are fenced
+// on it, so a job reclaimed after a stall cannot be completed or kept alive by its old executor (design 16.7): the
+// old h's ctx is cancelled when its heartbeat finds the token gone. DrainOnce never claims these kinds.
+func (w *Worker) OnLong(kind string, n int, h func(ctx context.Context, j jobs.Job) error) {
+	w.long[kind] = longLane{max(n, 1), h}
+}
+func (w *Worker) AddSweep(s Sweep) { w.sweeps = append(w.sweeps, s) }
+
+// Kinds are the job kinds this worker runs (lane kinds included, so ReclaimWorkspace covers them). Anything else
+// stays queued for another worker (Rust).
 func (w *Worker) Kinds() []string {
+	k := w.normalKinds()
+	for kind := range w.long {
+		k = append(k, kind)
+	}
+	return k
+}
+
+// normalKinds are the kinds DrainOnce claims: lane kinds are left to their lanes so dispatch never waits on a model loop.
+func (w *Worker) normalKinds() []string {
 	k := []string{"event.dispatch"}
 	for kind := range w.jobs {
 		k = append(k, kind)
@@ -86,6 +113,14 @@ func (w *Worker) Run(ctx context.Context) {
 		}()
 	}
 	slog.Info("worker started", "kinds", strings.Join(w.Kinds(), ","))
+	var lanes sync.WaitGroup
+	defer lanes.Wait() // graceful shutdown: in-flight long jobs see ctx cancelled, record their outcome, then Run returns
+	for kind, l := range w.long {
+		for range l.n {
+			lanes.Add(1)
+			go func() { defer lanes.Done(); w.laneLoop(ctx, kind) }()
+		}
+	}
 	for ctx.Err() == nil {
 		n, err := w.DrainOnce(ctx, w.Limit)
 		wait := time.Duration(0)
@@ -120,8 +155,14 @@ func (w *Worker) safeSweep(ctx context.Context, s Sweep) (err error) {
 func (w *Worker) Claim(ctx context.Context, q interface {
 	Query(context.Context, string, ...any) (pgx.Rows, error)
 }, limit int) ([]jobs.Job, error) {
+	return claimKinds(ctx, q, w.normalKinds(), limit)
+}
+
+func claimKinds(ctx context.Context, q interface {
+	Query(context.Context, string, ...any) (pgx.Rows, error)
+}, kinds []string, limit int) ([]jobs.Job, error) {
 	rows, err := q.Query(ctx,
-		"select id, workspace_id::text, kind, payload, attempts, max_attempts from core.claim_jobs($1::text[], $2)", w.Kinds(), limit)
+		"select id, workspace_id::text, kind, payload, attempts, max_attempts from core.claim_jobs($1::text[], $2)", kinds, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -154,7 +195,7 @@ func (w *Worker) DrainOnce(ctx context.Context, limit int) (int, error) {
 // RunClaimed runs one already-claimed job and records the outcome (done, or retry with exponential backoff,
 // or failed once attempts reach max_attempts).
 func (w *Worker) RunClaimed(ctx context.Context, j jobs.Job) error {
-	stop := w.heartbeat(ctx, j)
+	stop := w.heartbeat(ctx, j, nil)
 	done, result := w.safeRun(ctx, j)
 	stop()
 	if result == nil && done {
@@ -190,8 +231,9 @@ func (w *Worker) RunClaimed(ctx context.Context, j jobs.Job) error {
 }
 
 // heartbeat keeps the job's lease (core.jobs.updated_at, set by the claim) fresh while it runs, so ReclaimStale
-// only takes jobs whose worker died. The returned func stops it.
-func (w *Worker) heartbeat(ctx context.Context, j jobs.Job) func() {
+// only takes jobs whose worker died. It is fenced on the claim token (attempts): if the job was reclaimed and
+// claimed again the update touches nothing, and lost (if set) is called. The returned func stops it.
+func (w *Worker) heartbeat(ctx context.Context, j jobs.Job, lost func()) func() {
 	hb, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	finished := make(chan struct{})
 	go func() {
@@ -213,8 +255,12 @@ func (w *Worker) heartbeat(ctx context.Context, j jobs.Job) func() {
 				if err != nil {
 					continue
 				}
-				if _, err = tx.Exec(hb, "update core.jobs set updated_at = now() where id = $1 and status = 'running'", j.ID); err == nil {
+				var tag pgconn.CommandTag
+				if tag, err = tx.Exec(hb, "update core.jobs set updated_at = now() where id = $1 and status = 'running' and attempts = $2", j.ID, j.Attempts); err == nil {
 					_ = tx.Commit(hb)
+					if tag.RowsAffected() == 0 && lost != nil {
+						lost()
+					}
 				} else {
 					_ = tx.Rollback(hb)
 				}
@@ -308,6 +354,9 @@ func (w *Worker) Handle(c *command.Ctx, j jobs.Job) error {
 	if j.Kind == "event.dispatch" {
 		return w.dispatch(c, j.Payload)
 	}
+	if l, ok := w.long[j.Kind]; ok { // driven in a transaction (tests): the lane handler gets the context only
+		return l.h(c.Context, j)
+	}
 	h, ok := w.jobs[j.Kind]
 	if !ok {
 		slog.Warn("no handler for job kind", "kind", j.Kind)
@@ -387,4 +436,84 @@ func Boolish(v string) bool {
 		return true
 	}
 	return false
+}
+
+// laneLoop is one goroutine of a long-job lane: claim one job of the kind, run it, repeat.
+func (w *Worker) laneLoop(ctx context.Context, kind string) {
+	for ctx.Err() == nil {
+		list, err := claimKinds(ctx, w.Pool, []string{kind}, 1)
+		if err != nil && ctx.Err() == nil {
+			slog.Error("lane claim failed", "kind", kind, "error", err)
+		}
+		if len(list) == 0 {
+			select {
+			case <-ctx.Done():
+			case <-time.After(w.laneIdle()):
+			}
+			continue
+		}
+		if err := w.RunLong(ctx, list[0]); err != nil {
+			slog.Error("lane job outcome not recorded", "job", list[0].ID, "kind", kind, "error", err)
+		}
+	}
+}
+
+func (w *Worker) laneIdle() time.Duration { return min(w.Idle, 200*time.Millisecond) }
+
+// RunLong runs one claimed lane job without a transaction and records the outcome fenced on the claim token.
+func (w *Worker) RunLong(ctx context.Context, j jobs.Job) error {
+	l, ok := w.long[j.Kind]
+	if !ok {
+		return fmt.Errorf("no lane for kind %s", j.Kind)
+	}
+	runCtx, cancel := context.WithCancel(jobs.WithJobID(ctx, j.ID))
+	defer cancel()
+	stop := w.heartbeat(ctx, j, cancel)
+	result := func() (err error) {
+		defer func() {
+			if r := recover(); r != nil {
+				err = fmt.Errorf("panic: %v", r)
+			}
+		}()
+		return l.h(runCtx, j)
+	}()
+	stop()
+	// the outcome must be recorded even when ctx is cancelled (shutdown) or the handler ctx was
+	octx := context.WithoutCancel(ctx)
+	var tx pgx.Tx
+	var err error
+	if j.WorkspaceID != nil {
+		tx, err = db.BeginTenant(octx, w.Pool, *j.WorkspaceID)
+	} else {
+		tx, err = w.Pool.Begin(octx)
+	}
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(octx) }()
+	var tag pgconn.CommandTag
+	switch {
+	case result == nil:
+		tag, err = tx.Exec(octx, "update core.jobs set status = 'done', updated_at = now() where id = $1 and status = 'running' and attempts = $2", j.ID, j.Attempts)
+	case ctx.Err() != nil: // shutdown, not a failure: give the attempt back and let any worker take it now
+		tag, err = tx.Exec(octx, `update core.jobs set status = 'queued', attempts = attempts - 1, run_at = now(), updated_at = now()
+			where id = $1 and status = 'running' and attempts = $2`, j.ID, j.Attempts)
+	default:
+		slog.Warn("job failed", "job", j.ID, "kind", j.Kind, "error", result.Error())
+		status := "queued"
+		if j.Attempts >= j.MaxAttempts {
+			status = "failed"
+		}
+		tag, err = tx.Exec(octx, `update core.jobs set status = $3, last_error = $4, updated_at = now(),
+			run_at = now() + make_interval(secs => power(2, attempts)) where id = $1 and status = 'running' and attempts = $2`,
+			j.ID, j.Attempts, status, result.Error())
+	}
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		slog.Warn("job lease lost: outcome discarded", "job", j.ID, "kind", j.Kind)
+		return nil
+	}
+	return tx.Commit(octx)
 }

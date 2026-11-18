@@ -112,7 +112,7 @@ func resolve(c *command.Ctx) (*resolved, error) {
 	return &resolved{p, byo, redact && p.Name() != "local"}, nil
 }
 
-func record(c *command.Ctx, r *resolved, provider, model, purpose string, prompt any, response any, in, out uint32) error {
+func record(c *command.Ctx, r *resolved, provider, model, purpose string, prompt any, response any, in, out uint32, extra map[string]string) error {
 	var actor *string
 	if c.Principal.AgentID != nil {
 		actor = c.Principal.AgentID
@@ -135,7 +135,11 @@ func record(c *command.Ctx, r *resolved, provider, model, purpose string, prompt
 		return command.DB(err)
 	}
 	if !r.byo {
-		meta, _ := command.Marshal(map[string]string{"purpose": purpose, "provider": provider, "model": model})
+		m := map[string]string{"purpose": purpose, "provider": provider, "model": model}
+		for k, v := range extra {
+			m[k] = v
+		}
+		meta, _ := command.Marshal(m)
 		for _, u := range []struct {
 			kind string
 			n    uint32
@@ -170,7 +174,7 @@ func complete(c *command.Ctx, purpose string, msgs []Message, maxTokens uint32) 
 	if err != nil {
 		return Completion{}, providerErr(err)
 	}
-	return out, record(c, r, out.Provider, out.Model, purpose, msgs, map[string]string{"text": out.Text}, out.TokensIn, out.TokensOut)
+	return out, record(c, r, out.Provider, out.Model, purpose, msgs, map[string]string{"text": out.Text}, out.TokensIn, out.TokensOut, nil)
 }
 
 // embed embeds texts with redaction, audit and metering; returns the embedding model id the vectors belong to.
@@ -196,7 +200,7 @@ func embed(c *command.Ctx, purpose string, texts []string) (string, [][]float32,
 	}
 	model := r.provider.EmbeddingModel()
 	// no per-call token count from embedding APIs: ~4 chars per token is the metering estimate
-	err = record(c, r, r.provider.Name(), model, purpose, map[string]int{"texts": len(texts), "chars": chars}, nil, uint32(chars/4), 0)
+	err = record(c, r, r.provider.Name(), model, purpose, map[string]int{"texts": len(texts), "chars": chars}, nil, uint32(chars/4), 0, nil)
 	return model, vecs, err
 }
 

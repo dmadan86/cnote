@@ -39,7 +39,7 @@ func Commands() []command.Command {
 		{"apikey.revoke", command.GroupAdmin, command.Admin, false, keyRevoke},
 		{"workspace.get", command.GroupRead, command.Guest, false, workspaceGet},
 		{"workspace.update", command.GroupAdmin, command.Admin, false, workspaceUpdate},
-		{"confirmation.list", command.GroupRead, command.Guest, false, confirmationList},
+		{"confirmation.list", command.GroupRead, command.Member, false, confirmationList},
 		{"confirmation.decide", command.GroupAdmin, command.Member, false, confirmationDecide},
 		{"usage.summary", command.GroupRead, command.Admin, false, usageSummary},
 	}
@@ -179,9 +179,13 @@ func listing(sql string) command.Handler {
 }
 
 var memberList = listing("select m.user_id::text, u.email, u.name, m.role from core.memberships m join core.users u on u.id=m.user_id where m.deactivated_at is null order by u.name")
-var agentList = listing("select id::text,name,kind,owner_user_id::text,scopes,created_at from core.agents order by name")
+var agentList = listing(`select a.id::text, a.name, a.kind, a.owner_user_id::text, a.scopes, a.created_at, a.description, a.template, a.enabled, a.events, a.every_minutes, a.next_run_at,
+	(a.template is not null or a.instructions is not null) as runtime,
+	(select jsonb_build_object('id', r.id::text, 'status', r.status, 'created_at', r.created_at)
+	   from core.agent_runs r where r.agent_id = a.id order by r.created_at desc limit 1) as last_run,
+	(select count(*) from core.confirmations cf where cf.requested_by = a.id::text and cf.status = 'pending')::int as pending
+	from core.agents a order by a.name`)
 var keyList = listing("select id::text,name,prefix,agent_id::text,scopes,last_used_at,revoked_at from core.api_keys order by created_at desc")
-var confirmationList = listing("select id::text,command,input,requested_by,status,created_at from core.confirmations where status='pending' and kind='agent' order by created_at desc")
 var usageSummary = listing("select kind,sum(quantity)::bigint as quantity from core.usage where created_at > now()-interval '30 days' group by kind order by kind")
 
 const workspaceCols = "id::text,name,slug,plan,region,settings"
@@ -398,12 +402,34 @@ func workspaceUpdate(c *command.Ctx, b json.RawMessage) (any, error) {
 	_, e = c.Emit("workspace.settings_updated", nil, map[string]any{"keys": keys})
 	return out, e
 }
+
+// confirmationList: held drafts of AI employees and outside agents. Admins see all; a member sees the ones raised by
+// agents they own or by a run made for them. A guest cannot call it (role Member).
+func confirmationList(c *command.Ctx, b json.RawMessage) (any, error) {
+	if _, e := object(b); e != nil {
+		return nil, e
+	}
+	return query(c, `select cf.id::text, cf.command, cf.input, cf.requested_by, cf.status, cf.created_at,
+		       a.name as agent_name, r.id::text as run_id
+		  from core.confirmations cf
+		  left join core.agents a on a.id::text = cf.requested_by
+		  left join lateral (select s.run_id from core.agent_run_steps s where s.confirmation_id = cf.id limit 1) st on true
+		  left join core.agent_runs r on r.id = st.run_id
+		 where cf.status = 'pending' and cf.kind = 'agent'
+		   and ($1 or a.owner_user_id = $2::uuid or r.on_behalf_of = $2::uuid)
+		 order by cf.created_at desc`, c.Principal.Role >= command.Admin, c.Principal.UserID)
+}
+
+// confirmationDecide approves or rejects the exact stored input (it cannot be edited). A draft raised by an AI
+// employee's run is decided by an admin or the person the run acted for, who must be allowed the command themselves,
+// and an approval replays it at once through the agent's current permissions. Confirmations of outside agents keep
+// the two-step flow: the agent replays with the confirmation id. Deciding twice the same way returns the first result.
 func confirmationDecide(c *command.Ctx, b json.RawMessage) (any, error) {
 	m, e := object(b)
 	if e != nil {
 		return nil, e
 	}
-	uid, e := id(m)
+	cid, e := id(m)
 	if e != nil {
 		return nil, e
 	}
@@ -411,23 +437,72 @@ func confirmationDecide(c *command.Ctx, b json.RawMessage) (any, error) {
 	if e != nil {
 		return nil, e
 	}
-	if c.Principal.Kind != command.KindUser {
+	if _, has := m["input"]; has {
+		return nil, command.ErrInvalid("a confirmation is approved or rejected as stored; it cannot be edited")
+	}
+	if c.Principal.Kind != command.KindUser || c.Principal.UserID == nil {
 		return nil, command.ErrForbidden("only a person can confirm")
 	}
+	me := *c.Principal.UserID
 	status := "rejected"
 	if approve {
 		status = "confirmed"
 	}
-	var cmd string
-	e = c.Tx.QueryRow(c.Context, "update core.confirmations set status=$2,confirmed_by=$3::uuid,decided_at=now() where id=$1::uuid and status='pending' and kind='agent' returning command", uid, status, c.Principal.UserID).Scan(&cmd)
+	var cmd, by, cur string
+	var confirmedBy, runID, onBehalf, reason *string
+	e = c.Tx.QueryRow(c.Context, `select cf.command, cf.requested_by, cf.status, cf.confirmed_by::text, r.id::text, r.on_behalf_of::text, cf.reason
+		  from core.confirmations cf
+		  left join lateral (select s.run_id from core.agent_run_steps s where s.confirmation_id = cf.id limit 1) st on true
+		  left join core.agent_runs r on r.id = st.run_id
+		 where cf.id = $1::uuid and cf.kind = 'agent' for update of cf`, cid).Scan(&cmd, &by, &cur, &confirmedBy, &runID, &onBehalf, &reason)
 	if errors.Is(e, pgx.ErrNoRows) {
 		return nil, command.ErrNotFound("pending confirmation")
 	}
 	if e != nil {
 		return nil, e
 	}
-	_, e = c.Emit("confirmation.decided", nil, map[string]any{"confirmation_id": uid, "command": cmd, "status": status})
-	return map[string]string{"status": status}, e
+	if cur != "pending" { // a double click: the same person deciding the same way gets the first answer
+		first := map[string]string{"confirmed": "confirmed", "expired": "confirmed", "rejected": "rejected"}[cur]
+		if confirmedBy != nil && *confirmedBy == me && first == status {
+			return map[string]any{"status": first, "executed": cur == "expired" && runID != nil && reason == nil}, nil
+		}
+		return nil, command.ErrNotFound("pending confirmation")
+	}
+	if runID != nil && !(c.Principal.Role >= command.Admin || onBehalf != nil && *onBehalf == me) {
+		return nil, command.ErrForbidden("only an admin or the person this AI employee acted for can decide this")
+	}
+	if runID != nil && approve {
+		if e := c.Allowed(cmd); e != nil {
+			return nil, e
+		}
+	}
+	tag, e := c.Tx.Exec(c.Context, "update core.confirmations set status=$2,confirmed_by=$3::uuid,decided_at=now() where id=$1::uuid and status='pending'", cid, status, me)
+	if e != nil {
+		return nil, e
+	}
+	if tag.RowsAffected() != 1 {
+		return nil, command.ErrNotFound("pending confirmation")
+	}
+	out := map[string]any{"status": status}
+	if runID != nil && approve {
+		agent := by
+		res, e := c.CallConfirmed(command.Principal{Kind: command.KindAgent, AgentID: &agent, UserID: onBehalf, WorkspaceID: c.WorkspaceID()}, cmd, cid)
+		if e != nil {
+			return nil, e // rolls back: the draft stays pending and the approver sees why
+		}
+		var r struct {
+			Held bool `json:"approval_required"`
+		}
+		_ = json.Unmarshal(res, &r)
+		out["executed"], out["result"] = !r.Held, res
+		if r.Held { // an approval rule now applies: that request replaces this one and the draft cannot be replayed
+			if _, e := c.Tx.Exec(c.Context, "update core.confirmations set status='expired', reason='moved to an approval request' where id=$1::uuid", cid); e != nil {
+				return nil, e
+			}
+		}
+	}
+	_, e = c.Emit("confirmation.decided", nil, map[string]any{"confirmation_id": cid, "command": cmd, "status": status, "run_id": runID})
+	return out, e
 }
 
 // NewKey and Slugify are exported for the HTTP surface (marketplace token exchange, workspace creation).

@@ -41,6 +41,7 @@ type Completion struct {
 type Provider interface {
 	Name() string
 	Complete(ctx context.Context, purpose string, msgs []Message, maxTokens uint32) (Completion, error)
+	Step(ctx context.Context, r StepRequest) (StepResult, error)
 	EmbeddingModel() string
 	Embed(ctx context.Context, texts []string) ([][]float32, error)
 }
@@ -132,9 +133,18 @@ func statusLine(code int) string { // like http::StatusCode Display
 	return fmt.Sprintf("%d %s", code, t)
 }
 
-func postJSON(ctx context.Context, url string, headers [][2]string, body any) (map[string]any, error) {
-	b, _ := json.Marshal(body)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(b))
+// maxBody bounds a model API response (a hostile or broken endpoint must not exhaust memory).
+const maxBody = 4 << 20
+
+// postRaw posts a JSON body and returns the response bytes; a non-2xx answer is an *APIError.
+func postRaw(ctx context.Context, url string, headers [][2]string, body any) ([]byte, error) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false) // replayed provider content (Turn.Raw) must not be rewritten
+	if err := enc.Encode(body); err != nil {
+		return nil, errors.New("model request failed")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, &buf)
 	if err != nil {
 		return nil, errors.New("model request failed")
 	}
@@ -147,17 +157,27 @@ func postJSON(ctx context.Context, url string, headers [][2]string, body any) (m
 		return nil, errors.New("model request failed")
 	}
 	defer res.Body.Close()
-	text, err := io.ReadAll(res.Body)
+	if res.StatusCode < 200 || res.StatusCode > 299 {
+		// Upstream bodies stay out of responses; callers only learn the status.
+		return nil, &APIError{Status: res.StatusCode}
+	}
+	text, err := io.ReadAll(io.LimitReader(res.Body, maxBody+1))
 	if err != nil {
 		return nil, errors.New("reading model response")
 	}
-	if res.StatusCode < 200 || res.StatusCode > 299 {
-		// Upstream bodies stay out of responses; callers only learn the status.
-		return nil, fmt.Errorf("model API returned %s", statusLine(res.StatusCode))
+	if len(text) > maxBody {
+		return nil, errors.New("model response too large")
+	}
+	return text, nil
+}
+
+func postJSON(ctx context.Context, url string, headers [][2]string, body any) (map[string]any, error) {
+	text, err := postRaw(ctx, url, headers, body)
+	if err != nil {
+		return nil, err
 	}
 	var v map[string]any
-	d := json.NewDecoder(bytes.NewReader(text))
-	if err := d.Decode(&v); err != nil || v == nil {
+	if err := json.NewDecoder(bytes.NewReader(text)).Decode(&v); err != nil || v == nil {
 		return nil, errors.New("model API returned non-JSON")
 	}
 	return v, nil

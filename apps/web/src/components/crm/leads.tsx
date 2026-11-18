@@ -2,6 +2,7 @@
 import { Phone } from 'lucide-react'
 import Link from 'next/link'
 import { useState } from 'react'
+import { type Confirmation, describe } from '@/components/approvals/confirmations'
 import { money } from '@/components/billing/fmt'
 import { useShell } from '@/components/shell'
 import { btn, btnPrimary, ErrorText, Field, inputCls, Modal, Pill } from '@/components/ui'
@@ -278,6 +279,65 @@ export function ActivityList({ rows, showTitle }: { rows: Activity[]; showTitle?
   )
 }
 
+/** A reply the lead responder drafted and is holding for a person. Approving sends exactly this text. */
+function SuggestedReply({
+  c,
+  ws,
+  phone,
+  done,
+}: {
+  c: Confirmation
+  ws: string
+  phone: string | null
+  done: () => void
+}) {
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState<string>()
+  const text = describe(c, ws).preview
+  const decide = async (approve: boolean) => {
+    if (busy) return
+    setBusy(true)
+    try {
+      await cmd(ws, 'confirmation.decide', { id: c.id, approve })
+      done()
+    } catch (e) {
+      // not found: someone already decided it
+      if (/not.?found/i.test((e as Error).message)) done()
+      else {
+        setErr((e as Error).message)
+        setBusy(false)
+      }
+    }
+  }
+  return (
+    <div className="mt-2 rounded-md border border-line bg-side p-3 text-[13px]">
+      <p className="mb-1 text-[12px] font-medium text-muted">
+        Suggested reply from {c.agent_name} · {ago(c.created_at)}
+      </p>
+      {text && <p className="whitespace-pre-wrap break-words text-[14px]">{text}</p>}
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        <button type="button" className={btnPrimary} disabled={busy} onClick={() => decide(true)}>
+          Approve &amp; send
+        </button>
+        <button type="button" className={btn} disabled={busy} onClick={() => decide(false)}>
+          Reject
+        </button>
+        {phone && text && (
+          <a
+            href={`https://wa.me/${tel(phone).replace('+', '')}?text=${encodeURIComponent(text)}`}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex min-h-8 items-center underline"
+          >
+            Send on WhatsApp
+          </a>
+        )}
+      </div>
+      <ErrorText error={err} />
+    </div>
+  )
+}
+
 function Contactable({ phone }: { phone: string | null }) {
   if (!phone) return null
   return (
@@ -301,6 +361,15 @@ export function Inbox() {
   const { ws } = useShell()
   const list = useCmd<FollowUp[]>(ws, 'followup.list', { due: 'inbox' })
   const [logging, setLogging] = useState<FollowUp>()
+  const held = useCmd<Confirmation[]>(ws, 'confirmation.list')
+  const draftFor = (d: FollowUp) =>
+    held.data?.find((c) => {
+      const i = (c.input ?? {}) as Record<string, unknown>
+      return (
+        c.agent_name &&
+        (i.note_id === d.id || i.deal_id === d.id || (d.contact_id && i.contact_id === d.contact_id))
+      )
+    })
   return (
     <section aria-label="New inquiries">
       <p className="mb-3 text-[13px] text-muted">
@@ -320,6 +389,10 @@ export function Inbox() {
               </span>
             </div>
             {d.last_activity && <p className="mt-1 line-clamp-2 text-[14px]">{d.last_activity}</p>}
+            {(() => {
+              const c = draftFor(d)
+              return c && <SuggestedReply c={c} ws={ws} phone={d.contact_phone} done={held.reload} />
+            })()}
             <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
               <Contactable phone={d.contact_phone} />
               <button type="button" className={`${btnPrimary} ${big}`} onClick={() => setLogging(d)}>

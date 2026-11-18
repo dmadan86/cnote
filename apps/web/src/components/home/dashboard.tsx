@@ -12,6 +12,7 @@ import {
   type LucideIcon,
   Receipt,
   ShieldCheck,
+  Sparkles,
   Users,
 } from 'lucide-react'
 import Link from 'next/link'
@@ -325,6 +326,7 @@ export function HomeDashboard() {
         <BranchSelect ws={ws} value={branch} onChange={setBranch} allLabel="All branches (invoices)" />
       </div>
       <CheckInCard />
+      <AskCard />
       {tiles.length > 0 && (
         <section aria-label="Today at a glance" className="space-y-3">
           {bigTiles.length > 0 && <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">{bigTiles}</div>}
@@ -453,6 +455,32 @@ export function HomeDashboard() {
 }
 
 /** Thin share bar; the numbers beside it carry the meaning, so it is decorative. */
+function AskCard() {
+  const { openAsk } = useShell()
+  const [q, setQ] = useState('')
+  return (
+    <form
+      aria-label="Ask your business"
+      className="flex items-center gap-2 rounded-lg border border-line px-3 py-2"
+      onSubmit={(e) => {
+        e.preventDefault()
+        openAsk(q.trim() || undefined)
+        setQ('')
+      }}
+    >
+      <Sparkles size={15} className="text-muted" aria-hidden="true" />
+      <input
+        value={q}
+        onChange={(e) => setQ(e.target.value)}
+        aria-label="Ask your business"
+        placeholder="Ask your business: Who owes me money?"
+        className="min-w-0 flex-1 bg-transparent text-[14px] placeholder:text-muted focus:outline-none"
+      />
+      <kbd className="hidden rounded border border-line px-1 text-[11px] text-muted sm:block">⌘J</kbd>
+    </form>
+  )
+}
+
 function Bar({ part, whole, tone, label }: { part: number; whole: number; tone: string; label: string }) {
   const pct = whole > 0 ? Math.min(100, Math.round((part / whole) * 100)) : 0
   return (

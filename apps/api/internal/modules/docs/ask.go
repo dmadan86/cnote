@@ -15,8 +15,8 @@ import (
 	"github.com/cnote/api/internal/modules/notes"
 )
 
-// doc.ask and doc.capture (crates/cnote-docs/src/commands.rs). Both use the process-wide provider
-// (`ctx.registry.ai`): no workspace key, no audit row and no metering, exactly like Rust.
+// doc.ask and doc.capture (crates/cnote-docs/src/commands.rs). Both call ai.Complete, so the workspace's own key,
+// PII redaction, audit and metering apply (the Rust original used the process provider with none of them).
 
 var stop = map[string]bool{}
 
@@ -96,11 +96,14 @@ func docAsk(c *command.Ctx, input json.RawMessage) (any, error) {
 		}
 		joined := strings.Join(sources, "\n\n")
 		answer := joined
-		if done, err := ai.Process().Complete(c.Context, "answer", []ai.Message{
+		done, err := ai.Complete(c, "answer", []ai.Message{
 			{Role: "system", Content: "Answer the question using only these pages, and say when a page is stale.\nQuestion: " + question},
 			{Role: "user", Content: joined},
-		}, 512); err == nil {
+		}, 512)
+		if err == nil {
 			answer = done.Text
+		} else if !ai.IsProviderError(err) { // the extractive answer covers a provider outage only
+			return nil, err
 		}
 		return map[string]any{"answered": true, "answer": answer, "citations": citations}, nil
 	}
@@ -174,12 +177,12 @@ func docCapture(c *command.Ctx, input json.RawMessage) (any, error) {
 	if err := access.AssertSpaceAccess(c, space, true); err != nil {
 		return nil, err
 	}
-	done, err := ai.Process().Complete(c.Context, "draft", []ai.Message{
+	done, err := ai.Complete(c, "draft", []ai.Message{
 		{Role: "system", Content: "Turn this " + source + " into a concise wiki page in Markdown: decisions, facts, owners, open questions. Invent nothing."},
 		{Role: "user", Content: text},
 	}, 1500)
 	if err != nil {
-		return nil, command.NewError(command.Internal, err.Error()) // anyhow's message, unprefixed
+		return nil, err
 	}
 	t := ""
 	if title != nil && strings.TrimSpace(*title) != "" {

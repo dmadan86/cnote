@@ -135,18 +135,8 @@ func (r *Registry) run(c *Ctx, name string, input json.RawMessage, o ExecOptions
 		return nil, ErrNotFound("command " + name)
 	}
 	p := c.Principal
-	if p.Role < cmd.MinRole {
-		return nil, ErrForbidden(fmt.Sprintf("%s requires role %s", name, cmd.MinRole))
-	}
-	if p.Scopes != nil && !slices.ContainsFunc(p.Scopes, func(s string) bool { return s == "*" || s == string(cmd.Group) }) {
-		return nil, ErrForbidden(fmt.Sprintf("scope %s not granted", cmd.Group))
-	}
-	if cmd.Finance {
-		if ok, err := c.FinanceAllowed(); err != nil {
-			return nil, err
-		} else if !ok {
-			return nil, ErrForbidden("finance access is turned off for you; ask an admin")
-		}
+	if err := c.gate(cmd); err != nil {
+		return nil, err
 	}
 	if p.Kind != KindSystem {
 		who := p.UserID
@@ -155,23 +145,6 @@ func (r *Registry) run(c *Ctx, name string, input json.RawMessage, o ExecOptions
 		}
 		if err := checkRate(p.WorkspaceID + ":" + orNil(who)); err != nil {
 			return nil, err
-		}
-	}
-	if p.IsMachine() {
-		var raw []byte
-		if err := c.Tx.QueryRow(c.Context, "select settings from core.workspaces where id = $1::uuid", p.WorkspaceID).Scan(&raw); err != nil {
-			return nil, DB(err)
-		}
-		var s struct {
-			Groups *[]any `json:"agent_tool_groups"`
-		}
-		_ = json.Unmarshal(raw, &s)
-		allowed := slices.Contains(defaultAgentGroups, string(cmd.Group))
-		if s.Groups != nil {
-			allowed = slices.Contains(*s.Groups, any(string(cmd.Group)))
-		}
-		if !allowed {
-			return nil, ErrForbidden(fmt.Sprintf("tool group %s is disabled for agents in this workspace", cmd.Group))
 		}
 	}
 
@@ -204,7 +177,7 @@ func (r *Registry) run(c *Ctx, name string, input json.RawMessage, o ExecOptions
 		}
 	}
 
-	if cmd.Confirm && p.IsMachine() {
+	if cmd.Confirm && p.IsMachine() && !o.approved { // an approved replay is the human decision the confirmation asks for
 		return r.confirm(c, cmd, input, o)
 	}
 
@@ -229,6 +202,51 @@ func (r *Registry) run(c *Ctx, name string, input json.RawMessage, o ExecOptions
 		}
 	}
 	return b, nil
+}
+
+// gate is the permission half of a call: role, scopes, finance access and, for machines, the workspace's tool
+// groups. Registry.run and Ctx.Allowed share it so they cannot drift. It runs nothing and counts no rate limit.
+func (c *Ctx) gate(cmd Command) error {
+	p := c.Principal
+	if p.Role < cmd.MinRole {
+		return ErrForbidden(fmt.Sprintf("%s requires role %s", cmd.Name, cmd.MinRole))
+	}
+	if p.Scopes != nil && !slices.ContainsFunc(p.Scopes, func(s string) bool { return s == "*" || s == string(cmd.Group) }) {
+		return ErrForbidden(fmt.Sprintf("scope %s not granted", cmd.Group))
+	}
+	if cmd.Finance {
+		if ok, err := c.FinanceAllowed(); err != nil {
+			return err
+		} else if !ok {
+			return ErrForbidden("finance access is turned off for you; ask an admin")
+		}
+	}
+	if p.IsMachine() {
+		ok, err := c.workspaceAllowsGroup(cmd.Group)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return ErrForbidden(fmt.Sprintf("tool group %s is disabled for agents in this workspace", cmd.Group))
+		}
+	}
+	return nil
+}
+
+// workspaceAllowsGroup is the workspace ceiling for agents and API keys (settings.agent_tool_groups).
+func (c *Ctx) workspaceAllowsGroup(g Group) (bool, error) {
+	var raw []byte
+	if err := c.Tx.QueryRow(c.Context, "select settings from core.workspaces where id = $1::uuid", c.Principal.WorkspaceID).Scan(&raw); err != nil {
+		return false, DB(err)
+	}
+	var s struct {
+		Groups *[]any `json:"agent_tool_groups"`
+	}
+	_ = json.Unmarshal(raw, &s)
+	if s.Groups != nil {
+		return slices.Contains(*s.Groups, any(string(g))), nil
+	}
+	return slices.Contains(defaultAgentGroups, string(g)), nil
 }
 
 // confirm: agents get a confirmation request a human must approve; the approved input is authoritative.
