@@ -278,7 +278,7 @@ function Browse({ ws, isAdmin }: { ws: string; isAdmin: boolean }) {
               <p role="alert" className="rounded-md bg-warn-bg p-2 text-[13px] text-warn">
                 Disabled in this workspace: {d.blocked_scopes.join(', ')}. Enable them in{' '}
                 <Link href={`/w/${ws}/settings`} className="underline">
-                  Settings → Tool groups
+                  Settings → Agent permissions
                 </Link>{' '}
                 or the app will not work fully.
               </p>

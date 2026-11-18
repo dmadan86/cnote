@@ -1,5 +1,6 @@
 'use client'
-import { useSearchParams } from 'next/navigation'
+import Link from 'next/link'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { useEffect, useState } from 'react'
 import { ApprovalRules } from '@/components/approvals/rules'
 import { AuditLog } from '@/components/audit/log'
@@ -15,22 +16,66 @@ import { cmd } from '@/lib/api'
 import { ago, useCmd } from '@/lib/hooks'
 import { GROUPS } from '@/lib/tool-groups'
 
-const TABS = [
-  'Workspace',
-  'Company',
-  'Members',
-  'API keys',
-  'Agents',
-  'Tool groups',
-  'Approvals',
-  'Confirmations',
-  'Connected apps',
-  'Webhooks',
-  'Usage',
-  'Audit log',
-  'Privacy',
-  'Security',
-] as const
+// Keys stay stable: they are the ?tab= values other pages and e2e link to.
+type SettingsTab = { key: string; label: string; desc: string }
+const SECTIONS: { group: string; tabs: SettingsTab[] }[] = [
+  {
+    group: 'Workspace',
+    tabs: [
+      { key: 'Workspace', label: 'General', desc: 'Workspace name, business type and modules.' },
+      {
+        key: 'Company',
+        label: 'Company profile',
+        desc: 'Legal name, GSTIN, PAN, bank and branches printed on your documents.',
+      },
+      { key: 'Members', label: 'Members', desc: 'Who is in this workspace and what they can do.' },
+      { key: 'Usage', label: 'Usage', desc: 'What this workspace has used this month.' },
+    ],
+  },
+  {
+    group: 'Approvals',
+    tabs: [
+      {
+        key: 'Approvals',
+        label: 'Approval rules',
+        desc: 'Which payments and documents need someone to approve them first.',
+      },
+      {
+        key: 'Confirmations',
+        label: 'Agent confirmations',
+        desc: 'Actions agents asked to take that are waiting for you.',
+      },
+    ],
+  },
+  {
+    group: 'AI & integrations',
+    tabs: [
+      { key: 'Agents', label: 'Agents', desc: 'AI agents that work in this workspace.' },
+      { key: 'Tool groups', label: 'Agent permissions', desc: 'What agents and API keys are allowed to do.' },
+      { key: 'Connected apps', label: 'Connected apps', desc: 'Apps you signed in to with C Note.' },
+      { key: 'API keys', label: 'API keys', desc: 'Keys for scripts and other software.' },
+      { key: 'Webhooks', label: 'Webhooks', desc: 'Tell other systems when something changes here.' },
+    ],
+  },
+  {
+    group: 'Security & privacy',
+    tabs: [
+      {
+        key: 'Security',
+        label: 'Sign-in & security',
+        desc: 'Two-step sign-in, single sign-on and active sessions.',
+      },
+      {
+        key: 'Privacy',
+        label: 'Privacy',
+        desc: 'Personal data requests under the DPDP Act: export and erasure.',
+      },
+      { key: 'Audit log', label: 'Audit log', desc: 'A record of who changed what, and when.' },
+    ],
+  },
+]
+const ALL = SECTIONS.flatMap((s) => s.tabs)
+const TABS = ALL.map((t) => t.key)
 type TabName = (typeof TABS)[number]
 
 type Ws = {
@@ -429,50 +474,76 @@ function UsageTab({ ws }: { ws: string }) {
 
 export default function Settings() {
   const { ws } = useShell()
-  const [tab, setTab] = useState<TabName>('Workspace')
-  // home tile: /settings?tab=Confirmations
+  const router = useRouter()
   const want = useSearchParams().get('tab')
-  useEffect(() => {
-    const t = TABS.find((x) => x === want)
-    if (t) setTab(t)
-  }, [want])
+  // unknown or missing ?tab= falls back to General
+  const tab = (TABS.find((x) => x === want) ?? 'Workspace') as TabName
+  const cur = ALL.find((t) => t.key === tab) ?? ALL[0]
+  const href = (k: string) => `/w/${ws}/settings?tab=${encodeURIComponent(k)}`
   return (
-    <div className="mx-auto max-w-3xl px-6 py-8">
-      <h1 className="mb-4 text-xl font-semibold">Settings</h1>
-      <div
-        role="tablist"
-        aria-label="Settings sections"
-        className="mb-6 flex flex-wrap gap-1 border-b border-line"
+    <div className="mx-auto flex max-w-[1080px] gap-10 px-6 py-8">
+      <nav
+        aria-label="Settings"
+        className="sticky top-6 hidden max-h-[calc(100vh-6rem)] w-52 shrink-0 self-start overflow-y-auto md:block"
       >
-        {TABS.map((t) => (
-          <button
-            key={t}
-            type="button"
-            role="tab"
-            aria-selected={tab === t}
-            onClick={() => setTab(t)}
-            className="px-3 py-2 text-[13px] text-muted hover:text-fg aria-selected:border-b-2 aria-selected:border-accent aria-selected:font-medium aria-selected:text-fg"
-          >
-            {t}
-          </button>
+        <h1 className="mb-4 px-2 text-xl font-semibold">Settings</h1>
+        {SECTIONS.map((s) => (
+          <div key={s.group} className="mb-4">
+            <div className="mb-1 px-2 text-[11px] font-medium uppercase tracking-wide text-muted">
+              {s.group}
+            </div>
+            <ul>
+              {s.tabs.map((t) => (
+                <li key={t.key}>
+                  <Link
+                    href={href(t.key)}
+                    aria-current={t.key === tab ? 'page' : undefined}
+                    className="block rounded-md px-2 py-1.5 text-[13px] text-muted hover:bg-hover hover:text-fg aria-[current=page]:bg-hover aria-[current=page]:font-medium aria-[current=page]:text-fg"
+                  >
+                    {t.label}
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </div>
         ))}
-      </div>
-      <div role="tabpanel">
-        {tab === 'Workspace' && <WorkspaceTab ws={ws} />}
-        {tab === 'Company' && <CompanyTab ws={ws} />}
-        {tab === 'Members' && <MembersTab ws={ws} />}
-        {tab === 'API keys' && <KeysTab ws={ws} />}
-        {tab === 'Agents' && <AgentsTab ws={ws} />}
-        {tab === 'Tool groups' && <GroupsTab ws={ws} />}
-        {tab === 'Approvals' && <ApprovalRules ws={ws} />}
-        {tab === 'Confirmations' && <ConfirmationsTab ws={ws} />}
-        {tab === 'Connected apps' && <AppsTab ws={ws} />}
-        {tab === 'Webhooks' && <HooksTab ws={ws} />}
-        {tab === 'Usage' && <UsageTab ws={ws} />}
-        {tab === 'Audit log' && <AuditLog ws={ws} />}
-        {tab === 'Privacy' && <Privacy ws={ws} />}
-        {tab === 'Security' && <SignInSecurity ws={ws} />}
-      </div>
+      </nav>
+      <main className="min-w-0 flex-1">
+        <label className="mb-6 block md:hidden">
+          <span className="mb-1 block text-[12px] text-muted">Settings section</span>
+          <select className={inputCls} value={tab} onChange={(e) => router.push(href(e.target.value))}>
+            {SECTIONS.map((s) => (
+              <optgroup key={s.group} label={s.group}>
+                {s.tabs.map((t) => (
+                  <option key={t.key} value={t.key}>
+                    {t.label}
+                  </option>
+                ))}
+              </optgroup>
+            ))}
+          </select>
+        </label>
+        <header className="mb-6 border-b border-line pb-4">
+          <h2 className="text-lg font-semibold">{cur.label}</h2>
+          <p className="mt-1 text-[13px] text-muted">{cur.desc}</p>
+        </header>
+        <div className="max-w-3xl">
+          {tab === 'Workspace' && <WorkspaceTab ws={ws} />}
+          {tab === 'Company' && <CompanyTab ws={ws} />}
+          {tab === 'Members' && <MembersTab ws={ws} />}
+          {tab === 'API keys' && <KeysTab ws={ws} />}
+          {tab === 'Agents' && <AgentsTab ws={ws} />}
+          {tab === 'Tool groups' && <GroupsTab ws={ws} />}
+          {tab === 'Approvals' && <ApprovalRules ws={ws} />}
+          {tab === 'Confirmations' && <ConfirmationsTab ws={ws} />}
+          {tab === 'Connected apps' && <AppsTab ws={ws} />}
+          {tab === 'Webhooks' && <HooksTab ws={ws} />}
+          {tab === 'Usage' && <UsageTab ws={ws} />}
+          {tab === 'Audit log' && <AuditLog ws={ws} />}
+          {tab === 'Privacy' && <Privacy ws={ws} />}
+          {tab === 'Security' && <SignInSecurity ws={ws} />}
+        </div>
+      </main>
     </div>
   )
 }
