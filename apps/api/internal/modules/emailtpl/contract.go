@@ -12,6 +12,7 @@ type Override struct {
 // Rendered is what callers hand to mailer.Send.
 type Rendered struct {
 	Subject  string
+	Body     string // template body with values filled in, no link append, sign-off or footer (what a one-off edit starts from)
 	Text     string
 	HTML     string
 	FromName string

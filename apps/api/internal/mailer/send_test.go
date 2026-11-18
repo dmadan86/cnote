@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -13,6 +14,7 @@ import (
 type sink struct {
 	mu         sync.Mutex
 	from, data string
+	badQuit    bool
 }
 
 func startSink(t *testing.T, eightBit bool) *sink {
@@ -65,8 +67,14 @@ func startSink(t *testing.T, eightBit bool) *sink {
 						s.data = b.String()
 						s.mu.Unlock()
 						w("250 queued")
+					case strings.HasPrefix(cmd, "AUTH"):
+						w("235 ok")
 					case cmd == "QUIT":
-						w("221 bye")
+						if s.badQuit {
+							w("500 no quit")
+						} else {
+							w("221 bye")
+						}
 						return
 					default:
 						w("250 ok")
@@ -127,5 +135,28 @@ func TestSendRejects(t *testing.T) {
 	t.Setenv("EMAIL_FROM", "")
 	if _, err := Send(context.Background(), Mail{To: "a@b.test", Text: "x"}); err != ErrNotConfigured {
 		t.Errorf("got %v", err)
+	}
+}
+
+func TestAuthRequiresTLS(t *testing.T) {
+	s := startSink(t, false) // offers no STARTTLS
+	t.Setenv("EMAIL_FROM", "billing@example.test")
+	plain := strings.Replace(os.Getenv("SMTP_URL"), "smtp://", "smtp://user:pw@", 1)
+	t.Setenv("SMTP_URL", plain)
+	if _, err := Send(context.Background(), Mail{To: "cust@example.test", Subject: "Hi", Text: "x"}); err == nil || !strings.Contains(err.Error(), "STARTTLS") || s.data != "" {
+		t.Fatalf("credentials went out in cleartext: err=%v data=%q", err, s.data)
+	}
+	t.Setenv("SMTP_URL", plain+"?tls=none")
+	if _, err := Send(context.Background(), Mail{To: "cust@example.test", Subject: "Hi", Text: "x"}); err != nil || s.data == "" {
+		t.Fatalf("explicit tls=none must still send: %v", err)
+	}
+}
+
+func TestQuitErrorAfterDataIsNotAFailure(t *testing.T) {
+	s := startSink(t, false)
+	s.badQuit = true
+	t.Setenv("EMAIL_FROM", "billing@example.test")
+	if _, err := Send(context.Background(), Mail{To: "cust@example.test", Subject: "Hi", Text: "x"}); err != nil || s.data == "" {
+		t.Fatalf("delivered mail reported as failed: %v", err)
 	}
 }

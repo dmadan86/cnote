@@ -444,10 +444,12 @@ func compose(c *command.Ctx, d doc, v in, event, noteID, link string) (emailtpl.
 	var o *emailtpl.Override
 	switch {
 	case v.Message != nil && strings.TrimSpace(*v.Message) != "":
-		o = &emailtpl.Override{Body: *v.Message} // the link is appended when the text has no link placeholder
+		// The sample-link marker (from the preview) becomes the real link here; with no marker the link is appended.
+		key := map[string]string{"invoice": "invoice.link", "quotation": "quote.link", "receipt": "receipt.link"}[d.kind]
+		o = &emailtpl.Override{Body: strings.ReplaceAll(*v.Message, sampleLink, "{{"+key+"}}")}
 	case event == "invoice.sent" || event == "quote.sent":
 		var has bool
-		if err := c.Tx.QueryRow(c.Context, `select exists(select 1 from core.email_templates where workspace_id=$1::uuid and event=$2)`, c.WorkspaceID(), event).Scan(&has); err != nil {
+		if err := c.Tx.QueryRow(c.Context, `select exists(select 1 from core.email_templates where workspace_id=$1::uuid and event=$2 and customised)`, c.WorkspaceID(), event).Scan(&has); err != nil {
 			return emailtpl.Rendered{}, command.DB(err)
 		}
 		if !has {
@@ -505,12 +507,11 @@ func preview(c *command.Ctx, input json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	v.Subject, v.Message = nil, nil
-	r, err := compose(c, d, v, event, v.NoteID, sampleLink)
+	r, err := compose(c, d, v, event, v.NoteID, sampleLink) // v.Subject and v.Message are the dialog's unsaved edits
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{"event": event, "subject": r.Subject, "text": r.Text, "html": r.HTML, "to": d.email}, nil
+	return map[string]any{"event": event, "subject": r.Subject, "body": r.Body, "text": r.Text, "html": r.HTML, "to": d.email}, nil
 }
 
 func email(c *command.Ctx, input json.RawMessage) (any, error) {

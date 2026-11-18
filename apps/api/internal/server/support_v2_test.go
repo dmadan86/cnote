@@ -2,6 +2,7 @@ package server_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -519,4 +520,25 @@ func TestTicketMessagesFollowSubjectExportAndErase(t *testing.T) {
 	}
 	b.ok("data.erase_subject", map[string]any{"contact_id": b.contact, "reason": "customer request"})
 	eq(t, b.dbStrings(b.owner.ws, "select body from crm.ticket_messages"), []string{"[erased]"})
+}
+
+func TestPortalSignInIgnoresTicketReplyTemplate(t *testing.T) {
+	b := newBT(t, false)
+	ws := b.owner.ws
+	b.sqlArgs("update crm.contacts set email='cust@example.test' where note_id=$1::uuid", b.contact)
+	sink := startSMTP(t)
+	t.Setenv("SMTP_URL", "smtp://"+sink.ln.Addr().String())
+	t.Setenv("EMAIL_FROM", "support@acme.example.test")
+	b.ticket("Mine", nil)
+	b.ok("ticket_channels.set", map[string]any{"portal_enabled": true})
+	// a stored body that lacks the reply text (the save command refuses this, so write it directly)
+	b.sqlArgs(`insert into core.email_templates(workspace_id,event,subject,body) values ($1::uuid,'ticket.reply','CUSTOM SUBJECT','CUSTOM BODY ONLY')`, ws)
+	// direct call: the HTTP route shares a process-wide per-IP limiter with the other portal test
+	if err := leads.PortalRequestLink(context.Background(), b.pool, ws, "cust@example.test"); err != nil {
+		t.Fatal(err)
+	}
+	m := b.waitMails(sink, 1)[0]
+	if !strings.Contains(m, "/verify#") || strings.Contains(m, "CUSTOM BODY ONLY") || strings.Contains(m, "CUSTOM SUBJECT") {
+		t.Fatalf("portal mail used the editable ticket.reply template: %q", m)
+	}
 }

@@ -127,13 +127,17 @@ type plainAuth struct{ user, pass string }
 func (a plainAuth) Start(*smtp.ServerInfo) (string, []byte, error) {
 	return "PLAIN", []byte("\x00" + a.user + "\x00" + a.pass), nil
 }
-func (plainAuth) Next([]byte, bool) ([]byte, error) {
+func (plainAuth) Next(_ []byte, more bool) ([]byte, error) {
+	if !more { // net/smtp calls Next with the 235 success line too
+		return nil, nil
+	}
 	return nil, errors.New("unexpected server challenge")
 }
 
 // Deliver runs one SMTP dialogue: envelope MAIL FROM is the bare address `from`; build(eightBit) makes the data.
 // smtp_url follows lettre's from_url: smtps:// is implicit TLS (465), smtp:// is cleartext (25) unless ?tls=required
-// (STARTTLS mandatory) or ?tls=opportunistic; with credentials and no ?tls, STARTTLS is used when offered.
+// (STARTTLS mandatory) or ?tls=opportunistic; with credentials and no ?tls, STARTTLS is mandatory so AUTH PLAIN never
+// goes out in cleartext (?tls=opportunistic or ?tls=none explicitly accepts that).
 func Deliver(ctx context.Context, smtpURL, from, to string, build func(eightBit bool) []byte) error {
 	u, err := url.Parse(smtpURL)
 	if err != nil || u.Hostname() == "" {
@@ -170,7 +174,7 @@ func Deliver(ctx context.Context, smtpURL, from, to string, build func(eightBit 
 	defer cl.Close()
 	mode := u.Query().Get("tls")
 	if mode == "" && u.User != nil {
-		mode = "opportunistic"
+		mode = "required"
 	}
 	if !implicit && (mode == "required" || mode == "opportunistic") {
 		if ok, _ := cl.Extension("STARTTLS"); ok {
@@ -204,5 +208,7 @@ func Deliver(ctx context.Context, smtpURL, from, to string, build func(eightBit 
 	if err := w.Close(); err != nil {
 		return err
 	}
-	return cl.Quit()
+	// The server accepted DATA: the mail is delivered whatever QUIT says.
+	_ = cl.Quit()
+	return nil
 }

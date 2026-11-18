@@ -5,8 +5,7 @@ import { btnPrimary, ErrorText, Field, inputCls } from '@/components/ui'
 import { cmd } from '@/lib/api'
 import { EmailFrame, type Preview } from './preview'
 
-type Share = Preview & { event: string; to: string }
-const SAMPLE_LINK = '(link created when you send)'
+type Share = Preview & { event: string; to: string; body: string }
 const WORDING = ['Invoice sent', 'Reminder 1: friendly', 'Reminder 2: second', 'Reminder 3: final']
 
 /** Email tab of the Send dialog: wording picked by state, editable for this one send, server preview. */
@@ -32,18 +31,21 @@ export function SendEmail({
   const [to, setTo] = useState('')
   const [subject, setSubject] = useState('')
   const [message, setMessage] = useState('')
+  const [html, setHtml] = useState('')
   const [edited, setEdited] = useState({ subject: false, message: false })
   useEffect(() => {
     let live = true
     setP(undefined)
+    setEdited({ subject: false, message: false })
     cmd<Share>(ws, 'share.preview', { note_id: noteId, ...(level ? { reminder_level: level } : {}) })
       .then((d) => {
         if (!live) return
         setP(d)
         setErr(undefined)
         setTo((t) => t || d.to)
+        setHtml(d.html)
         setSubject(d.subject)
-        setMessage(d.text)
+        setMessage(d.body)
         setEdited({ subject: false, message: false })
       })
       .catch((e) => live && setErr((e as Error).message))
@@ -51,6 +53,25 @@ export function SendEmail({
       live = false
     }
   }, [ws, noteId, level])
+  // unsaved edits re-render the preview (server side, so signature, footer and link stay right)
+  useEffect(() => {
+    if (!edited.subject && !edited.message) return
+    let live = true
+    const t = setTimeout(() => {
+      cmd<Share>(ws, 'share.preview', {
+        note_id: noteId,
+        ...(level ? { reminder_level: level } : {}),
+        ...(edited.subject && subject.trim() ? { subject } : {}),
+        ...(edited.message && message.trim() ? { message } : {}),
+      })
+        .then((d) => live && setHtml(d.html))
+        .catch((e) => live && setErr((e as Error).message))
+    }, 400)
+    return () => {
+      live = false
+      clearTimeout(t)
+    }
+  }, [ws, noteId, level, edited, subject, message])
   const noEmail = p && !p.to && !to.trim()
   return (
     <form
@@ -61,8 +82,8 @@ export function SendEmail({
         onSend({
           to: to.trim(),
           ...(edited.subject && { subject }),
-          // the sample-link marker is dropped: the server appends the real link when the text has none
-          ...(edited.message && { message: message.replace(SAMPLE_LINK, '').trim() }),
+          // the server swaps the sample-link marker for the real link
+          ...(edited.message && { message }),
           ...(level && { reminder_level: level }),
         })
       }}
@@ -147,7 +168,7 @@ export function SendEmail({
           <details>
             <summary className="cursor-pointer text-[13px] text-muted hover:text-fg">Preview</summary>
             <div className="mt-2">
-              <EmailFrame html={p.html} height={300} />
+              <EmailFrame html={html} height={300} />
             </div>
           </details>
         </>

@@ -142,3 +142,31 @@ func TestSharePreviewCreatesNoLink(t *testing.T) {
 	eq(t, q["event"], "quote.sent")
 	p.errIs("share.preview", map[string]any{"note_id": p.quoteID, "reminder_level": 1}, 400, "invalid")
 }
+
+func TestSharePreviewBodyAndEditedMessage(t *testing.T) {
+	p := newPL(t)
+	sink := startSMTP(t)
+	t.Setenv("SMTP_URL", "smtp://"+sink.ln.Addr().String())
+	t.Setenv("EMAIL_FROM", "billing@acme.example.test")
+	t.Setenv("PUBLIC_WEB_URL", "https://app.example.test")
+	p.ok("workspace.update", map[string]any{"settings": map[string]any{"email_signature": "UNIQUE-SIGNOFF", "email_footer": "UNIQUE-FOOTER"}})
+	pv := p.ok("share.preview", map[string]any{"note_id": p.invID})
+	body := pv["body"].(string)
+	if !strings.Contains(body, "Thank you for your business") || !strings.Contains(body, "(link created when you send)") || strings.Contains(body, "UNIQUE-") || strings.Contains(body, "{{") {
+		t.Fatalf("body %q", body)
+	}
+	// preview takes unsaved edits
+	pv = p.ok("share.preview", map[string]any{"note_id": p.invID, "subject": "EDITED SUBJ", "message": body + " EDITED"})
+	if pv["subject"] != "EDITED SUBJ" || !strings.Contains(pv["html"].(string), "EDITED") {
+		t.Fatalf("%v", pv)
+	}
+	// sending the edited body: sign-off and footer exactly once, marker replaced by the real link
+	p.ok("share.email", map[string]any{"note_id": p.invID, "to": "customer@example.test", "message": body + " EDITED"})
+	_, _, _, text, html := parseMail(t, lastMail(t, sink))
+	if strings.Count(text, "UNIQUE-SIGNOFF") != 1 || strings.Count(text, "UNIQUE-FOOTER") != 1 || strings.Count(html, "UNIQUE-SIGNOFF") != 1 || strings.Count(html, "UNIQUE-FOOTER") != 1 {
+		t.Fatalf("signature/footer not exactly once: %q", text)
+	}
+	if strings.Contains(text, "link created when you send") || strings.Count(text, "https://app.example.test/p/") != 1 || !strings.Contains(text, "EDITED") {
+		t.Fatalf("link marker: %q", text)
+	}
+}

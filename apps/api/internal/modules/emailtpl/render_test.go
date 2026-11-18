@@ -126,3 +126,18 @@ func TestEveryDefaultPassesItsOwnCheck(t *testing.T) {
 		}
 	}
 }
+
+func TestTicketReplyAlwaysCarriesTheText(t *testing.T) {
+	ev, _ := eventOf("ticket.reply")
+	r := renderWith(ev, "s", "Stored body without the placeholder", map[string]string{"ticket.message": "AGENT TEXT"}, testBrand())
+	if !strings.Contains(r.Text, "AGENT TEXT") || !strings.Contains(r.HTML, "AGENT TEXT") {
+		t.Fatalf("agent text dropped: %q", r.Text)
+	}
+}
+
+func TestBodyHasNoSignatureOrFooterOrAppendedLink(t *testing.T) {
+	r := renderWith(inv(t), "s", "Hello {{contact.name}}", map[string]string{"contact.name": "Meera", "invoice.link": "https://app.example.com/p/t"}, testBrand())
+	if r.Body != "Hello Meera" || strings.Count(r.Text, "Acme Works Pvt Ltd") != 1 {
+		t.Fatalf("body %q text %q", r.Body, r.Text)
+	}
+}

@@ -111,7 +111,7 @@ func PortalRequestLink(ctx context.Context, pool *pgxpool.Pool, ws, email string
 	if mailer.Configured() {
 		sys := &command.Ctx{Context: ctx, Tx: tx, Principal: command.Principal{Kind: command.KindSystem, WorkspaceID: ws, Role: command.Admin}}
 		r, err := emailtpl.Render(sys, "ticket.reply", map[string]string{"ticket.subject": "Your sign-in link for " + name, "ticket.message": body},
-			&emailtpl.Override{Subject: "{{ticket.subject}}"})
+			&emailtpl.Override{Subject: "{{ticket.subject}}", Body: "{{ticket.message}}"}) // never the editable ticket.reply body
 		if err != nil {
 			slog.Warn("portal sign-in email not rendered", "error", err)
 		} else {

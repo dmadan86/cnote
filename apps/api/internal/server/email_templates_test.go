@@ -46,7 +46,25 @@ func TestEmailTemplateRolesAndVersions(t *testing.T) {
 	eq(t, e0["subject"], "Invoice {{invoice.number}}")
 	eq(t, e0["default_subject"], "Invoice {{invoice.number}} from {{workspace.name}}")
 	b.ok("email_template.reset", map[string]any{"event": "invoice.sent", "version": 2})
-	eq(t, b.ok("email_template.list", map[string]any{})["events"].([]any)[0].(map[string]any)["customised"], false)
+	e0 = b.ok("email_template.list", map[string]any{})["events"].([]any)[0].(map[string]any)
+	// the version keeps counting across a reset, and an editor that loaded before the reset is stale
+	eq(t, e0["customised"], false)
+	eq(t, e0["version"], float64(3))
+	eq(t, e0["subject"], e0["default_subject"])
+	save["version"] = 2
+	b.errIs("email_template.save", save, 409, "conflict")
+	save["version"] = 0
+	b.errIs("email_template.save", save, 409, "conflict")
+	b.errIs("email_template.reset", map[string]any{"event": "invoice.sent", "version": 2}, 409, "conflict")
+	save["version"] = 3
+	eq(t, b.ok("email_template.save", save)["template"].(map[string]any)["version"], float64(4))
+	b.ok("email_template.reset", map[string]any{"event": "invoice.sent", "version": 4})
+}
+
+func TestTicketReplyTemplateKeepsReplyText(t *testing.T) {
+	b := newBT(t, false)
+	b.errIs("email_template.save", map[string]any{"event": "ticket.reply", "subject": "s", "body": "No text here", "version": 0}, 400, "invalid")
+	b.ok("email_template.save", map[string]any{"event": "ticket.reply", "subject": "[{{ticket.ref}}] {{ticket.subject}}", "body": "Hi,\n\n{{ticket.message}}", "version": 0})
 }
 
 func TestEmailTemplateCrossTenantIsolation(t *testing.T) {

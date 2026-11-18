@@ -93,7 +93,7 @@ func Render(c *command.Ctx, event string, values map[string]string, o *Override)
 	}
 	subject, body := ev.DefaultSubject, ev.DefaultBody
 	var rs, rb string
-	err := c.Tx.QueryRow(c.Context, "select subject, body from core.email_templates where workspace_id=$1::uuid and event=$2", c.WorkspaceID(), event).Scan(&rs, &rb)
+	err := c.Tx.QueryRow(c.Context, "select subject, body from core.email_templates where workspace_id=$1::uuid and event=$2 and customised", c.WorkspaceID(), event).Scan(&rs, &rb)
 	if err == nil {
 		subject, body = rs, rb
 	} else if !errors.Is(err, pgx.ErrNoRows) {
@@ -132,8 +132,20 @@ func renderWith(ev EventInfo, subject, body string, values map[string]string, b 
 		return v
 	}
 	known := func(k string) bool { return ev.has(k) }
+	// Body is what the send dialog edits: the template with values filled in, without link append, sign-off or footer.
+	plain := placeholderRe.ReplaceAllStringFunc(strings.ReplaceAll(strings.ReplaceAll(body, "\r\n", "\n"), "\r", "\n"), func(m string) string {
+		if k := placeholderRe.FindStringSubmatch(m)[1]; known(k) {
+			return strings.ReplaceAll(val(k), "\r", "")
+		}
+		return m
+	})
+	has := func(key string) bool { return hasKey(body, key) }
+	// a support reply always carries the agent's text, whatever a stored body says
+	if ev.Event == "ticket.reply" && !has("ticket.message") {
+		body = strings.TrimRight(body, "\n ") + "\n\n{{ticket.message}}"
+	}
 	// the link is appended when the body lacks it, as before
-	if ev.LinkKey != "" && !slices.ContainsFunc(placeholderRe.FindAllStringSubmatch(body, -1), func(m []string) bool { return m[1] == ev.LinkKey }) {
+	if ev.LinkKey != "" && !has(ev.LinkKey) {
 		body = strings.TrimRight(body, "\n ") + "\n\n{{" + ev.LinkKey + "}}"
 	}
 	body = strings.ReplaceAll(strings.ReplaceAll(body, "\r\n", "\n"), "\r", "\n")
@@ -217,7 +229,7 @@ func renderWith(ev EventInfo, subject, body string, values map[string]string, b 
 		text += b.Footer + "\n"
 	}
 	text += "Sent via C Note\n"
-	return Rendered{Subject: subj, Text: text, HTML: page, FromName: b.FromName, ReplyTo: b.ReplyTo}
+	return Rendered{Subject: subj, Body: strings.TrimSpace(plain), Text: text, HTML: page, FromName: b.FromName, ReplyTo: b.ReplyTo}
 }
 
 func gstinLabel(g string) string {
@@ -235,6 +247,9 @@ func checkTemplate(ev EventInfo, subject, body string) error {
 	if n := len([]rune(body)); n < 1 || n > 10000 {
 		return command.ErrInvalid("message must be 1 to 10000 characters")
 	}
+	if ev.Event == "ticket.reply" && !hasKey(body, "ticket.message") {
+		return command.ErrInvalid("keep [Reply text] in the message")
+	}
 	for _, s := range []string{subject, body} {
 		for _, m := range placeholderRe.FindAllStringSubmatch(s, -1) {
 			if !ev.has(m[1]) {
@@ -246,4 +261,8 @@ func checkTemplate(ev EventInfo, subject, body string) error {
 		}
 	}
 	return nil
+}
+
+func hasKey(s, key string) bool {
+	return slices.ContainsFunc(placeholderRe.FindAllStringSubmatch(s, -1), func(m []string) bool { return m[1] == key })
 }

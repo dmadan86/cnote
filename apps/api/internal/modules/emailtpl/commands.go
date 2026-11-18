@@ -51,19 +51,20 @@ func list(c *command.Ctx, b json.RawMessage) (any, error) {
 	if _, _, err := decode(b, false); err != nil {
 		return nil, err
 	}
-	rows, err := c.Tx.Query(c.Context, "select event, subject, body, version from core.email_templates where workspace_id=$1::uuid", c.WorkspaceID())
+	rows, err := c.Tx.Query(c.Context, "select event, coalesce(subject,''), coalesce(body,''), customised, version from core.email_templates where workspace_id=$1::uuid", c.WorkspaceID())
 	if err != nil {
 		return nil, command.DB(err)
 	}
 	type row struct {
 		subject, body string
+		customised    bool
 		version       int
 	}
 	have := map[string]row{}
 	for rows.Next() {
 		var e string
 		var r row
-		if err := rows.Scan(&e, &r.subject, &r.body, &r.version); err != nil {
+		if err := rows.Scan(&e, &r.subject, &r.body, &r.customised, &r.version); err != nil {
 			return nil, command.DB(err)
 		}
 		have[e] = r
@@ -74,7 +75,8 @@ func list(c *command.Ctx, b json.RawMessage) (any, error) {
 	}
 	out := []map[string]any{}
 	for _, ev := range events {
-		r, custom := have[ev.Event]
+		r := have[ev.Event]
+		custom := r.customised
 		if !custom {
 			r.subject, r.body = ev.DefaultSubject, ev.DefaultBody
 		}
@@ -116,7 +118,7 @@ func save(c *command.Ctx, b json.RawMessage) (any, error) {
 		err = c.Tx.QueryRow(c.Context, `insert into core.email_templates (workspace_id, event, subject, body, version, updated_by)
 			values ($1::uuid,$2,$3,$4,1,$5::uuid) on conflict do nothing returning version`, c.WorkspaceID(), ev.Event, subject, body, c.Principal.UserID).Scan(&version)
 	} else {
-		err = c.Tx.QueryRow(c.Context, `update core.email_templates set subject=$3, body=$4, version=version+1, updated_by=$5::uuid, updated_at=now()
+		err = c.Tx.QueryRow(c.Context, `update core.email_templates set subject=$3, body=$4, customised=true, version=version+1, updated_by=$5::uuid, updated_at=now()
 			where workspace_id=$1::uuid and event=$2 and version=$6 returning version`, c.WorkspaceID(), ev.Event, subject, body, c.Principal.UserID, in.Version).Scan(&version)
 	}
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -137,7 +139,8 @@ func reset(c *command.Ctx, b json.RawMessage) (any, error) {
 		return nil, err
 	}
 	var cur int
-	err = c.Tx.QueryRow(c.Context, "select version from core.email_templates where workspace_id=$1::uuid and event=$2 for update", c.WorkspaceID(), ev.Event).Scan(&cur)
+	var custom bool
+	err = c.Tx.QueryRow(c.Context, "select version, customised from core.email_templates where workspace_id=$1::uuid and event=$2 for update", c.WorkspaceID(), ev.Event).Scan(&cur, &custom)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return map[string]any{"ok": true}, nil // already the default
 	}
@@ -147,7 +150,11 @@ func reset(c *command.Ctx, b json.RawMessage) (any, error) {
 	if cur != in.Version {
 		return nil, command.ErrConflict("someone else changed this message; reload and try again")
 	}
-	if _, err := c.Tx.Exec(c.Context, "delete from core.email_templates where workspace_id=$1::uuid and event=$2", c.WorkspaceID(), ev.Event); err != nil {
+	if !custom {
+		return map[string]any{"ok": true}, nil
+	}
+	// keep the row: the version only ever goes up
+	if _, err := c.Tx.Exec(c.Context, "update core.email_templates set subject=null, body=null, customised=false, version=version+1, updated_at=now() where workspace_id=$1::uuid and event=$2", c.WorkspaceID(), ev.Event); err != nil {
 		return nil, command.DB(err)
 	}
 	if _, err := c.Emit("email_template.reset", nil, map[string]any{"event": ev.Event}); err != nil {
