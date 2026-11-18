@@ -1,6 +1,16 @@
 'use client'
+import {
+  Archive,
+  Download,
+  FileClock,
+  History,
+  Info,
+  type LucideIcon,
+  Trash2,
+  UserSearch,
+} from 'lucide-react'
 import { useState } from 'react'
-import { btn, btnPrimary, ErrorText, Field, inputCls, Modal, Pill } from '@/components/ui'
+import { Avatar, btn, btnPrimary, EmptyState, ErrorText, Field, inputCls, Modal, Pill } from '@/components/ui'
 import { cmd } from '@/lib/api'
 import { ago, useCmd } from '@/lib/hooks'
 import { download } from './log'
@@ -19,13 +29,39 @@ type Request = {
 }
 const tone = { done: 'ok', refused: 'warn', pending: 'neutral' } as const
 
+function Card({
+  icon: Icon,
+  title,
+  desc,
+  children,
+}: {
+  icon: LucideIcon
+  title: string
+  desc: string
+  children: React.ReactNode
+}) {
+  return (
+    <section className="rounded-lg border border-line">
+      <header className="flex items-start gap-3 border-b border-line p-4">
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-line bg-hover text-muted">
+          <Icon size={16} aria-hidden />
+        </span>
+        <div>
+          <h2 className="text-[14px] font-semibold">{title}</h2>
+          <p className="mt-0.5 text-[12px] text-muted">{desc}</p>
+        </div>
+      </header>
+      <div className="space-y-3 p-4">{children}</div>
+    </section>
+  )
+}
+
 function Retention({ ws }: { ws: string }) {
   const { data, reload } = useCmd<Retention>(ws, 'audit.retention')
   const [msg, setMsg] = useState('')
   if (!data) return null
   return (
-    <section className="max-w-xl space-y-2">
-      <h2 className="text-[14px] font-semibold">Retention</h2>
+    <Card icon={Archive} title="Retention" desc="How long records are kept for reporting.">
       <form
         className="flex items-end gap-2"
         onSubmit={async (e) => {
@@ -48,7 +84,7 @@ function Retention({ ws }: { ws: string }) {
               min={1}
               max={30}
               defaultValue={data.years}
-              className={inputCls}
+              className={`${inputCls.replace('w-full ', '')} w-24`}
             />
           )}
         </Field>
@@ -56,7 +92,8 @@ function Retention({ ws }: { ws: string }) {
           Save
         </button>
       </form>
-      <p className="text-[13px] text-muted">
+      <p className="flex gap-2 text-[12px] text-muted">
+        <Info size={14} aria-hidden className="mt-px shrink-0" />
         Used for reporting only; changing it does not delete anything. {data.events_older.toLocaleString()}{' '}
         audit events are older than {data.years} years. GST law asks for records for 72 months after the
         annual return due date and the Companies Act for 8 years; confirm the period with your CA.
@@ -64,7 +101,7 @@ function Retention({ ws }: { ws: string }) {
       <p role="status" className="text-[13px]">
         {msg}
       </p>
-    </section>
+    </Card>
   )
 }
 
@@ -183,8 +220,11 @@ function Subject({ ws, done }: { ws: string; done: () => void }) {
         .slice(0, 8)
     : []
   return (
-    <section className="max-w-xl space-y-2">
-      <h2 className="text-[14px] font-semibold">A person's data</h2>
+    <Card
+      icon={UserSearch}
+      title="A person's data"
+      desc="Under the DPDP Act a person can ask for a copy of their data or to be erased. Find them here."
+    >
       <Field label="Find a contact">
         {(id) => (
           <input
@@ -208,19 +248,22 @@ function Subject({ ws, done }: { ws: string; done: () => void }) {
           <li key={c.id}>
             <button
               type="button"
-              className="w-full px-3 py-1.5 text-left hover:bg-hover"
+              className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-hover"
               onClick={() => setPick(c)}
             >
+              <Avatar name={c.name} size={22} />
               {c.name} <span className="text-muted">{c.email ?? c.id.slice(0, 8)}</span>
             </button>
           </li>
         ))}
       </ul>
       {pick && (
-        <div className="space-y-2 rounded-md border border-line p-3">
-          <p>
-            Selected: <strong>{pick.name}</strong> <span className="text-muted">{pick.email}</span>
-          </p>
+        <div className="flex flex-wrap items-center gap-3 rounded-md border border-line bg-side p-3">
+          <Avatar name={pick.name} size={32} />
+          <div className="min-w-0 flex-1">
+            <div className="font-medium">{pick.name}</div>
+            <div className="text-[12px] text-muted">{pick.email ?? 'No email'}</div>
+          </div>
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
@@ -237,10 +280,10 @@ function Subject({ ws, done }: { ws: string; done: () => void }) {
                 }
               }}
             >
-              Export their data (JSON)
+              <Download size={14} aria-hidden /> Export their data (JSON)
             </button>
             <button type="button" className={`${btn} border-bad text-bad`} onClick={() => setErase(true)}>
-              Erase...
+              <Trash2 size={14} aria-hidden /> Erase...
             </button>
           </div>
         </div>
@@ -262,34 +305,46 @@ function Subject({ ws, done }: { ws: string; done: () => void }) {
           }}
         />
       )}
-    </section>
+    </Card>
   )
 }
 
 export function Privacy({ ws }: { ws: string }) {
   const { data, reload } = useCmd<Request[]>(ws, 'data.request_list')
   return (
-    <div className="space-y-8">
-      <Retention ws={ws} />
+    <div className="space-y-6">
       <Subject ws={ws} done={reload} />
-      <section className="space-y-2">
-        <h2 className="text-[14px] font-semibold">Requests</h2>
-        {data?.length === 0 && <p className="text-muted">No export or erase requests yet.</p>}
-        <ul className="divide-y divide-line rounded-md border border-line">
-          {data?.map((r) => (
-            <li key={r.id} className="space-y-0.5 px-3 py-2 text-[13px]">
-              <span className="font-medium">{r.kind === 'erase' ? 'Erase' : 'Export'}</span>{' '}
-              {r.subject_name ?? 'removed contact'} <Pill tone={tone[r.status]}>{r.status}</Pill>
-              <span className="text-muted">
-                {' '}
-                {ago(r.created_at)} by {r.requested_by_name ?? 'someone'}
-                {r.result.mode ? `, ${r.result.mode} erase` : ''}
-                {r.reason ? `: ${r.reason}` : ''}
-              </span>
-            </li>
-          ))}
-        </ul>
-      </section>
+      <Card icon={History} title="Requests" desc="Every export and erase, who asked for it and why.">
+        {data?.length === 0 ? (
+          <EmptyState icon={FileClock} title="No requests yet" compact>
+            Exports and erasures you make above are recorded here.
+          </EmptyState>
+        ) : (
+          <ul className="-mx-4 -my-3 divide-y divide-line">
+            {data?.map((r) => (
+              <li key={r.id} className="flex items-start gap-3 px-4 py-3 text-[13px]">
+                <span className="mt-0.5 text-muted">
+                  {r.kind === 'erase' ? <Trash2 size={15} aria-hidden /> : <Download size={15} aria-hidden />}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-medium">
+                      {r.kind === 'erase' ? 'Erase' : 'Export'} · {r.subject_name ?? 'removed contact'}
+                    </span>
+                    <Pill tone={tone[r.status]}>{r.status}</Pill>
+                  </div>
+                  <p className="mt-0.5 text-[12px] text-muted">
+                    {ago(r.created_at)} by {r.requested_by_name ?? 'someone'}
+                    {r.result.mode ? `, ${r.result.mode} erase` : ''}
+                    {r.reason ? `: ${r.reason}` : ''}
+                  </p>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Card>
+      <Retention ws={ws} />
     </div>
   )
 }

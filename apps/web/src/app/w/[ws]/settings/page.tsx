@@ -15,6 +15,7 @@ import {
   Settings2,
   ShieldCheck,
   Sparkles,
+  UserPlus,
   Users,
   Webhook,
   Zap,
@@ -31,7 +32,7 @@ import { HooksTab } from '@/components/hooks-settings'
 import { Secret } from '@/components/secret'
 import { SignInSecurity } from '@/components/security/sign-in'
 import { useShell } from '@/components/shell'
-import { btn, btnPrimary, EmptyState, ErrorText, Field, inputCls } from '@/components/ui'
+import { Avatar, btn, btnPrimary, EmptyState, ErrorText, Field, inputCls, Pill } from '@/components/ui'
 import { cmd } from '@/lib/api'
 import { ago, useCmd } from '@/lib/hooks'
 import { GROUPS } from '@/lib/tool-groups'
@@ -208,58 +209,146 @@ function WorkspaceTab({ ws }: { ws: string }) {
   )
 }
 
+const ROLES = [
+  { value: 'admin', label: 'Admin', hint: 'Manages settings, members and money' },
+  { value: 'member', label: 'Member', hint: 'Works in spaces they can see' },
+  { value: 'guest', label: 'Guest', hint: 'Sees only what is shared with them' },
+]
+
 function MembersTab({ ws }: { ws: string }) {
+  const { me } = useShell()
   const { data, reload } = useCmd<{ user_id: string; email: string; name: string; role: string }[]>(
     ws,
     'member.list',
   )
   const [err, setErr] = useState<string>()
+  const myRole = me.workspaces.find((w) => w.id === ws)?.role
+  const canManage = myRole === 'owner' || myRole === 'admin'
+  const setRole = async (user_id: string, role: string) => {
+    try {
+      await cmd(ws, 'member.update', { user_id, role })
+      setErr(undefined)
+      reload()
+    } catch (x) {
+      setErr((x as Error).message)
+    }
+  }
   return (
-    <div className="space-y-4">
-      <ul className="divide-y divide-line rounded-md border border-line">
-        {data?.map((m) => (
-          <li key={m.user_id} className="flex items-center gap-3 px-3 py-2">
-            <span className="font-medium">{m.name}</span>
-            <span className="text-muted">{m.email}</span>
-            <span className="ml-auto rounded bg-hover px-1.5 text-[12px]">{m.role}</span>
-          </li>
-        ))}
-      </ul>
-      <form
-        className="flex max-w-xl items-end gap-2"
-        onSubmit={async (e) => {
-          e.preventDefault()
-          const form = e.currentTarget
-          const f = new FormData(form)
-          try {
-            await cmd(ws, 'member.add', { email: f.get('email'), role: f.get('role') })
-            form.reset()
-            setErr(undefined)
-            reload()
-          } catch (x) {
-            setErr((x as Error).message)
-          }
-        }}
-      >
-        <div className="flex-1">
-          <Field label="Email">
-            {(id) => <input id={id} name="email" type="email" required className={inputCls} />}
-          </Field>
-        </div>
-        <Field label="Role">
-          {(id) => (
-            <select id={id} name="role" defaultValue="member" className={inputCls}>
-              <option>admin</option>
-              <option>member</option>
-              <option>guest</option>
-            </select>
-          )}
-        </Field>
-        <button type="submit" className={btnPrimary}>
-          Add member
-        </button>
-      </form>
+    <div className="space-y-6">
+      {canManage && (
+        <form
+          className="rounded-lg border border-line p-4"
+          onSubmit={async (e) => {
+            e.preventDefault()
+            const form = e.currentTarget
+            const f = new FormData(form)
+            try {
+              await cmd(ws, 'member.add', { email: f.get('email'), role: f.get('role') })
+              form.reset()
+              setErr(undefined)
+              reload()
+            } catch (x) {
+              setErr((x as Error).message)
+            }
+          }}
+        >
+          <h3 className="text-[14px] font-medium">Invite someone</h3>
+          <p className="mt-0.5 mb-3 text-[12px] text-muted">
+            They join this workspace with the role you pick.
+          </p>
+          <div className="flex flex-wrap items-end gap-2">
+            <div className="min-w-56 flex-1">
+              <Field label="Email">
+                {(id) => (
+                  <input
+                    id={id}
+                    name="email"
+                    type="email"
+                    required
+                    placeholder="name@company.com"
+                    className={inputCls}
+                  />
+                )}
+              </Field>
+            </div>
+            <Field label="Role">
+              {(id) => (
+                <select id={id} name="role" defaultValue="member" className={inputCls}>
+                  {ROLES.map((r) => (
+                    <option key={r.value} value={r.value}>
+                      {r.label} · {r.hint}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </Field>
+            <button type="submit" className={btnPrimary}>
+              <UserPlus size={14} aria-hidden /> Add member
+            </button>
+          </div>
+        </form>
+      )}
       <ErrorText error={err} />
+      <section>
+        <h3 className="mb-2 text-[13px] font-medium">
+          People <span className="font-normal text-muted">· {data?.length ?? 0}</span>
+        </h3>
+        <div className="overflow-hidden rounded-lg border border-line">
+          <table className="w-full text-left text-[13px]">
+            <thead className="border-b border-line bg-side text-[12px] text-muted">
+              <tr>
+                <th scope="col" className="px-4 py-2 font-medium">
+                  Name
+                </th>
+                <th scope="col" className="w-44 px-4 py-2 font-medium">
+                  Role
+                </th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-line">
+              {data?.map((m) => (
+                <tr key={m.user_id}>
+                  <td className="px-4 py-2.5">
+                    <div className="flex items-center gap-3">
+                      <Avatar name={m.name} size={28} />
+                      <div className="min-w-0">
+                        <div className="truncate font-medium">
+                          {m.name}
+                          {m.user_id === me.user.id && (
+                            <span className="ml-1.5 font-normal text-muted">(you)</span>
+                          )}
+                        </div>
+                        <div className="truncate text-[12px] text-muted">{m.email}</div>
+                      </div>
+                    </div>
+                  </td>
+                  <td className="px-4 py-2.5">
+                    {canManage && m.role !== 'owner' && m.user_id !== me.user.id ? (
+                      <select
+                        aria-label={`Role of ${m.name}`}
+                        className={`${inputCls.replace('w-full ', '')} w-32 py-1 text-[13px]`}
+                        value={m.role}
+                        onChange={(e) => setRole(m.user_id, e.target.value)}
+                      >
+                        {ROLES.map((r) => (
+                          <option key={r.value} value={r.value}>
+                            {r.label}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <Pill>{m.role.charAt(0).toUpperCase() + m.role.slice(1)}</Pill>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <p className="mt-2 text-[12px] text-muted">
+          Departments, managers and leaving dates are on the People page.
+        </p>
+      </section>
     </div>
   )
 }
