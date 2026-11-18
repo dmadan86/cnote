@@ -43,6 +43,7 @@ var SubjectCatalog = map[string]string{
 	"billing.quotations.converted_item_id":         "work items",
 	"billing.quotations.note_id":                   "export (as the quotation)",
 	"billing.recurring_invoices.note_id":           "export (as the schedule)",
+	"billing.reminder_prefs.note_id":               "payment reminder pause or opt-out switch: no personal data, deleted with the page",
 	"billing.recurring_invoice_lines.item_note_id": "catalogue items, not people",
 	"billing.purchase_bills.note_id":               "export (as the bill)",
 	"billing.expenses.note_id":                     "staff expense claims and company spending; names no contact",

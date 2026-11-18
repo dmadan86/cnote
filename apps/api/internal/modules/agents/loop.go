@@ -544,7 +544,7 @@ func (e *runExec) callTool(ctx context.Context, call ai.ToolCall) (ai.ToolResult
 			return command.DB(err)
 		}
 		res = ai.ToolResult{CallID: call.ID, Content: text, IsError: isErr}
-		if e.run.trigger == "event" && !isErr && outcome == "ok" {
+		if (e.run.trigger == "event" || e.run.trigger == "schedule" || e.run.trigger == "manual") && !isErr && outcome == "ok" { // customer text read by unattended runs is data
 			res.Content = untrusted(text)
 		}
 		return nil

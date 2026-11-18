@@ -1,6 +1,6 @@
 // AI employees: shapes of the agent.* commands (docs/design/agent-runtime.md section 2.3, as revised by section 16).
 
-export type AgentTemplateKey = 'ask' | 'briefing' | 'lead_responder' | 'support'
+export type AgentTemplateKey = 'ask' | 'briefing' | 'lead_responder' | 'support' | 'collections'
 export type ModelTier = 'reasoning' | 'routine'
 export type RunTrigger = 'ask' | 'chat' | 'event' | 'schedule' | 'manual'
 export type RunStatus = 'queued' | 'running' | 'held' | 'completed' | 'failed' | 'cancelled' | 'skipped'

@@ -68,6 +68,16 @@ var events = []EventInfo{
 		DefaultBody: "Hello {{contact.name}},\n\nThank you for your business. Here is invoice **{{invoice.number}}** for **{{invoice.total}}**, due on {{invoice.due_date}}.\n\n" +
 			"You can view it and pay online here:\n{{invoice.link}}\n\nIf you have any questions, just reply to this email.",
 		LinkKey: "invoice.link", Fields: fields(invoiceFields)},
+	{Event: "invoice.reminder_due_soon", Label: "Before the due date", Group: gReminders, SentWhen: "Sent automatically a few days before an invoice is due.",
+		DefaultSubject: "Invoice {{invoice.number}} is due on {{invoice.due_date}}",
+		DefaultBody: "Hello {{contact.name}},\n\nA friendly heads-up that invoice **{{invoice.number}}** for **{{invoice.balance}}** is due on {{invoice.due_date}}.\n\n" +
+			"You can view and pay it online here:\n{{invoice.link}}\n\nIf you have already paid, thank you, please ignore this message.",
+		LinkKey: "invoice.link", Fields: fields(invoiceFields)},
+	{Event: "invoice.reminder_due_today", Label: "On the due date", Group: gReminders, SentWhen: "Sent automatically on the day an invoice is due.",
+		DefaultSubject: "Invoice {{invoice.number}} is due today",
+		DefaultBody: "Hello {{contact.name}},\n\nInvoice **{{invoice.number}}** for **{{invoice.balance}}** is due today.\n\n" +
+			"You can view and pay it online here:\n{{invoice.link}}\n\nIf you have already paid, thank you, please ignore this message.",
+		LinkKey: "invoice.link", Fields: fields(invoiceFields)},
 	{Event: "invoice.reminder_1", Label: "Friendly reminder", Group: gReminders, SentWhen: "You send a first reminder for an unpaid invoice.",
 		DefaultSubject: "Friendly reminder: invoice {{invoice.number}}",
 		DefaultBody: "Hello {{contact.name}},\n\nA quick reminder that invoice **{{invoice.number}}** still has **{{invoice.balance}}** to be paid. It was due on {{invoice.due_date}}.\n\n" +

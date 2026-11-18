@@ -14,7 +14,7 @@ test('Settings → Agents: install, toggle, run now, and the lead responder reac
   expect(ch.ok()).toBeTruthy()
   await page.goto(`${base}/settings?tab=Agents`)
   const cards = page.getByRole('listitem').filter({ has: page.getByRole('button', { name: 'Install' }) })
-  await expect(cards).toHaveCount(4)
+  await expect(cards).toHaveCount(5)
 
   // Daily briefing: pick a channel.
   await cards.filter({ hasText: 'Daily briefing' }).getByRole('button', { name: 'Install' }).click()

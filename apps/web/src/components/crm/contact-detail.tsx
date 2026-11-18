@@ -6,6 +6,7 @@ import { newDraft } from '@/components/billing/bits'
 import { type Contact, type Deal, type Invoice, money, stateName } from '@/components/billing/fmt'
 import { StatusPill } from '@/components/billing/invoice-list'
 import { AdvancesCard } from '@/components/billing/receipts'
+import { Switch } from '@/components/messages/reminders'
 import { useShell } from '@/components/shell'
 import { UseTemplateButton } from '@/components/templates/use-template'
 import { btn, btnPrimary, ErrorText, Pill } from '@/components/ui'
@@ -208,6 +209,19 @@ export function ContactDetail({ id }: { id: string }) {
           <Row k="State" v={k.state_code ? `${k.state_code} ${stateName(k.state_code)}` : null} />
           <Row k="Address" v={k.billing_address} />
         </dl>
+        <div className="mt-3 flex items-center gap-3 text-[13px]">
+          <Switch
+            label="Don't send payment reminders"
+            checked={!!(k as { no_reminders?: boolean }).no_reminders}
+            onChange={(opt_out) =>
+              cmd(ws, 'contact.reminders_opt_out', { id, opt_out }).then(
+                () => c.reload(),
+                (x) => setErr((x as Error).message),
+              )
+            }
+          />
+          Don't send payment reminders
+        </div>
         <div className="mt-3 flex flex-wrap gap-2">
           <button type="button" className={btn} onClick={() => setEditing(true)}>
             Edit contact

@@ -282,7 +282,7 @@ func install(c *command.Ctx, raw json.RawMessage) (any, error) {
 	if v, ok := m["quotes"]; ok && json.Unmarshal(v, &quotes) != nil {
 		return nil, command.ErrInvalid("quotes must be true or false")
 	}
-	if (hasAt || hasChannel) && d.Key != TemplateBriefing || quotes && d.Key != TemplateLeadResponder {
+	if (hasAt || hasChannel) && !d.ChatAgents || quotes && d.Key != TemplateLeadResponder {
 		return nil, command.ErrInvalid("at and channel_id are for the briefing, quotes is for the lead responder")
 	}
 	var exists bool
@@ -304,10 +304,16 @@ func install(c *command.Ctx, raw json.RawMessage) (any, error) {
 		e := d.EveryMinutes
 		if !hasAt {
 			at = "08:30"
+			if d.Weekly {
+				at = "09:30"
+			}
 		}
 		n, err := nextAt(at, time.Now())
 		if err != nil {
 			return nil, err
+		}
+		for d.Weekly && n.In(ist).Weekday() != time.Monday {
+			n = n.AddDate(0, 0, 1)
 		}
 		every, next = &e, &n
 	}
@@ -339,7 +345,18 @@ func install(c *command.Ctx, raw json.RawMessage) (any, error) {
 		}
 	}
 	if d.ChatAgents {
-		if !hasChannel {
+		if d.Key == TemplateCollections { // the brief has money in it: a private channel of its own unless the owner picks one
+			priv, err := privateChannel(c)
+			if err != nil {
+				return nil, err
+			}
+			if _, err := c.Call("chat.agent_add", props{"channel_id": priv, "agent_id": id}); err != nil {
+				return nil, err
+			}
+			if !hasChannel {
+				channel = priv
+			}
+		} else if !hasChannel {
 			if channel, err = briefingChannel(c); err != nil {
 				return nil, err
 			}
@@ -410,6 +427,28 @@ func briefingChannel(c *command.Ctx) (string, error) {
 	var out struct{ ID string }
 	if json.Unmarshal(b, &out) != nil || out.ID == "" {
 		return "", command.ErrInvalid("could not create the briefing channel")
+	}
+	return out.ID, nil
+}
+
+// privateChannel finds or creates the owner's private #collections channel (only the owner is in it).
+func privateChannel(c *command.Ctx) (string, error) {
+	rows, err := channels(c)
+	if err != nil {
+		return "", err
+	}
+	for _, r := range rows {
+		if r.Kind == "private" && r.Name == collectionsChannel {
+			return r.ID, nil
+		}
+	}
+	b, err := c.Call("chat.channel_create", props{"name": collectionsChannel, "private": true})
+	if err != nil {
+		return "", err
+	}
+	var out struct{ ID string }
+	if json.Unmarshal(b, &out) != nil || out.ID == "" {
+		return "", command.ErrInvalid("could not create the collections channel")
 	}
 	return out.ID, nil
 }

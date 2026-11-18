@@ -9,6 +9,7 @@ import { Confirm, run } from './bits'
 import { dayIST, type InvoiceDetail, money, parseMinor, STATES, toRupees } from './fmt'
 import { StatusPill } from './invoice-list'
 import { ApplyAdvancePanel } from './receipts'
+import { RemindersPanel } from './reminders-panel'
 import { ShareButton, UpiCard } from './share-panel'
 
 type Item = { id: string; key: string; title: string }
@@ -290,6 +291,7 @@ export function IssuedView({ inv, reload }: { inv: InvoiceDetail; reload: () => 
               reload={reload}
             />
           )}
+          {open && <RemindersPanel invoiceId={inv.id} />}
           <section aria-label="Payments" className="rounded-lg border border-line p-4">
             <h2 className="mb-2 text-[14px] font-semibold">Payments</h2>
             {inv.payments.length === 0 && <p className="text-[13px] text-muted">No payments yet.</p>}

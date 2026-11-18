@@ -6,6 +6,7 @@ import { btnPrimary, ErrorText, Field, inputCls, Pill } from '@/components/ui'
 import { cmd } from '@/lib/api'
 import { useCmd } from '@/lib/hooks'
 import { MessageEditor } from './editor'
+import { PaymentReminders } from './reminders'
 
 export type EventRow = {
   event: string
@@ -48,6 +49,7 @@ export function CustomerMessages({ ws }: { ws: string }) {
   return (
     <div className="space-y-8">
       <SenderCard ws={ws} sender={data.sender} onSaved={reload} />
+      <PaymentReminders ws={ws} events={data.events} onOpen={setOpen} />
       <section aria-label="Messages" className="space-y-5">
         {groups.map((g) => (
           <div key={g}>

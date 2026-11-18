@@ -3,6 +3,7 @@ package agents
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -238,10 +239,12 @@ func deliverRun(c *command.Ctx, r DoneRun) error {
 		if ctx.ParentID != nil { // one level of threads: reply to the top message
 			in["parent_id"] = *ctx.ParentID
 		}
-	case "event", "schedule":
-		if r.DeliverChannelID == nil {
-			return nil
+	case "event", "schedule", "manual":
+		ch, err := deliveryChannel(c, r)
+		if err != nil || ch == nil {
+			return err
 		}
+		r.DeliverChannelID = ch
 		var name string
 		if err := c.Tx.QueryRow(c.Context, `select name from core.users where id = $1::uuid`, r.OnBehalfOf).Scan(&name); err != nil {
 			return command.DB(err)
@@ -260,4 +263,47 @@ func deliverRun(c *command.Ctx, r DoneRun) error {
 	dc.Principal.Scopes = append(slices.Clone(c.Principal.Scopes), string(command.GroupWriteNotes))
 	_, err := dc.Call("chat.send", in)
 	return err
+}
+
+const collectionsChannel = "collections"
+
+// deliveryChannel is where a run's output goes. Collections briefs carry money: they go to the channel the owner
+// chose only if every person who can read it has finance access, else to the owner's own private #collections
+// channel; if neither is safe nothing is posted (the run's stored output is the record). Other agents post to their channel.
+func deliveryChannel(c *command.Ctx, r DoneRun) (*string, error) {
+	var tmpl *string
+	if err := c.Tx.QueryRow(c.Context, `select template from core.agents where id = $1::uuid`, r.AgentID).Scan(&tmpl); err != nil {
+		return nil, command.DB(err)
+	}
+	if tmpl == nil || *tmpl != TemplateCollections {
+		if r.Trigger == "manual" {
+			return nil, nil
+		}
+		return r.DeliverChannelID, nil
+	}
+	const safe = `select exists (select 1 from chat.channels ch where ch.id = $1::uuid and ch.kind <> 'dm'
+		and not exists (select 1 from core.memberships m where m.workspace_id = ch.workspace_id and m.role in ('member','guest') and not m.finance_access
+		  and (ch.kind = 'public' or exists (select 1 from chat.members cm where cm.channel_id = ch.id and cm.user_id = m.user_id))))`
+	var ok bool
+	if r.DeliverChannelID != nil {
+		if err := c.Tx.QueryRow(c.Context, safe, *r.DeliverChannelID).Scan(&ok); err != nil {
+			return nil, command.DB(err)
+		}
+		if ok {
+			return r.DeliverChannelID, nil
+		}
+	}
+	var priv *string
+	err := c.Tx.QueryRow(c.Context, `select ch.id::text from chat.channels ch join chat.agent_members am on am.channel_id = ch.id
+		where am.agent_id = $1::uuid and ch.kind = 'private' and ch.name = $2`, r.AgentID, collectionsChannel).Scan(&priv)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, command.DB(err)
+	}
+	if err := c.Tx.QueryRow(c.Context, safe, *priv).Scan(&ok); err != nil || !ok {
+		return nil, command.DB(err)
+	}
+	return priv, nil
 }

@@ -22,7 +22,7 @@ func TestEmailTemplateRolesAndVersions(t *testing.T) {
 	}
 	l := b.ok("email_template.list", map[string]any{})
 	evs := l["events"].([]any)
-	if len(evs) != 7 || evs[0].(map[string]any)["customised"] != false || evs[0].(map[string]any)["version"].(float64) != 0 {
+	if len(evs) != 9 || evs[0].(map[string]any)["customised"] != false || evs[0].(map[string]any)["version"].(float64) != 0 {
 		t.Fatalf("list %v", l)
 	}
 	// unknown or half-typed placeholders and sizes are refused
@@ -79,7 +79,7 @@ func TestEmailTemplateCrossTenantIsolation(t *testing.T) {
 	}
 	// the other workspace can save the same event independently
 	a.env.must(other, "email_template.save", map[string]any{"event": "quote.sent", "subject": "Z", "body": "Z", "version": 0})
-	eq(t, a.ok("email_template.list", map[string]any{})["events"].([]any)[4].(map[string]any)["subject"], "A only")
+	eq(t, a.ok("email_template.list", map[string]any{})["events"].([]any)[6].(map[string]any)["subject"], "A only")
 }
 
 func TestEmailTemplatePreviewUsesRealRecordAndCreatesNoLink(t *testing.T) {
