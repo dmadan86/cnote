@@ -473,17 +473,19 @@ func TestReminderEnqueueFailureRetriesSameDay(t *testing.T) {
 			ddl(t, "drop function billing.boom()")
 		}
 	})
+	// the shared background worker may already have sent a queued reminder, so compare "queued or later"
+	queuedOrLater := strings.NewReplacer("sending", "queued", "sent", "queued").Replace
 	r.sweep(at(10, 0))
 	got := r.logs()
 	eq(t, got[inv], "")
-	eq(t, got[other], "3:queued ") // the healthy invoice went out
+	eq(t, queuedOrLater(got[other]), "3:queued ") // the healthy invoice went out
 	eq(t, r.dbStrings(r.owner.ws, "select done::text from billing.reminder_runs"), []string{"false"})
 	ddl(t, "drop trigger boom on billing.reminder_log")
 	ddl(t, "drop function billing.boom()")
 	broken = false
 	r.sweep(at(10, 5))
-	eq(t, r.logs()[inv], "2:queued ")
-	eq(t, r.logs()[other], "3:queued ") // not sent twice
+	eq(t, queuedOrLater(r.logs()[inv]), "2:queued ")
+	eq(t, queuedOrLater(r.logs()[other]), "3:queued ") // not sent twice
 	eq(t, r.dbStrings(r.owner.ws, "select done::text from billing.reminder_runs"), []string{"true"})
 	r.settle(r.owner.ws)
 	eq(t, r.dbStrings(r.owner.ws, "select count(*)::text from billing.reminder_log where status = 'sent'"), []string{"2"}) // each once
