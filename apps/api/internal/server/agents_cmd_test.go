@@ -64,7 +64,7 @@ func TestAgentTemplatesInstallAndUpdate(t *testing.T) {
 	a := newAgentEnv(t)
 	// templates are readable by members; the support template needs send_messages switched on
 	tl := a.call(a.mia, "agent.templates", map[string]any{}).jsonList()
-	if len(tl) != 4 {
+	if len(tl) != 5 {
 		t.Fatalf("templates: %v", tl)
 	}
 	for _, x := range tl {

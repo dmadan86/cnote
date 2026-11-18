@@ -59,13 +59,15 @@ type Contact struct {
 	GSTIN   *string `json:"gstin"`
 	State   *string `json:"state_code"`
 	Address *string `json:"billing_address"`
+	// NoReminders: the owner switched off automatic payment reminders for this customer (billing.reminder_prefs).
+	NoReminders bool `json:"no_reminders"`
 }
 
-const contactSQL = `select n.id::text,n.space_id::text,n.title,c.kind,c.email,c.phone,c.company,c.gstin,c.state_code,c.billing_address from crm.contacts c join core.notes n on n.id=c.note_id`
+const contactSQL = `select n.id::text,n.space_id::text,n.title,c.kind,c.email,c.phone,c.company,c.gstin,c.state_code,c.billing_address,exists(select 1 from billing.reminder_prefs rp where rp.note_id=c.note_id and rp.paused) from crm.contacts c join core.notes n on n.id=c.note_id`
 
 func scanContact(r pgx.Row) (Contact, error) {
 	var v Contact
-	err := r.Scan(&v.ID, &v.SpaceID, &v.Name, &v.Kind, &v.Email, &v.Phone, &v.Company, &v.GSTIN, &v.State, &v.Address)
+	err := r.Scan(&v.ID, &v.SpaceID, &v.Name, &v.Kind, &v.Email, &v.Phone, &v.Company, &v.GSTIN, &v.State, &v.Address, &v.NoReminders)
 	return v, err
 }
 func loadContact(c *command.Ctx, id string) (Contact, error) {

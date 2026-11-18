@@ -24,6 +24,7 @@ func Commands() []command.Command {
 		mk("email_template.reset", command.GroupAdmin, command.Admin, reset),
 		mk("email_template.preview", command.GroupRead, command.Member, preview), // Admin without note_id: checked inside
 		mk("email_template.test", command.GroupSendMessages, command.Admin, test),
+		mk("email_template.render", command.GroupRead, command.Admin, renderFor), // system only: the reminder sweep
 	}
 }
 
@@ -335,4 +336,33 @@ func test(c *command.Ctx, b json.RawMessage) (any, error) {
 		return nil, command.ErrInvalid("could not send the test email: " + err.Error())
 	}
 	return map[string]any{"sent_to": to}, nil
+}
+
+// renderFor renders one event for a record with a caller-built link. It does no access check, so only the system
+// (the payment reminder sweep) may call it; people, keys and agents are refused.
+func renderFor(c *command.Ctx, b json.RawMessage) (any, error) {
+	if c.Principal.Kind != command.KindSystem {
+		return nil, command.ErrForbidden("email_template.render is for the server only")
+	}
+	in, ev, err := decode(b, true)
+	if err != nil {
+		return nil, err
+	}
+	var link struct {
+		Link string `json:"link"`
+	}
+	_ = json.Unmarshal(b, &link)
+	if kindOf(ev) != "invoice" || in.NoteID == "" || !safeLink(link.Link) {
+		return nil, command.ErrInvalid("an invoice event, note_id and an https link are required")
+	}
+	vals, _, err := load(c, "invoice", in.NoteID)
+	if err != nil {
+		return nil, err
+	}
+	vals[ev.LinkKey] = link.Link
+	r, err := Render(c, ev.Event, vals, nil)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"subject": r.Subject, "text": r.Text, "html": r.HTML, "from_name": r.FromName, "reply_to": r.ReplyTo}, nil
 }

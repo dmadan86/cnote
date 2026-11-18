@@ -14,6 +14,8 @@ type Mail struct {
 	HTML     string `json:"html,omitempty"` // optional; when empty the mail is text/plain only
 	// MessageID is optional ("<id@host>"); empty means a random one at the sender's domain.
 	MessageID string `json:"message_id,omitempty"`
+	// Notify ("kind:ref") names a worker hook that runs right before the outbox send (may cancel it) and after it. Ignored by Send.
+	Notify string `json:"notify,omitempty"`
 }
 
 // Send delivers m and returns the Message-ID it set. Implemented by agent B (see docs/design/customer-messages.md).

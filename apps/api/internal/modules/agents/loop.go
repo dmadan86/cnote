@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"strconv"
 	"strings"
@@ -101,6 +102,9 @@ func runJob(pool *pgxpool.Pool, reg *command.Registry, model Model) func(context
 	}
 }
 
+// errRunNotVisible: the job names a run this worker cannot see; never drop it silently.
+var errRunNotVisible = errors.New("agent run not found")
+
 func (e *runExec) execute(ctx context.Context) error {
 	done, err := e.start(ctx)
 	if err == nil && !done {
@@ -115,6 +119,10 @@ func (e *runExec) execute(ctx context.Context) error {
 	}
 	if err == nil || errors.Is(err, errFenced) || errors.Is(err, errStopped) {
 		return nil
+	}
+	if errors.Is(err, errRunNotVisible) {
+		log.Printf("agents: run %s not found for job %d (attempt %d); the job will retry", e.runID, e.job.ID, e.job.Attempts)
+		return err // the worker retries with backoff; after max attempts the job fails visibly
 	}
 	return e.handle(ctx, err)
 }
@@ -199,9 +207,8 @@ func (e *runExec) start(ctx context.Context) (done bool, err error) {
 			Scan(&status, &fresh, &r.agentID, &r.onBehalf, &r.trigger, &r.input, &r.conversationID, &r.noteID, &r.context, &r.createdAt,
 				&r.steps, &r.held, &r.tokIn, &r.tokOut, &a.name, &a.template, &a.instructions, &a.tools, &a.modelTier, &a.maxSteps,
 				&a.tokenBudget, &a.deliverChannelID)
-		if errors.Is(err, pgx.ErrNoRows) {
-			done = true
-			return nil
+		if errors.Is(err, pgx.ErrNoRows) { // not visible to this worker yet (or gone): retry instead of dropping the run
+			return errRunNotVisible
 		}
 		if err != nil {
 			return command.DB(err)
@@ -544,7 +551,7 @@ func (e *runExec) callTool(ctx context.Context, call ai.ToolCall) (ai.ToolResult
 			return command.DB(err)
 		}
 		res = ai.ToolResult{CallID: call.ID, Content: text, IsError: isErr}
-		if e.run.trigger == "event" && !isErr && outcome == "ok" {
+		if (e.run.trigger == "event" || e.run.trigger == "schedule" || e.run.trigger == "manual") && !isErr && outcome == "ok" { // customer text read by unattended runs is data
 			res.Content = untrusted(text)
 		}
 		return nil

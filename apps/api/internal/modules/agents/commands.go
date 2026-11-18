@@ -282,7 +282,7 @@ func install(c *command.Ctx, raw json.RawMessage) (any, error) {
 	if v, ok := m["quotes"]; ok && json.Unmarshal(v, &quotes) != nil {
 		return nil, command.ErrInvalid("quotes must be true or false")
 	}
-	if (hasAt || hasChannel) && d.Key != TemplateBriefing || quotes && d.Key != TemplateLeadResponder {
+	if (hasAt || hasChannel) && !d.ChatAgents || hasChannel && d.Key == TemplateCollections || quotes && d.Key != TemplateLeadResponder {
 		return nil, command.ErrInvalid("at and channel_id are for the briefing, quotes is for the lead responder")
 	}
 	var exists bool
@@ -304,10 +304,16 @@ func install(c *command.Ctx, raw json.RawMessage) (any, error) {
 		e := d.EveryMinutes
 		if !hasAt {
 			at = "08:30"
+			if d.Weekly {
+				at = "09:30"
+			}
 		}
 		n, err := nextAt(at, time.Now())
 		if err != nil {
 			return nil, err
+		}
+		for d.Weekly && n.In(ist).Weekday() != time.Monday {
+			n = n.AddDate(0, 0, 1)
 		}
 		every, next = &e, &n
 	}
@@ -338,7 +344,7 @@ func install(c *command.Ctx, raw json.RawMessage) (any, error) {
 			return nil, err
 		}
 	}
-	if d.ChatAgents {
+	if d.ChatAgents && d.Key != TemplateCollections { // the collections brief goes by direct message, never to a channel
 		if !hasChannel {
 			if channel, err = briefingChannel(c); err != nil {
 				return nil, err

@@ -1,17 +1,26 @@
 'use client'
-import { Bot, CalendarClock, Headset, Inbox, type LucideIcon, MessageCircleQuestion } from 'lucide-react'
+import {
+  Bot,
+  CalendarClock,
+  Headset,
+  Inbox,
+  IndianRupee,
+  type LucideIcon,
+  MessageCircleQuestion,
+} from 'lucide-react'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
 import { useState } from 'react'
 import { useShell } from '@/components/shell'
 import { btn, btnPrimary, EmptyState, ErrorText, Field, inputCls, Modal, Pill } from '@/components/ui'
-import type { Agent, AgentTemplateKey, Run, Template } from '@/lib/agents'
+import type { Agent, Run, Template } from '@/lib/agents'
 import { cmd } from '@/lib/api'
 import { ago, useCmd } from '@/lib/hooks'
 import { AgentDetail, triggerText } from './detail'
 import { StatusPill } from './runs'
 
-const META: Record<AgentTemplateKey, { icon: LucideIcon; job: string; can: string }> = {
+type Meta = { icon: LucideIcon; job: string; can: string }
+const META: Record<string, Meta> = {
   ask: {
     icon: MessageCircleQuestion,
     job: 'Answers questions about your business.',
@@ -32,7 +41,15 @@ const META: Record<AgentTemplateKey, { icon: LucideIcon; job: string; can: strin
     job: 'Drafts replies to support tickets.',
     can: 'Reads tickets and pages. Replies wait for your approval.',
   },
+  collections: {
+    icon: IndianRupee,
+    job: 'Sends you a weekly collections brief and drafts follow-ups for long-overdue invoices.',
+    can: 'Reads receivables. Follow-up emails wait for your approval.',
+  },
 }
+// a template the web does not know yet still renders, using the server's own name and description
+const metaOf = (t: Pick<Template, 'key' | 'description'>): Meta =>
+  META[t.key] ?? { icon: Bot, job: t.description ?? '', can: '' }
 
 type Listed = Agent & { last_run?: Pick<Run, 'id' | 'status' | 'created_at'> | null; pending?: number }
 type Chan = { id: string; kind: string; name: string }
@@ -73,7 +90,7 @@ function InstallDialog({
         }}
       >
         <p className="text-[13px] text-muted">
-          {META[t.key].job} {META[t.key].can}
+          {metaOf(t).job} {metaOf(t).can}
         </p>
         <p className="text-[12px] text-muted">
           It sees only what you can see, and what it reads is sent to your AI provider to write the answer.
@@ -104,6 +121,11 @@ function InstallDialog({
               )}
             </Field>
           </>
+        )}
+        {t.key === 'collections' && (
+          <p className="text-[13px]">
+            Sent to you as a direct message. Receivables are never posted in a channel.
+          </p>
         )}
         {t.key === 'lead_responder' && (
           <label className="flex items-center gap-2 text-[13px]">
@@ -151,7 +173,7 @@ export function AgentsTab({ ws, outside }: { ws: string; outside: React.ReactNod
         {tpl.data?.length === 0 && <EmptyState icon={Bot} title="No AI employees available" />}
         <ul className="grid gap-3 sm:grid-cols-2">
           {tpl.data?.map((t) => {
-            const m = META[t.key]
+            const m = metaOf(t)
             const a = t.agent_id ? byId.get(t.agent_id) : undefined
             return (
               <li key={t.key} className="flex flex-col gap-2 rounded-md border border-line p-4">

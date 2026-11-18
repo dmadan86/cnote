@@ -69,7 +69,7 @@ jobs:
         run: go vet ./...
       - name: go test
         working-directory: apps/api
-        run: go test -race -timeout 40m ./...
+        run: go test -race -p 1 -timeout 60m ./... # one package at a time: packages share the CI database and its job queue
         env:
           COLLAB_URL: http://localhost:4300
       - if: failure()

@@ -84,9 +84,35 @@ func onMention(c *command.Ctx, e jobs.Event) error {
 	if !ok {
 		return nil
 	}
+	if col, err := isCollections(c, p.AgentID); err != nil {
+		return err
+	} else if col {
+		if fin, err := hasFinance(c, *e.ActorID); err != nil {
+			return err
+		} else if !fin {
+			return refuseCollections(c, p.AgentID, *e.ActorID, p.ChannelID, p.MessageID, p.ParentID)
+		}
+	}
 	key := "chat:" + p.MessageID
 	_, _, err := CreateRun(c, NewRun{AgentID: p.AgentID, OnBehalfOf: *e.ActorID, Trigger: "chat", Input: p.Body, DedupeKey: &key,
 		Context: map[string]any{"channel_id": p.ChannelID, "message_id": p.MessageID, "parent_id": p.ParentID}})
+	return err
+}
+
+// refuseCollections answers a mention by someone without finance access in the thread, with no numbers and no run.
+func refuseCollections(c *command.Ctx, agentID, user, channel, msg string, parent *string) error {
+	ap, err := command.AgentPrincipal(c, agentID, user)
+	if err != nil {
+		return nil // the agent cannot act for them: stay silent
+	}
+	ap.Scopes = append(slices.Clone(ap.Scopes), string(command.GroupWriteNotes))
+	dc := *c
+	dc.Principal = ap
+	top := msg
+	if parent != nil {
+		top = *parent
+	}
+	_, err = dc.Call("chat.send", map[string]any{"channel_id": channel, "parent_id": top, "body": "I can only share collections details with people who have finance access."})
 	return err
 }
 
@@ -219,6 +245,17 @@ func deliverRun(c *command.Ctx, r DoneRun) error {
 	if r.Held > 0 {
 		text = strings.TrimSpace(text + fmt.Sprintf("\n\n%d action(s) are waiting for approval.", r.Held))
 	}
+	if rs := []rune(text); len(rs) > 4000 {
+		text = string(rs[:4000])
+	}
+	if col, err := isCollections(c, r.AgentID); err != nil {
+		return err
+	} else if col {
+		if r.Trigger == "ask" {
+			return nil
+		}
+		return deliverCollections(c, r, text)
+	}
 	in := map[string]any{}
 	switch r.Trigger {
 	case "chat":
@@ -238,8 +275,8 @@ func deliverRun(c *command.Ctx, r DoneRun) error {
 		if ctx.ParentID != nil { // one level of threads: reply to the top message
 			in["parent_id"] = *ctx.ParentID
 		}
-	case "event", "schedule":
-		if r.DeliverChannelID == nil {
+	case "event", "schedule", "manual":
+		if r.Trigger == "manual" || r.DeliverChannelID == nil {
 			return nil
 		}
 		var name string
@@ -251,13 +288,44 @@ func deliverRun(c *command.Ctx, r DoneRun) error {
 	default:
 		return nil
 	}
-	if rs := []rune(text); len(rs) > 4000 {
-		text = string(rs[:4000])
-	}
 	in["body"] = text
 	// Posting is the runtime's own act, not a model tool: the read-only briefing agent still needs the notes scope for it.
 	dc := *c
 	dc.Principal.Scopes = append(slices.Clone(c.Principal.Scopes), string(command.GroupWriteNotes))
 	_, err := dc.Call("chat.send", in)
+	return err
+}
+
+// isCollections reports whether the agent is the collections assistant: its output carries receivables and never
+// goes to a channel, only to one person's direct message.
+func isCollections(c *command.Ctx, agentID string) (bool, error) {
+	var ok bool
+	err := c.Tx.QueryRow(c.Context, `select coalesce(template = $2, false) from core.agents where id = $1::uuid`, agentID, TemplateCollections).Scan(&ok)
+	return ok, command.DB(err)
+}
+
+// hasFinance: owners and admins, and members whose finance access is on.
+func hasFinance(c *command.Ctx, user string) (bool, error) {
+	var ok bool
+	err := c.Tx.QueryRow(c.Context, `select exists (select 1 from core.memberships where workspace_id = $1::uuid and user_id = $2::uuid
+		and (role in ('owner','admin') or (role = 'member' and finance_access)))`, c.WorkspaceID(), user).Scan(&ok)
+	return ok, command.DB(err)
+}
+
+// deliverCollections sends the brief to one person as a direct message: the agent's owner for a schedule, event or
+// manual run, the person who mentioned it for a chat run (only if they have finance access).
+func deliverCollections(c *command.Ctx, r DoneRun, text string) error {
+	to := r.OnBehalfOf
+	if r.Trigger != "chat" {
+		if err := c.Tx.QueryRow(c.Context, `select owner_user_id::text from core.agents where id = $1::uuid`, r.AgentID).Scan(&to); err != nil {
+			return command.DB(err)
+		}
+	}
+	if ok, err := hasFinance(c, to); err != nil || !ok {
+		return err
+	}
+	dc := *c
+	dc.Principal.Scopes = append(slices.Clone(c.Principal.Scopes), string(command.GroupWriteNotes))
+	_, err := dc.Call("chat.agent_dm", map[string]any{"user_id": to, "body": text})
 	return err
 }

@@ -3,6 +3,8 @@ package mailer
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -25,6 +27,10 @@ func Enqueue(ctx context.Context, tx pgx.Tx, workspaceID string, m Mail) error {
 	if err != nil {
 		return err
 	}
-	_, err = tx.Exec(ctx, "insert into core.jobs (workspace_id, kind, payload) values ($1::uuid,$2,$3::jsonb)", workspaceID, JobKind, b)
+	// MAIL_OUTBOX_DELAY (a Go duration, default 0) holds queued mail before the worker may send it: a short undo
+	// window in production if wanted, and lets tests drive dispatch themselves without the background worker racing.
+	delay, _ := time.ParseDuration(os.Getenv("MAIL_OUTBOX_DELAY"))
+	_, err = tx.Exec(ctx, "insert into core.jobs (workspace_id, kind, payload, run_at) values ($1::uuid,$2,$3::jsonb, now() + make_interval(secs => $4))",
+		workspaceID, JobKind, b, delay.Seconds())
 	return err
 }
