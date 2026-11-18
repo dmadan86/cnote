@@ -30,6 +30,14 @@ const fromCode = (c: string) =>
       ? { kind: 'department_head' }
       : { kind: 'user', user_id: c }
 type Member = { user_id: string; name: string; role: string }
+const savedSteps = (rule?: Rule): StepForm[] =>
+  rule?.steps?.length
+    ? rule.steps.map((st) => ({
+        mode: st.mode,
+        min: st.min_amount_minor ? toRupees(st.min_amount_minor) : '',
+        approvers: st.approvers.map(toCode),
+      }))
+    : [{ mode: 'any', min: '', approvers: ['admin'] }]
 
 function RuleRow({
   ws,
@@ -48,15 +56,7 @@ function RuleRow({
 }) {
   const [on, setOn] = useState(rule?.enabled ?? false)
   const [amount, setAmount] = useState(rule ? toRupees(rule.min_amount_minor) : '')
-  const [steps, setSteps] = useState<StepForm[]>(
-    rule?.steps?.length
-      ? rule.steps.map((st) => ({
-          mode: st.mode,
-          min: st.min_amount_minor ? toRupees(st.min_amount_minor) : '',
-          approvers: st.approvers.map(toCode),
-        }))
-      : [{ mode: 'any', min: '', approvers: ['admin'] }],
-  )
+  const [steps, setSteps] = useState<StepForm[]>(() => savedSteps(rule))
   const setStep = (i: number, f: (s: StepForm) => StepForm) =>
     setSteps((all) => all.map((x, j) => (j === i ? f(x) : x)))
   const [fallback, setFallback] = useState(rule?.fallback_user_id ?? '')
@@ -373,11 +373,17 @@ function RuleRow({
                 type="button"
                 className={btn}
                 onClick={() => {
+                  // discard unsaved edits so the summary always shows what the server has
+                  setOn(rule?.enabled ?? false)
+                  setAmount(rule ? toRupees(rule.min_amount_minor) : '')
+                  setSteps(savedSteps(rule))
+                  setFallback(rule?.fallback_user_id ?? '')
+                  setHours(String(rule?.escalate_after_hours ?? 24))
                   setOpen(false)
                   setErr(undefined)
                 }}
               >
-                Close
+                Cancel
               </button>
               <span role="status" className="text-[13px] text-muted">
                 {msg}

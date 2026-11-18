@@ -151,7 +151,7 @@ export function BillList() {
     <div>
       {soon && <FilterBanner label="bills due within 7 days or overdue" href={`/w/${ws}/billing/bills`} />}
       <div className="mb-3 flex items-center gap-2">
-        <SearchBox label="Search bills" value={q} onChange={setQ} />
+        <SearchBox label="Search bills" value={q} onChange={setQ} loaded={all?.length} />
         <select
           aria-label="Filter by status"
           value={status}

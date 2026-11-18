@@ -138,7 +138,7 @@ export function InvoiceList() {
   return (
     <div>
       <div className="mb-3 flex items-center gap-2">
-        <SearchBox label="Search invoices" value={q} onChange={setQ} />
+        <SearchBox label="Search invoices" value={q} onChange={setQ} loaded={all?.length} />
         <BranchSelect ws={ws} value={branch} onChange={setBranch} />
         <button
           type="button"

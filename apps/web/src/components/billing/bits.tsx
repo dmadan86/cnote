@@ -6,18 +6,21 @@ import { useState } from 'react'
 import { btn, btnPrimary, ErrorText, inputCls, Modal } from '@/components/ui'
 import { cmd } from '@/lib/api'
 
-/** Search field for billing lists; filtering is client-side over the loaded page (up to 500 rows). */
+/** Search field for billing lists; filtering is client-side over the loaded page. */
+// shortcut: searches only the loaded page (max 500 rows); move to server-side search when workspaces outgrow it.
 export function SearchBox({
   label,
   value,
   onChange,
+  loaded,
 }: {
   label: string
   value: string
   onChange: (v: string) => void
+  loaded?: number
 }) {
   return (
-    <label className="relative">
+    <label className="relative flex items-center gap-2">
       <span className="sr-only">{label}</span>
       <Search size={14} aria-hidden className="absolute top-2.5 left-2.5 text-muted" />
       <input
@@ -27,6 +30,9 @@ export function SearchBox({
         placeholder={label}
         className={`${inputCls} w-64 pl-8`}
       />
+      {value.trim() && loaded !== undefined && loaded >= 500 && (
+        <span className="text-[12px] text-muted">Searching the latest 500</span>
+      )}
     </label>
   )
 }

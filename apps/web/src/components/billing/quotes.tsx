@@ -124,7 +124,7 @@ export function QuoteList() {
   return (
     <div>
       <div className="mb-3 flex items-center gap-2">
-        <SearchBox label="Search quotes" value={q} onChange={setQ} />
+        <SearchBox label="Search quotes" value={q} onChange={setQ} loaded={all?.length} />
         <button
           type="button"
           className={`${btnPrimary} ml-auto`}

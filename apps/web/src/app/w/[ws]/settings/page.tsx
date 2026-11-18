@@ -576,11 +576,20 @@ function GroupsTab({ ws }: { ws: string }) {
 }
 
 function ConfirmationsTab({ ws }: { ws: string }) {
-  const { data, reload } = useCmd<Confirmation[]>(ws, 'confirmation.list')
+  const { data, error, reload } = useCmd<Confirmation[]>(ws, 'confirmation.list')
   const decide = async (id: string, approve: boolean) => {
     await cmd(ws, 'confirmation.decide', { id, approve })
     reload()
   }
+  if (error)
+    return (
+      <div className="space-y-2">
+        <ErrorText error={error} />
+        <button type="button" className={btn} onClick={reload}>
+          Try again
+        </button>
+      </div>
+    )
   if (!data) return <div aria-busy="true" className="h-24 animate-pulse rounded-lg bg-hover" />
   if (data.length === 0)
     return (
