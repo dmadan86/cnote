@@ -17,8 +17,8 @@ export default function Home() {
         (n.verify_by && new Date(n.verify_by).getTime() - Date.now() < REVIEW_WINDOW_MS)),
   )
   return (
-    <div className="mx-auto max-w-4xl space-y-8 px-6 py-8">
-      <h1 className="text-xl font-semibold">Welcome back, {me.user.name.split(' ')[0]}</h1>
+    <div className="mx-auto max-w-6xl space-y-8 px-6 py-8">
+      <h1 className="text-2xl font-semibold tracking-tight">Welcome back, {me.user.name.split(' ')[0]}</h1>
       {spaces.length === 0 && (
         <div className="rounded-md border border-dashed border-line p-6 text-center">
           <p className="mb-3 text-muted">Create a space to start writing pages.</p>
