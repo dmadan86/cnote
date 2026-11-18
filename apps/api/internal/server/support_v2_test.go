@@ -274,7 +274,7 @@ func TestTicketReplyEmailsCustomerNotes(t *testing.T) {
 	r = b.ok("ticket.reply", map[string]any{"id": tk, "body": "Fixed now."})
 	eq(t, r["emailed"], true)
 	m := b.waitMails(sink, 1)[0]
-	for _, w := range []string{"To: cust@example.test", "From: support@acme.example.test", "Subject: [TKT-000001] Printer offline", "Fixed now.", "TKT-000001"} {
+	for _, w := range []string{"To: cust@example.test", "<support@acme.example.test>", "Subject: [TKT-000001] Printer offline", "Fixed now.", "TKT-000001"} {
 		if !strings.Contains(m, w) {
 			t.Fatalf("%q missing in %q", w, m)
 		}
@@ -289,7 +289,16 @@ func TestTicketReplyEmailsCustomerNotes(t *testing.T) {
 	}
 	eq(t, len(b.okList("comment.list", map[string]any{"note_id": tk})), 1)
 
-	b.inbound()
+	// the customer's reply quotes the agent mail's Message-ID and lands in the same ticket
+	_, _, mid, _, html := parseMail(t, m)
+	if html == "" || mid == "" {
+		t.Fatalf("ticket reply should be branded multipart with a Message-ID: %q", m)
+	}
+	sec := b.inbound()
+	rr := b.postMail(sec, mail("cust@example.test", "Re: [TKT-000001] Printer offline", "Thanks, works.", "cust-reply-1@cust", map[string]any{"in_reply_to": mid}), "", "")
+	if rr.status != 200 || rr.json()["created"] != false || rr.json()["ticket_id"] != tk {
+		t.Fatalf("reply did not thread: %d %s", rr.status, rr.body)
+	}
 
 	// a failing mail server saves nothing
 	n := len(b.okList("ticket.messages", map[string]any{"id": tk}))

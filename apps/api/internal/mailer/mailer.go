@@ -12,6 +12,8 @@ type Mail struct {
 	Subject  string
 	Text     string // required
 	HTML     string // optional; when empty the mail is text/plain only
+	// MessageID is optional ("<id@host>"); empty means a random one at the sender's domain.
+	MessageID string
 }
 
 // Send delivers m and returns the Message-ID it set. Implemented by agent B (see docs/design/customer-messages.md).

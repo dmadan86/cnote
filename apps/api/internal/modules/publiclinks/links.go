@@ -25,6 +25,8 @@ import (
 
 	"github.com/cnote/api/internal/access"
 	"github.com/cnote/api/internal/command"
+	"github.com/cnote/api/internal/mailer"
+	"github.com/cnote/api/internal/modules/emailtpl"
 )
 
 func Commands() []command.Command {
@@ -36,6 +38,7 @@ func Commands() []command.Command {
 		nc("share.list", command.GroupRead, list),
 		nc("share.revoke", command.GroupWriteNotes, revoke),
 		confirm(nc("share.email", sm, email)),
+		nc("share.preview", command.GroupRead, preview),
 	}
 }
 
@@ -66,7 +69,9 @@ type in struct {
 	Phone         *string `json:"phone"`
 	To            string  `json:"to"`
 	Message       *string `json:"message"`
-	Reminder      bool    `json:"reminder"` // overdue-invoice wording instead of the share template
+	Reminder      bool    `json:"reminder"`       // overdue-invoice wording instead of the share template
+	ReminderLevel int     `json:"reminder_level"` // 1..3 (share.email, share.preview); reminder:true means 1
+	Subject       *string `json:"subject"`        // share.email: subject for this send only
 }
 
 func decode(raw json.RawMessage) (in, error) {
@@ -83,6 +88,12 @@ func decode(raw json.RawMessage) (in, error) {
 	if v.Message != nil && len(*v.Message) > 2000 {
 		return v, command.ErrInvalid("message is too long")
 	}
+	if v.Subject != nil && len(*v.Subject) > 200 {
+		return v, command.ErrInvalid("subject is too long")
+	}
+	if v.ReminderLevel < 0 || v.ReminderLevel > 3 {
+		return v, command.ErrInvalid("reminder_level must be 1, 2 or 3")
+	}
 	return v, nil
 }
 
@@ -90,7 +101,7 @@ func decode(raw json.RawMessage) (in, error) {
 type doc struct {
 	kind, number, status, currency string
 	total, due                     int64
-	contactName, phone             string
+	contactName, phone, email      string
 	purpose                        string
 }
 
@@ -99,20 +110,20 @@ func loadDoc(c *command.Ctx, noteID string) (doc, error) {
 	var d doc
 	err := c.Tx.QueryRow(c.Context, `
 		select 'quotation', coalesce(q.number,''), q.status, q.currency::text, q.total_minor, 0::bigint,
-		       coalesce(cn.title,''), coalesce(ct.phone,'')
+		       coalesce(cn.title,''), coalesce(ct.phone,''), coalesce(ct.email,'')
 		from billing.quotations q left join core.notes cn on cn.id = q.contact_id left join crm.contacts ct on ct.note_id = q.contact_id
 		where q.note_id = $1::uuid
 		union all
 		select 'invoice', coalesce(i.number,''), i.status, i.currency::text, i.total_minor,
 		       i.total_minor - i.paid_minor - i.credited_minor - i.written_off_minor,
-		       coalesce(cn.title,''), coalesce(ct.phone,'')
+		       coalesce(cn.title,''), coalesce(ct.phone,''), coalesce(ct.email,'')
 		from billing.invoices i left join core.notes cn on cn.id = i.contact_id left join crm.contacts ct on ct.note_id = i.contact_id
 		where i.note_id = $1::uuid and i.kind = 'invoice'
 		union all
-		select 'receipt', r.number, r.status, 'INR', r.amount_minor, 0::bigint, coalesce(cn.title,''), coalesce(ct.phone,'')
+		select 'receipt', r.number, r.status, 'INR', r.amount_minor, 0::bigint, coalesce(cn.title,''), coalesce(ct.phone,''), coalesce(ct.email,'')
 		from billing.receipts r left join core.notes cn on cn.id = r.contact_id left join crm.contacts ct on ct.note_id = r.contact_id
 		where r.note_id = $1::uuid and r.kind = 'receipt'`, noteID).
-		Scan(&d.kind, &d.number, &d.status, &d.currency, &d.total, &d.due, &d.contactName, &d.phone)
+		Scan(&d.kind, &d.number, &d.status, &d.currency, &d.total, &d.due, &d.contactName, &d.phone, &d.email)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return d, command.ErrInvalid("only quotations, invoices and receipts can be shared")
 	}
@@ -381,6 +392,127 @@ func revoke(c *command.Ctx, input json.RawMessage) (any, error) {
 
 // ---------- email ----------
 
+const sampleLink = "(link created when you send)"
+
+// eventFor picks the message event for a document and refuses reminders where they make no sense.
+func eventFor(d doc, v in) (string, error) {
+	level := v.ReminderLevel
+	if level == 0 && v.Reminder {
+		level = 1
+	}
+	if d.kind != "invoice" {
+		if level > 0 {
+			return "", command.ErrInvalid("payment reminders are for invoices only")
+		}
+		return map[string]string{"quotation": "quote.sent", "receipt": "receipt.sent"}[d.kind], nil
+	}
+	if level == 0 {
+		return "invoice.sent", nil
+	}
+	if d.status == "paid" || d.due <= 0 {
+		return "", command.ErrInvalid("invoice is paid")
+	}
+	return fmt.Sprintf("invoice.reminder_%d", level), nil
+}
+
+func values(c *command.Ctx, d doc, noteID, link string) (map[string]string, error) {
+	var vals map[string]string
+	var err error
+	switch d.kind {
+	case "invoice":
+		vals, err = emailtpl.InvoiceValues(c, noteID)
+	case "quotation":
+		vals, err = emailtpl.QuoteValues(c, noteID)
+	default:
+		vals, err = emailtpl.ReceiptValues(c, noteID)
+	}
+	if err != nil {
+		return nil, err
+	}
+	key := map[string]string{"invoice": "invoice.link", "quotation": "quote.link", "receipt": "receipt.link"}[d.kind]
+	vals[key] = link
+	return vals, nil
+}
+
+// compose renders the message for one send. Precedence: this send's own message > the workspace template for the event
+// > settings.share_message (legacy wording, invoice.sent and quote.sent only) > the code default.
+func compose(c *command.Ctx, d doc, v in, event, noteID, link string) (emailtpl.Rendered, error) {
+	vals, err := values(c, d, noteID, link)
+	if err != nil {
+		return emailtpl.Rendered{}, err
+	}
+	var o *emailtpl.Override
+	switch {
+	case v.Message != nil && strings.TrimSpace(*v.Message) != "":
+		o = &emailtpl.Override{Body: *v.Message} // the link is appended when the text has no link placeholder
+	case event == "invoice.sent" || event == "quote.sent":
+		var has bool
+		if err := c.Tx.QueryRow(c.Context, `select exists(select 1 from core.email_templates where workspace_id=$1::uuid and event=$2)`, c.WorkspaceID(), event).Scan(&has); err != nil {
+			return emailtpl.Rendered{}, command.DB(err)
+		}
+		if !has {
+			var raw []byte
+			if err := c.Tx.QueryRow(c.Context, "select settings from core.workspaces where id = $1::uuid", c.WorkspaceID()).Scan(&raw); err != nil {
+				return emailtpl.Rendered{}, command.DB(err)
+			}
+			var s struct {
+				Message string `json:"share_message"`
+			}
+			_ = json.Unmarshal(raw, &s)
+			if strings.TrimSpace(s.Message) != "" && len(s.Message) <= 1000 {
+				const mark = "\x00link\x00"
+				txt, err := shareMessage(c, d, mark, false)
+				if err != nil {
+					return emailtpl.Rendered{}, err
+				}
+				key := map[string]string{"invoice": "invoice.link", "quotation": "quote.link"}[d.kind]
+				o = &emailtpl.Override{Body: strings.ReplaceAll(txt, mark, "{{"+key+"}}")}
+			}
+		}
+	}
+	if v.Subject != nil && strings.TrimSpace(*v.Subject) != "" {
+		if o == nil {
+			o = &emailtpl.Override{}
+		}
+		o.Subject = strings.TrimSpace(*v.Subject)
+	}
+	return emailtpl.Render(c, event, vals, o)
+}
+
+// plan runs the checks share.email and share.preview have in common.
+func plan(c *command.Ctx, v in) (doc, string, error) {
+	var d doc
+	if v.NoteID == "" {
+		return d, "", command.ErrInvalid("note_id is required")
+	}
+	if _, err := access.AssertNoteAccess(c, v.NoteID, true); err != nil {
+		return d, "", err
+	}
+	d, err := loadDoc(c, v.NoteID)
+	if err != nil {
+		return d, "", err
+	}
+	event, err := eventFor(d, v)
+	return d, event, err
+}
+
+func preview(c *command.Ctx, input json.RawMessage) (any, error) {
+	v, err := decode(input)
+	if err != nil {
+		return nil, err
+	}
+	d, event, err := plan(c, v)
+	if err != nil {
+		return nil, err
+	}
+	v.Subject, v.Message = nil, nil
+	r, err := compose(c, d, v, event, v.NoteID, sampleLink)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"event": event, "subject": r.Subject, "text": r.Text, "html": r.HTML, "to": d.email}, nil
+}
+
 func email(c *command.Ctx, input json.RawMessage) (any, error) {
 	v, err := decode(input)
 	if err != nil {
@@ -390,24 +522,27 @@ func email(c *command.Ctx, input json.RawMessage) (any, error) {
 	if err != nil || addr.Address != strings.TrimSpace(v.To) || strings.ContainsAny(v.To, "\r\n") {
 		return nil, command.ErrInvalid("to must be a plain email address")
 	}
-	smtpURL, from := getenv("SMTP_URL"), getenv("EMAIL_FROM")
-	if smtpURL == "" || from == "" {
+	if !mailer.Configured() {
 		return nil, command.ErrInvalid("email is not configured on this server (SMTP_URL, EMAIL_FROM)")
+	}
+	v.Origin = nil // an emailed link only ever points at this server's own PUBLIC_WEB_URL
+	d, event, err := plan(c, v)
+	if err != nil {
+		return nil, err
 	}
 	m, err := issue(c, v)
 	if err != nil {
 		return nil, err
 	}
-	body := m.Message
-	if v.Message != nil && strings.TrimSpace(*v.Message) != "" {
-		body = *v.Message + "\n\n" + m.URL
-	}
-	subject := fmt.Sprintf("%s %s", strings.ToUpper(m.d.kind[:1])+m.d.kind[1:], m.d.number)
-	if err := sendMail(smtpURL, from, addr.Address, subject, body+"\n"); err != nil {
-		return nil, command.NewError(command.Internal, "the email could not be sent; no link was created")
-	}
-	if _, err := c.Emit("share.emailed", &v.NoteID, map[string]any{"link_id": m.ID, "to_domain": addr.Address[strings.LastIndex(addr.Address, "@")+1:]}); err != nil {
+	r, err := compose(c, d, v, event, v.NoteID, m.URL)
+	if err != nil {
 		return nil, err
 	}
-	return map[string]any{"sent": true, "link_id": m.ID, "expires_at": m.ExpiresAt}, nil
+	if _, err := mailer.Send(c.Context, mailer.Mail{To: addr.Address, ReplyTo: r.ReplyTo, FromName: r.FromName, Subject: r.Subject, Text: r.Text, HTML: r.HTML}); err != nil {
+		return nil, command.NewError(command.Internal, "the email could not be sent; no link was created")
+	}
+	if _, err := c.Emit("share.emailed", &v.NoteID, map[string]any{"link_id": m.ID, "event": event, "to_domain": addr.Address[strings.LastIndex(addr.Address, "@")+1:]}); err != nil {
+		return nil, err
+	}
+	return map[string]any{"sent": true, "link_id": m.ID, "expires_at": m.ExpiresAt, "event": event}, nil
 }

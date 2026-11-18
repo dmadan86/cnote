@@ -6,6 +6,7 @@
 package chat
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -19,7 +20,7 @@ import (
 
 	"github.com/cnote/api/internal/access"
 	"github.com/cnote/api/internal/command"
-	"github.com/cnote/api/internal/modules/publiclinks"
+	"github.com/cnote/api/internal/mailer"
 )
 
 func Commands() []command.Command {
@@ -748,7 +749,9 @@ func mailMention(c *command.Ctx, actor ident, ws, channel, to, title string) {
 		_ = c.Tx.QueryRow(c.Context, `select name || ' (agent)' from core.agents where id = $1::uuid`, *actor.agent).Scan(&who)
 	}
 	text := who + " mentioned you in " + title + "\n\n" + strings.TrimRight(base, "/") + "/w/" + ws + "/chat?c=" + channel + "\n"
-	go func() { _ = publiclinks.SendMail(smtpURL, from, to, "You were mentioned in "+title, text) }()
+	go func() {
+		_, _ = mailer.Send(context.Background(), mailer.Mail{To: to, Subject: "You were mentioned in " + title, Text: text})
+	}()
 }
 
 // own loads a message the caller wrote (a person's own, or an agent's own), in a channel the caller can see.

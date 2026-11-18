@@ -584,6 +584,7 @@ func TestShareEmail(t *testing.T) {
 	sink := startSMTP(t)
 	t.Setenv("SMTP_URL", "smtp://"+sink.ln.Addr().String())
 	t.Setenv("EMAIL_FROM", "billing@acme.example.test")
+	t.Setenv("PUBLIC_WEB_URL", "https://app.example.test") // the emailed link comes from here, never from the caller's origin
 	for _, bad := range []string{"", "not-an-email", "a@b.test\r\nBcc: x@y.test", "Name <a@b.test>", "a@b.test, c@d.test"} {
 		bad := map[string]any{"note_id": p.quoteID, "to": bad}
 		p.errIs("share.email", bad, 400, "invalid")
@@ -596,7 +597,7 @@ func TestShareEmail(t *testing.T) {
 		t.Fatalf("messages %d", len(sink.msgs))
 	}
 	m := sink.msgs[0]
-	for _, w := range []string{"To: customer@example.test", "From: billing@acme.example.test", "Subject: Quotation QT/", "Please review.", "https://app.example.test/p/"} {
+	for _, w := range []string{"To: customer@example.test", "<billing@acme.example.test>", "Subject: Quotation QT/", "Please review.", "https://app.example.test/p/"} {
 		if !strings.Contains(m, w) {
 			t.Fatalf("%q missing in %q", w, m)
 		}

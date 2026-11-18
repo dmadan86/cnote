@@ -17,7 +17,8 @@ import (
 
 	"github.com/cnote/api/internal/access"
 	"github.com/cnote/api/internal/command"
-	"github.com/cnote/api/internal/modules/publiclinks"
+	"github.com/cnote/api/internal/mailer"
+	"github.com/cnote/api/internal/modules/emailtpl"
 	"github.com/cnote/api/internal/secretbox"
 	"github.com/jackc/pgx/v5"
 )
@@ -51,13 +52,17 @@ func webBase() string {
 	return "http://localhost:3000"
 }
 
-// mailTo sends one plain-text email over SMTP_URL; (false, nil) means SMTP is not configured.
-func mailTo(to, subject, body string) (bool, error) {
-	smtpURL, from := env("SMTP_URL"), env("EMAIL_FROM")
-	if smtpURL == "" || from == "" {
-		return false, nil
+// mailRendered sends a branded message; (false, nil) means SMTP is not configured. It returns the Message-ID it set.
+func mailRendered(c *command.Ctx, to, event string, values map[string]string, o *emailtpl.Override) (sent bool, messageID string, err error) {
+	if !mailer.Configured() {
+		return false, "", nil
 	}
-	return true, publiclinks.SendMail(smtpURL, from, to, subject, body)
+	r, err := emailtpl.Render(c, event, values, o)
+	if err != nil {
+		return false, "", err
+	}
+	messageID, err = mailer.Send(c.Context, mailer.Mail{To: to, ReplyTo: r.ReplyTo, FromName: r.FromName, Subject: r.Subject, Text: r.Text, HTML: r.HTML})
+	return err == nil, messageID, err
 }
 
 func ticketReply(c *command.Ctx, raw json.RawMessage) (any, error) {
@@ -79,8 +84,9 @@ func ticketReply(c *command.Ctx, raw json.RawMessage) (any, error) {
 	var number int
 	var title string
 	var email *string
-	err = c.Tx.QueryRow(c.Context, `select t.number, n.title, ct.email from crm.tickets t join core.notes n on n.id=t.note_id
-		join crm.contacts ct on ct.note_id=t.contact_id where t.note_id=$1::uuid and n.deleted_at is null`, id).Scan(&number, &title, &email)
+	var contactName string
+	err = c.Tx.QueryRow(c.Context, `select t.number, n.title, ct.email, coalesce(cn.title,'') from crm.tickets t join core.notes n on n.id=t.note_id
+		join crm.contacts ct on ct.note_id=t.contact_id join core.notes cn on cn.id=ct.note_id where t.note_id=$1::uuid and n.deleted_at is null`, id).Scan(&number, &title, &email, &contactName)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, command.ErrNotFound("ticket")
 	}
@@ -96,15 +102,20 @@ func ticketReply(c *command.Ctx, raw json.RawMessage) (any, error) {
 		text += "\nView all your tickets: " + webBase() + "/portal/" + c.WorkspaceID()
 	}
 	// The email goes first so a failed send rolls the message back instead of leaving a reply nobody received.
-	sent, err := mailTo(*email, "["+ref+"] "+title, text)
+	sent, msgID, err := mailRendered(c, *email, "ticket.reply", map[string]string{"ticket.ref": ref, "ticket.subject": title, "ticket.message": text, "contact.name": contactName}, nil)
 	if err != nil {
 		slog.Warn("ticket reply email failed", "error", err)
 		return nil, command.ErrInvalid("the email could not be sent, so the reply was not saved; try again")
 	}
 	var mid string
 	var at time.Time
-	if err := c.Tx.QueryRow(c.Context, `insert into crm.ticket_messages(workspace_id,ticket_id,origin,body,author_id,emailed)
-		values($1::uuid,$2::uuid,'agent',$3,$4::uuid,$5) returning id::text, created_at`, c.WorkspaceID(), id, body, c.Principal.UserID, sent).Scan(&mid, &at); err != nil {
+	var sentID *string // the customer's reply quotes it, which is how mailin threads the reply into this ticket
+	if msgID != "" {
+		t := strings.Trim(msgID, "<>")
+		sentID = &t
+	}
+	if err := c.Tx.QueryRow(c.Context, `insert into crm.ticket_messages(workspace_id,ticket_id,origin,body,author_id,emailed,message_id)
+		values($1::uuid,$2::uuid,'agent',$3,$4::uuid,$5,$6) returning id::text, created_at`, c.WorkspaceID(), id, body, c.Principal.UserID, sent, sentID).Scan(&mid, &at); err != nil {
 		return nil, command.DB(err)
 	}
 	if _, err := c.Emit("ticket.replied", &id, map[string]any{"message_id": mid, "emailed": sent}); err != nil {

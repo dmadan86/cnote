@@ -17,6 +17,8 @@ import (
 
 	"github.com/cnote/api/internal/command"
 	"github.com/cnote/api/internal/db"
+	"github.com/cnote/api/internal/mailer"
+	"github.com/cnote/api/internal/modules/emailtpl"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -102,16 +104,30 @@ func PortalRequestLink(ctx context.Context, pool *pgxpool.Pool, ws, email string
 		ws, contact, hash, loginTTL.Seconds()); err != nil {
 		return command.DB(err)
 	}
+	// Fixed wording in the branded layout (the ticket.reply event's sign-off and footer); rendered here, sent after commit.
+	body := "Sign in to your tickets with " + name + ":\n\n" + webBase() + "/portal/" + ws + "/verify#" + token +
+		"\n\nThis link works once and expires in 15 minutes. If you did not ask for it, ignore this email."
+	var msg mailer.Mail
+	if mailer.Configured() {
+		sys := &command.Ctx{Context: ctx, Tx: tx, Principal: command.Principal{Kind: command.KindSystem, WorkspaceID: ws, Role: command.Admin}}
+		r, err := emailtpl.Render(sys, "ticket.reply", map[string]string{"ticket.subject": "Your sign-in link for " + name, "ticket.message": body},
+			&emailtpl.Override{Subject: "{{ticket.subject}}"})
+		if err != nil {
+			slog.Warn("portal sign-in email not rendered", "error", err)
+		} else {
+			msg = mailer.Mail{To: email, FromName: r.FromName, Subject: r.Subject, Text: r.Text, HTML: r.HTML}
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return command.DB(err)
 	}
-	go func() {
-		body := "Sign in to your tickets with " + name + ":\n\n" + webBase() + "/portal/" + ws + "/verify#" + token +
-			"\n\nThis link works once and expires in 15 minutes. If you did not ask for it, ignore this email."
-		if _, err := mailTo(email, "Your sign-in link for "+name, body); err != nil {
-			slog.Warn("portal sign-in email failed", "error", err)
-		}
-	}()
+	if msg.To != "" {
+		go func() {
+			if _, err := mailer.Send(context.Background(), msg); err != nil {
+				slog.Warn("portal sign-in email failed", "error", err)
+			}
+		}()
+	}
 	return nil
 }
 
