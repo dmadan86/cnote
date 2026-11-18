@@ -1,6 +1,7 @@
 'use client'
+import { CalendarOff } from 'lucide-react'
 import { useState } from 'react'
-import { btn, btnPrimary, ErrorText, Field, inputCls, Modal, Pill } from '@/components/ui'
+import { btn, btnPrimary, EmptyState, ErrorText, Field, inputCls, Modal, Pill } from '@/components/ui'
 import { cmd } from '@/lib/api'
 import { useCmd } from '@/lib/hooks'
 import { isAdminRole, PeopleTabs, useRole } from './shared'
@@ -188,7 +189,9 @@ export function LeavePage() {
             </li>
           ))}
           {reqs.data && reqs.data.length === 0 && (
-            <li className="px-3 py-4 text-[13px] text-muted">No leave requests.</li>
+            <li>
+              <EmptyState compact icon={CalendarOff} title="No leave requests" />
+            </li>
           )}
         </ul>
       </section>

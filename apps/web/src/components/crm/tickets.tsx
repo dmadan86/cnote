@@ -1,10 +1,10 @@
 'use client'
-import { AlertTriangle, Clock } from 'lucide-react'
+import { AlertTriangle, Clock, LifeBuoy, Search } from 'lucide-react'
 import Link from 'next/link'
 import { useState } from 'react'
 import { SubNav } from '@/components/billing/bits'
 import { useShell } from '@/components/shell'
-import { btn, btnPrimary, ErrorText, Field, inputCls, Modal, Pill } from '@/components/ui'
+import { btn, btnPrimary, EmptyState, ErrorText, Field, inputCls, Modal, Pill } from '@/components/ui'
 import { cmd } from '@/lib/api'
 import { ago, useCmd } from '@/lib/hooks'
 
@@ -159,16 +159,19 @@ export function TicketList({ initialBreached = false }: { initialBreached?: bool
       <ErrorText error={list.error} />
       {list.data?.length === 0 &&
         (filtered ? (
-          <p className="text-muted">
-            No matching tickets.{' '}
-            <button type="button" className="underline" onClick={clear}>
-              Clear filters
-            </button>
-          </p>
+          <EmptyState
+            icon={Search}
+            title="No matching tickets"
+            action={
+              <button type="button" className={btn} onClick={clear}>
+                Clear filters
+              </button>
+            }
+          />
         ) : (
-          <p className="text-muted">
-            No open tickets. Nice. New ones from your public form or the New ticket button show up here.
-          </p>
+          <EmptyState icon={LifeBuoy} title="No open tickets">
+            New ones from your public form or the New ticket button show up here.
+          </EmptyState>
         ))}
       <ul className="space-y-2">
         {list.data?.map((t) => (

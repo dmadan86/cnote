@@ -1,10 +1,10 @@
 'use client'
-import { Plus, Search } from 'lucide-react'
+import { Plus, Search, Users } from 'lucide-react'
 import Link from 'next/link'
 import { useState } from 'react'
 import { type Contact, STATES, stateName } from '@/components/billing/fmt'
 import { useShell } from '@/components/shell'
-import { btn, btnPrimary, ErrorText, Field, inputCls, Modal } from '@/components/ui'
+import { btn, btnPrimary, EmptyState, ErrorText, Field, inputCls, Modal } from '@/components/ui'
 import { cmd } from '@/lib/api'
 import { useCmd } from '@/lib/hooks'
 
@@ -168,7 +168,21 @@ export function ContactsList() {
       <ErrorText error={error} />
       {!spaces.length && <NeedSpace />}
       {data?.length === 0 && spaces.length > 0 && (
-        <p className="py-8 text-center text-muted">{q ? 'No contacts match.' : 'No contacts yet.'}</p>
+        <EmptyState
+          icon={q ? Search : Users}
+          title={q ? 'No contacts match' : 'No contacts yet'}
+          action={
+            q ? undefined : (
+              <button type="button" className={btnPrimary} onClick={() => setAdding(true)}>
+                <Plus size={14} /> Add first contact
+              </button>
+            )
+          }
+        >
+          {q
+            ? 'Try a different name, email or GSTIN.'
+            : 'Customers, vendors and leads you deal with live here.'}
+        </EmptyState>
       )}
       {!!data?.length && (
         <table className="w-full text-left text-[14px]">

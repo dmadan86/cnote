@@ -1,9 +1,9 @@
 'use client'
-import { ArrowLeft, Plus } from 'lucide-react'
+import { ArrowLeft, Package, Plus } from 'lucide-react'
 import Link from 'next/link'
 import { use, useState } from 'react'
 import { useShell } from '@/components/shell'
-import { btn, btnPrimary, ErrorText, Field, inputCls, Modal, Pill } from '@/components/ui'
+import { btn, btnPrimary, EmptyState, ErrorText, Field, inputCls, Modal, Pill } from '@/components/ui'
 import { useCmd } from '@/lib/hooks'
 import { run } from './bits'
 import { money, parseMinor } from './fmt'
@@ -605,9 +605,21 @@ export function StockList() {
       <Valuation />
       <ErrorText error={items.error} />
       {items.data && items.data.length === 0 && (
-        <p className="rounded-lg border border-dashed border-line p-6 text-center text-[14px] text-muted">
-          {q || low ? 'No items match.' : 'No items yet. Create your first item, then add opening stock.'}
-        </p>
+        <EmptyState
+          icon={Package}
+          title={q || low ? 'No items match' : 'No items yet'}
+          action={
+            q || low ? undefined : (
+              <button type="button" className={btnPrimary} onClick={() => setDlg({ kind: 'new' })}>
+                <Plus size={14} /> Add first item
+              </button>
+            )
+          }
+        >
+          {q || low
+            ? 'Try a different search or clear the low-stock filter.'
+            : 'Create your first item, then add opening stock.'}
+        </EmptyState>
       )}
       {!!items.data?.length && (
         <div className="overflow-x-auto rounded-lg border border-line">

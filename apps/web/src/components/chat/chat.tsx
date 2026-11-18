@@ -5,6 +5,7 @@ import {
   FileText,
   Hash,
   Lock,
+  MessageSquare,
   MessageSquareReply,
   Plus,
   Receipt,
@@ -17,7 +18,7 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { MentionField } from '@/components/mention-field'
 import { useShell } from '@/components/shell'
-import { Avatar, btn, btnPrimary, ErrorText, Field, inputCls, Modal } from '@/components/ui'
+import { Avatar, btn, btnPrimary, EmptyState, ErrorText, Field, inputCls, Modal } from '@/components/ui'
 import { cmd } from '@/lib/api'
 import { subscribeChat } from '@/lib/chat-stream'
 
@@ -627,7 +628,9 @@ export function ChatPage() {
         </div>
         <ul aria-label="Channels">{(chans ?? []).filter((c) => c.kind !== 'dm').map(row)}</ul>
         {chans && !chans.some((c) => c.kind !== 'dm') && (
-          <p className="px-2 text-[13px] text-muted">No channels yet. Create one to start.</p>
+          <EmptyState compact icon={Hash} title="No channels yet">
+            Use + to create one.
+          </EmptyState>
         )}
         <div className="flex items-center justify-between pt-4 pb-1">
           <h2 className="text-[12px] font-semibold uppercase tracking-wide text-muted">Direct messages</h2>
@@ -709,7 +712,9 @@ export function ChatPage() {
                 </button>
               )}
               {thread && thread.messages.length === 0 && (
-                <p className="py-8 text-center text-[13px] text-muted">No messages yet. Say hello.</p>
+                <EmptyState icon={MessageSquare} title="No messages yet">
+                  Say hello.
+                </EmptyState>
               )}
               {thread?.messages.map((m) => {
                 const d = dayOf(m.created_at)

@@ -1,12 +1,12 @@
 'use client'
-import { Plus, Trash2 } from 'lucide-react'
+import { FileText, Plus, Trash2 } from 'lucide-react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { use, useState } from 'react'
 import { ApprovalBanner } from '@/components/approvals/banner'
 import { NeedSpace } from '@/components/crm/contacts'
 import { useShell } from '@/components/shell'
-import { btn, btnPrimary, ErrorText, Field, inputCls, Modal, Pill } from '@/components/ui'
+import { btn, btnPrimary, EmptyState, ErrorText, Field, inputCls, Modal, Pill } from '@/components/ui'
 import { useCmd } from '@/lib/hooks'
 import { Confirm, run } from './bits'
 import { Totals } from './editor'
@@ -128,7 +128,21 @@ export function QuoteList() {
       <ErrorText error={error} />
       {!spaces.length && <NeedSpace />}
       {data?.length === 0 && spaces.length > 0 && (
-        <p className="py-8 text-center text-muted">{status ? 'Nothing matches.' : 'No quotes yet.'}</p>
+        <EmptyState
+          icon={FileText}
+          title={status ? 'No quotes match' : 'No quotes yet'}
+          action={
+            status ? undefined : (
+              <button type="button" className={btnPrimary} onClick={() => setAdding(true)}>
+                <Plus size={14} /> Create first quote
+              </button>
+            )
+          }
+        >
+          {status
+            ? 'No quote has this status.'
+            : 'Send a customer a price before you invoice. Accepted quotes convert to projects.'}
+        </EmptyState>
       )}
       {!!data?.length && (
         <table className="w-full text-left text-[14px]">
