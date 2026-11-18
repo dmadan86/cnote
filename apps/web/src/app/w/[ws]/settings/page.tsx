@@ -1,4 +1,21 @@
 'use client'
+import {
+  Bot,
+  Building2,
+  EyeOff,
+  Gauge,
+  History,
+  KeyRound,
+  KeySquare,
+  ListChecks,
+  Lock,
+  type LucideIcon,
+  Plug,
+  Settings2,
+  ShieldCheck,
+  Users,
+  Webhook,
+} from 'lucide-react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useEffect, useState } from 'react'
@@ -17,19 +34,30 @@ import { ago, useCmd } from '@/lib/hooks'
 import { GROUPS } from '@/lib/tool-groups'
 
 // Keys stay stable: they are the ?tab= values other pages and e2e link to.
-type SettingsTab = { key: string; label: string; desc: string }
+type SettingsTab = { key: string; label: string; desc: string; icon: LucideIcon }
 const SECTIONS: { group: string; tabs: SettingsTab[] }[] = [
   {
     group: 'Workspace',
     tabs: [
-      { key: 'Workspace', label: 'General', desc: 'Workspace name, business type and modules.' },
+      {
+        key: 'Workspace',
+        icon: Settings2,
+        label: 'General',
+        desc: 'Workspace name, business type and modules.',
+      },
       {
         key: 'Company',
+        icon: Building2,
         label: 'Company profile',
         desc: 'Legal name, GSTIN, PAN, bank and branches printed on your documents.',
       },
-      { key: 'Members', label: 'Members', desc: 'Who is in this workspace and what they can do.' },
-      { key: 'Usage', label: 'Usage', desc: 'What this workspace has used this month.' },
+      {
+        key: 'Members',
+        icon: Users,
+        label: 'Members',
+        desc: 'Who is in this workspace and what they can do.',
+      },
+      { key: 'Usage', icon: Gauge, label: 'Usage', desc: 'What this workspace has used this month.' },
     ],
   },
   {
@@ -37,11 +65,13 @@ const SECTIONS: { group: string; tabs: SettingsTab[] }[] = [
     tabs: [
       {
         key: 'Approvals',
+        icon: ListChecks,
         label: 'Approval rules',
         desc: 'Which payments and documents need someone to approve them first.',
       },
       {
         key: 'Confirmations',
+        icon: ShieldCheck,
         label: 'Agent confirmations',
         desc: 'Actions agents asked to take that are waiting for you.',
       },
@@ -50,11 +80,26 @@ const SECTIONS: { group: string; tabs: SettingsTab[] }[] = [
   {
     group: 'AI & integrations',
     tabs: [
-      { key: 'Agents', label: 'Agents', desc: 'AI agents that work in this workspace.' },
-      { key: 'Tool groups', label: 'Agent permissions', desc: 'What agents and API keys are allowed to do.' },
-      { key: 'Connected apps', label: 'Connected apps', desc: 'Apps you signed in to with C Note.' },
-      { key: 'API keys', label: 'API keys', desc: 'Keys for scripts and other software.' },
-      { key: 'Webhooks', label: 'Webhooks', desc: 'Tell other systems when something changes here.' },
+      { key: 'Agents', icon: Bot, label: 'Agents', desc: 'AI agents that work in this workspace.' },
+      {
+        key: 'Tool groups',
+        icon: KeyRound,
+        label: 'Agent permissions',
+        desc: 'What agents and API keys are allowed to do.',
+      },
+      {
+        key: 'Connected apps',
+        icon: Plug,
+        label: 'Connected apps',
+        desc: 'Apps you signed in to with C Note.',
+      },
+      { key: 'API keys', icon: KeySquare, label: 'API keys', desc: 'Keys for scripts and other software.' },
+      {
+        key: 'Webhooks',
+        icon: Webhook,
+        label: 'Webhooks',
+        desc: 'Tell other systems when something changes here.',
+      },
     ],
   },
   {
@@ -62,15 +107,22 @@ const SECTIONS: { group: string; tabs: SettingsTab[] }[] = [
     tabs: [
       {
         key: 'Security',
+        icon: Lock,
         label: 'Sign-in & security',
         desc: 'Two-step sign-in, single sign-on and active sessions.',
       },
       {
         key: 'Privacy',
+        icon: EyeOff,
         label: 'Privacy',
         desc: 'Personal data requests under the DPDP Act: export and erasure.',
       },
-      { key: 'Audit log', label: 'Audit log', desc: 'A record of who changed what, and when.' },
+      {
+        key: 'Audit log',
+        icon: History,
+        label: 'Audit log',
+        desc: 'A record of who changed what, and when.',
+      },
     ],
   },
 ]
@@ -498,8 +550,9 @@ export default function Settings() {
                   <Link
                     href={href(t.key)}
                     aria-current={t.key === tab ? 'page' : undefined}
-                    className="block rounded-md px-2 py-1.5 text-[13px] text-muted hover:bg-hover hover:text-fg aria-[current=page]:bg-hover aria-[current=page]:font-medium aria-[current=page]:text-fg"
+                    className="flex items-center gap-2 rounded-md px-2 py-1.5 text-[13px] text-muted hover:bg-hover hover:text-fg aria-[current=page]:bg-hover aria-[current=page]:font-medium aria-[current=page]:text-fg"
                   >
+                    <t.icon size={15} aria-hidden className="shrink-0" />
                     {t.label}
                   </Link>
                 </li>
