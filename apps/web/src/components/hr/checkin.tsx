@@ -1,4 +1,5 @@
 'use client'
+import { Clock, LogIn } from 'lucide-react'
 import { useState } from 'react'
 import { ErrorText } from '@/components/ui'
 import { cmd } from '@/lib/api'
@@ -7,7 +8,7 @@ import { timeOf, useRole } from './shared'
 
 type Today = { day: string; me: { status: string; in_at: string | null; out_at: string | null } | null }
 
-/** The staff member's own check in / out, one big button. Nothing shows as done until the server confirms. */
+/** The staff member's own check in / out, one row with the button (44px tap target on phones). Nothing shows as done until the server confirms. */
 export function CheckInCard() {
   const { ws, role } = useRole()
   const { data, reload } = useCmd<Today>(ws, 'attendance.today', {}, role !== 'guest')
@@ -30,21 +31,30 @@ export function CheckInCard() {
     }
   }
   return (
-    <section aria-label="Your attendance" className="rounded-lg border border-line p-3">
-      <p className="text-[13px] font-medium text-muted">Today, {data.day}</p>
-      <p className="mt-1 text-[15px]" aria-live="polite">
-        {me.status === 'leave'
-          ? 'You are on leave today.'
-          : checkedIn
-            ? `Checked in at ${timeOf(me.in_at)}${done ? `, out at ${timeOf(me.out_at)}` : ''}`
-            : 'You have not checked in yet.'}
-      </p>
+    <section
+      aria-label="Your attendance"
+      className="flex flex-wrap items-center gap-3 rounded-lg border border-line p-3"
+    >
+      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-line bg-hover text-muted">
+        <Clock size={16} aria-hidden />
+      </span>
+      <div className="min-w-0 flex-1">
+        <p className="text-[12px] text-muted">Today, {data.day}</p>
+        <p className="text-[14px] font-medium" aria-live="polite">
+          {me.status === 'leave'
+            ? 'You are on leave today.'
+            : checkedIn
+              ? `Checked in at ${timeOf(me.in_at)}${done ? `, out at ${timeOf(me.out_at)}` : ''}`
+              : 'You have not checked in yet.'}
+        </p>
+      </div>
       <button
         type="button"
         disabled={busy}
         onClick={() => act(checkedIn ? 'attendance.check_out' : 'attendance.check_in')}
-        className="mt-3 inline-flex min-h-14 w-full items-center justify-center rounded-md bg-accent px-4 text-[16px] font-semibold text-accent-fg hover:opacity-90 disabled:opacity-50"
+        className="inline-flex min-h-11 items-center justify-center gap-1.5 rounded-md bg-accent px-4 text-[14px] font-medium text-accent-fg hover:opacity-90 disabled:opacity-50 sm:min-h-9"
       >
+        <LogIn size={15} aria-hidden />
         {busy ? 'Saving...' : checkedIn ? (done ? 'Check out again' : 'Check out') : 'Check in'}
       </button>
       <ErrorText error={err} />
