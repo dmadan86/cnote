@@ -1,9 +1,10 @@
 'use client'
+import { SearchX } from 'lucide-react'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
 import { Suspense, useEffect, useState } from 'react'
 import { useShell } from '@/components/shell'
-import { FreshnessPill } from '@/components/ui'
+import { EmptyState, FreshnessPill } from '@/components/ui'
 import { api, cmd } from '@/lib/api'
 
 type Hit = { id: string; title: string; freshness: string; snippet: string }
@@ -36,7 +37,11 @@ function Results() {
     <div className="mx-auto max-w-3xl space-y-4 px-6 py-8">
       <h1 className="text-xl font-semibold">Results for "{q}"</h1>
       {loading && q && <p className="text-muted">Searching...</p>}
-      {data?.length === 0 && <p className="text-muted">No pages match.</p>}
+      {data?.length === 0 && (
+        <EmptyState icon={SearchX} title="No pages match">
+          Check the spelling or try fewer words.
+        </EmptyState>
+      )}
       <ul className="space-y-2">
         {data?.map((h) => (
           <li key={h.id} className="rounded-md border border-line p-3">

@@ -123,7 +123,10 @@ test('SAML single sign-on configured in settings, and role-gated controls', asyn
     const me = await (await page.request.get('/api/auth/me')).json()
     const slug: string = me.workspaces[0].slug
     await page.getByRole('link', { name: 'Settings' }).first().click()
-    await page.getByRole('tab', { name: 'Security' }).click()
+    await page
+      .getByRole('navigation', { name: 'Settings' })
+      .getByRole('link', { name: 'Sign-in & security', exact: true })
+      .click()
     await page.getByLabel('Domain to add').fill('e2e-saml.test')
     await page.getByRole('button', { name: 'Add domain' }).click()
     await expect(page.getByTestId('txt-record')).toContainText('cnote-verification=')
@@ -138,7 +141,10 @@ test('SAML single sign-on configured in settings, and role-gated controls', asyn
       { stdio: 'pipe' },
     )
     await page.reload()
-    await page.getByRole('tab', { name: 'Security' }).click()
+    await page
+      .getByRole('navigation', { name: 'Settings' })
+      .getByRole('link', { name: 'Sign-in & security', exact: true })
+      .click()
     await page.getByLabel('SAML 2.0').check()
     await expect(page.getByRole('textbox', { name: 'Service provider metadata URL' })).toHaveValue(
       new RegExp(`/api/auth/saml/${slug}/metadata$`),
@@ -171,7 +177,10 @@ test('SAML single sign-on configured in settings, and role-gated controls', asyn
 
     // owner-only controls are not offered to a non-owner: no domain form, no SSO form, a read-only note instead
     await p2.getByRole('link', { name: 'Settings' }).first().click()
-    await p2.getByRole('tab', { name: 'Security' }).click()
+    await p2
+      .getByRole('navigation', { name: 'Settings' })
+      .getByRole('link', { name: 'Sign-in & security', exact: true })
+      .click()
     await expect(p2.getByText(/Only workspace owners and admins can see sign-in security/)).toBeVisible()
     await expect(p2.getByRole('button', { name: 'Add domain' })).toHaveCount(0)
     await expect(p2.getByRole('button', { name: 'Save single sign-on' })).toHaveCount(0)

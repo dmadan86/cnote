@@ -1,5 +1,6 @@
 'use client'
-import { Pill } from '@/components/ui'
+import { Upload } from 'lucide-react'
+import { EmptyState, Pill } from '@/components/ui'
 import { ago } from '@/lib/hooks'
 import type { Job } from './types'
 
@@ -10,7 +11,11 @@ export function JobList({ jobs, error }: { jobs?: Job[]; error?: Error }) {
   return (
     <section aria-label="Import jobs" className="space-y-3">
       <h2 className="text-[15px] font-semibold">Recent imports</h2>
-      {jobs?.length === 0 && <p className="text-muted">No imports yet.</p>}
+      {jobs?.length === 0 && (
+        <EmptyState compact icon={Upload} title="No imports yet">
+          Imports you run will be listed here with their results.
+        </EmptyState>
+      )}
       <ul className="space-y-2">
         {jobs?.map((j) => {
           const r = j.report

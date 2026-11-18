@@ -1,13 +1,14 @@
 'use client'
+import { FileText } from 'lucide-react'
 import Link from 'next/link'
 import type { Note } from '@/lib/api'
 import { ago } from '@/lib/hooks'
 import { useShell } from './shell'
-import { FreshnessPill } from './ui'
+import { EmptyState, FreshnessPill } from './ui'
 
 export function PageList({ pages, empty }: { pages: Note[]; empty: string }) {
   const { ws, spaces } = useShell()
-  if (!pages.length) return <p className="py-3 text-muted">{empty}</p>
+  if (!pages.length) return <EmptyState compact icon={FileText} title={empty} />
   return (
     <ul className="divide-y divide-line rounded-md border border-line">
       {pages.map((n) => (

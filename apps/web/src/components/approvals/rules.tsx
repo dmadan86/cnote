@@ -1,4 +1,5 @@
 'use client'
+import { ChevronRight, Info, Pencil, Plus, Trash2, X } from 'lucide-react'
 import { useState } from 'react'
 import { parseMinor, toRupees } from '@/components/billing/fmt'
 import { btn, btnPrimary, ErrorText, inputCls } from '@/components/ui'
@@ -29,6 +30,14 @@ const fromCode = (c: string) =>
       ? { kind: 'department_head' }
       : { kind: 'user', user_id: c }
 type Member = { user_id: string; name: string; role: string }
+const savedSteps = (rule?: Rule): StepForm[] =>
+  rule?.steps?.length
+    ? rule.steps.map((st) => ({
+        mode: st.mode,
+        min: st.min_amount_minor ? toRupees(st.min_amount_minor) : '',
+        approvers: st.approvers.map(toCode),
+      }))
+    : [{ mode: 'any', min: '', approvers: ['admin'] }]
 
 function RuleRow({
   ws,
@@ -47,15 +56,7 @@ function RuleRow({
 }) {
   const [on, setOn] = useState(rule?.enabled ?? false)
   const [amount, setAmount] = useState(rule ? toRupees(rule.min_amount_minor) : '')
-  const [steps, setSteps] = useState<StepForm[]>(
-    rule?.steps?.length
-      ? rule.steps.map((st) => ({
-          mode: st.mode,
-          min: st.min_amount_minor ? toRupees(st.min_amount_minor) : '',
-          approvers: st.approvers.map(toCode),
-        }))
-      : [{ mode: 'any', min: '', approvers: ['admin'] }],
-  )
+  const [steps, setSteps] = useState<StepForm[]>(() => savedSteps(rule))
   const setStep = (i: number, f: (s: StepForm) => StepForm) =>
     setSteps((all) => all.map((x, j) => (j === i ? f(x) : x)))
   const [fallback, setFallback] = useState(rule?.fallback_user_id ?? '')
@@ -70,15 +71,28 @@ function RuleRow({
         : c === 'dept_head'
           ? "the requester's department head"
           : (people.find((p) => p.user_id === c)?.name ?? 'someone')
-  const summary = steps
-    .map(
-      (st) => who(st.approvers[0]) + (st.approvers.length > 1 ? ` and ${st.approvers.length - 1} more` : ''),
-    )
-    .join(', then ')
+  const [open, setOpen] = useState(false)
+  const people2 = people.filter((p) => p.role !== 'guest')
+  const approverOptions = (
+    <>
+      <option value="admin">Any admin</option>
+      <option value="owner">Owner</option>
+      <option value="dept_head">Requester's department head</option>
+      {people2.map((p) => (
+        <option key={p.user_id} value={p.user_id}>
+          {p.name}
+        </option>
+      ))}
+    </>
+  )
+  const sized = inputCls.replace('w-full ', '')
+  const short = (c: string) =>
+    c === 'admin' ? 'Any admin' : c === 'owner' ? 'Owner' : c === 'dept_head' ? 'Department head' : who(c)
+  const rupees = (v: string) => (Number(v) ? `₹${Number(v).toLocaleString('en-IN')}` : '₹0')
+  const chip = 'inline-flex items-center rounded-full border border-line bg-hover px-2 py-0.5 text-[12px]'
   return (
-    <li className="space-y-3 py-4">
+    <li className="rounded-lg border border-line">
       <form
-        className="space-y-3"
         onSubmit={async (e) => {
           e.preventDefault()
           setErr(undefined)
@@ -103,184 +117,281 @@ function RuleRow({
               ...(fallback ? { fallback_user_id: fallback, escalate_after_hours: h } : {}),
             })
             setMsg('Saved')
+            setOpen(false)
             saved()
           } catch (x) {
             setErr((x as Error).message)
           }
         }}
       >
-        <div className="flex items-center justify-between gap-3">
-          <label className="flex items-center gap-2 text-[14px] font-medium">
-            <input
-              type="checkbox"
-              checked={on}
-              onChange={(e) => setOn(e.target.checked)}
-              aria-label={`Require approval to ${label.toLowerCase()}`}
-            />
-            {label}
-          </label>
-          <span className="text-[12px] text-muted">
-            {on
-              ? `Needs approval from ${summary} at or above ₹${amount || '0'}. Below it goes straight through. The owner is never held.`
-              : 'Off: anyone allowed can do this directly.'}
-          </span>
-        </div>
-        {on && (
-          <div className="grid gap-3 sm:grid-cols-3">
-            <label className="block space-y-1">
-              <span className="text-[12px] font-medium text-muted">From amount (₹, 0 = always)</span>
-              <input
-                className={inputCls}
-                inputMode="decimal"
-                value={amount}
-                onChange={(e) => setAmount(e.target.value)}
-                placeholder="100000"
-              />
-            </label>
-            <label className="block space-y-1">
-              <span className="text-[12px] font-medium text-muted">If no answer, ask</span>
-              <select className={inputCls} value={fallback} onChange={(e) => setFallback(e.target.value)}>
-                <option value="">Nobody</option>
-                {people
-                  .filter((p) => p.role !== 'guest')
-                  .map((p) => (
-                    <option key={p.user_id} value={p.user_id}>
-                      {p.name}
-                    </option>
-                  ))}
-              </select>
-            </label>
-            <label className="block space-y-1">
-              <span className="text-[12px] font-medium text-muted">after (hours)</span>
-              <input
-                className={inputCls}
-                inputMode="numeric"
-                value={hours}
-                disabled={!fallback}
-                onChange={(e) => setHours(e.target.value)}
-              />
-            </label>
+        <div className="flex items-start gap-3 p-4">
+          <input
+            type="checkbox"
+            role="switch"
+            aria-checked={on}
+            checked={on}
+            onChange={(e) => {
+              setOn(e.target.checked)
+              setOpen(true)
+              setMsg('')
+            }}
+            aria-label={`Require approval to ${label.toLowerCase()}`}
+            className="relative mt-0.5 h-5 w-9 shrink-0 cursor-pointer appearance-none rounded-full bg-line transition-colors checked:bg-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent after:absolute after:top-0.5 after:left-0.5 after:h-4 after:w-4 after:rounded-full after:bg-canvas after:shadow-sm after:transition-transform checked:after:translate-x-4"
+          />
+          <div className="min-w-0 flex-1">
+            <div className="text-[14px] font-medium">{label}</div>
+            {on ? (
+              <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[12px] text-muted">
+                <span>When amount ≥</span>
+                <span className={chip}>{rupees(amount)}</span>
+                {steps.map((st, i) => (
+                  // biome-ignore lint/suspicious/noArrayIndexKey: steps are positional
+                  <span key={i} className="inline-flex items-center gap-1.5">
+                    <ChevronRight size={13} aria-hidden />
+                    <span className={chip}>
+                      {short(st.approvers[0])}
+                      {st.approvers.length > 1
+                        ? ` ${st.mode === 'all' ? 'and' : 'or'} ${st.approvers.length - 1} more`
+                        : ''}
+                    </span>
+                  </span>
+                ))}
+              </div>
+            ) : (
+              <p className="mt-1 text-[12px] text-muted">Off · anyone allowed can do this directly.</p>
+            )}
           </div>
-        )}
-        {on && (
-          <fieldset className="space-y-3">
-            <legend className="text-[12px] font-medium text-muted">
-              Approval steps, in order. A step is skipped when the amount is below its own limit.
-            </legend>
-            {steps.map((st, i) => (
-              // biome-ignore lint/suspicious/noArrayIndexKey: steps are positional
-              <div key={i} className="space-y-2 rounded-md border border-line p-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-[13px] font-medium">Step {i + 1}</span>
-                  {steps.length > 1 && (
+          {!open && (
+            <button type="button" className={btn} onClick={() => setOpen(true)}>
+              <Pencil size={13} aria-hidden /> Edit
+            </button>
+          )}
+          {msg && !open && (
+            <span role="status" className="self-center text-[12px] text-muted">
+              {msg}
+            </span>
+          )}
+        </div>
+
+        {open && (
+          <div className="space-y-5 border-t border-line bg-side/60 p-4">
+            {on && (
+              <>
+                <section className="space-y-2">
+                  <h4 className="text-[11px] font-medium uppercase tracking-wide text-muted">When</h4>
+                  <label className="flex flex-wrap items-center gap-2 text-[13px]">
+                    <span>The amount is at least</span>
+                    <span className="relative">
+                      <span className="pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2 text-muted">
+                        ₹
+                      </span>
+                      <input
+                        aria-label="From amount (₹, 0 = always)"
+                        className={`${sized} w-40 pl-6`}
+                        inputMode="decimal"
+                        value={amount}
+                        onChange={(e) => setAmount(e.target.value)}
+                        placeholder="0"
+                      />
+                    </span>
+                    <span className="text-[12px] text-muted">
+                      0 means always. Below it goes straight through.
+                    </span>
+                  </label>
+                </section>
+
+                <section className="space-y-2">
+                  <h4 className="text-[11px] font-medium uppercase tracking-wide text-muted">
+                    Then ask, in order
+                  </h4>
+                  <ol className="space-y-0">
+                    {steps.map((st, i) => (
+                      // biome-ignore lint/suspicious/noArrayIndexKey: steps are positional
+                      <li key={i} className="relative flex gap-3 pb-3">
+                        {i < steps.length - 1 && (
+                          <span aria-hidden className="absolute top-7 bottom-0 left-3 w-px bg-line" />
+                        )}
+                        <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-accent text-[12px] font-medium text-accent-fg">
+                          {i + 1}
+                        </span>
+                        <div className="min-w-0 flex-1 space-y-2 rounded-md border border-line bg-canvas p-3">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[13px] font-medium">Step {i + 1}</span>
+                            {steps.length > 1 && (
+                              <button
+                                type="button"
+                                aria-label={`Remove step ${i + 1}`}
+                                title="Remove step"
+                                className="rounded p-1 text-muted hover:bg-hover hover:text-fg"
+                                onClick={() => setSteps((all) => all.filter((_, j) => j !== i))}
+                              >
+                                <Trash2 size={14} aria-hidden />
+                              </button>
+                            )}
+                          </div>
+                          {st.approvers.map((c, k) => (
+                            // biome-ignore lint/suspicious/noArrayIndexKey: approvers are positional
+                            <div key={k} className="flex items-center gap-2">
+                              {k > 0 && (
+                                <span className="w-10 shrink-0 text-center text-[12px] text-muted">
+                                  {st.mode === 'all' ? 'and' : 'or'}
+                                </span>
+                              )}
+                              <select
+                                aria-label={`Step ${i + 1} approver ${k + 1}`}
+                                className={`${sized} w-full max-w-xs`}
+                                value={c}
+                                onChange={(e) =>
+                                  setStep(i, (x) => ({
+                                    ...x,
+                                    approvers: x.approvers.map((y, j) => (j === k ? e.target.value : y)),
+                                  }))
+                                }
+                              >
+                                {approverOptions}
+                              </select>
+                              {st.approvers.length > 1 && (
+                                <button
+                                  type="button"
+                                  aria-label={`Remove approver ${k + 1} from step ${i + 1}`}
+                                  className="rounded p-1 text-muted hover:bg-hover hover:text-fg"
+                                  onClick={() =>
+                                    setStep(i, (x) => ({
+                                      ...x,
+                                      approvers: x.approvers.filter((_, j) => j !== k),
+                                    }))
+                                  }
+                                >
+                                  <X size={14} aria-hidden />
+                                </button>
+                              )}
+                            </div>
+                          ))}
+                          <div className="flex flex-wrap items-center gap-3 pt-1">
+                            {st.approvers.length < 5 && (
+                              <button
+                                type="button"
+                                className="inline-flex items-center gap-1 text-[12px] font-medium text-accent hover:underline"
+                                onClick={() =>
+                                  setStep(i, (x) => ({ ...x, approvers: [...x.approvers, 'admin'] }))
+                                }
+                              >
+                                <Plus size={13} aria-hidden /> Add approver
+                              </button>
+                            )}
+                            {st.approvers.length > 1 && (
+                              <fieldset
+                                aria-label={`Step ${i + 1} needs`}
+                                className="inline-flex rounded-md border border-line text-[12px]"
+                              >
+                                {(['any', 'all'] as const).map((m) => (
+                                  <button
+                                    key={m}
+                                    type="button"
+                                    aria-pressed={st.mode === m}
+                                    className="px-2 py-1 first:rounded-l-md last:rounded-r-md aria-pressed:bg-hover aria-pressed:font-medium"
+                                    onClick={() => setStep(i, (x) => ({ ...x, mode: m }))}
+                                  >
+                                    {m === 'any' ? 'Any one approves' : 'Everyone approves'}
+                                  </button>
+                                ))}
+                              </fieldset>
+                            )}
+                            <label className="ml-auto flex items-center gap-2 whitespace-nowrap text-[12px] text-muted">
+                              Only from ₹
+                              <input
+                                aria-label={`Step ${i + 1} required from (₹, 0 = always)`}
+                                className={`${sized} w-28`}
+                                inputMode="decimal"
+                                value={st.min}
+                                onChange={(e) => setStep(i, (x) => ({ ...x, min: e.target.value }))}
+                                placeholder="0"
+                              />
+                            </label>
+                          </div>
+                        </div>
+                      </li>
+                    ))}
+                  </ol>
+                  {steps.length < 5 && (
                     <button
                       type="button"
-                      className="text-[12px] underline"
-                      onClick={() => setSteps((all) => all.filter((_, j) => j !== i))}
-                    >
-                      Remove step {i + 1}
-                    </button>
-                  )}
-                </div>
-                {st.approvers.map((c, k) => (
-                  // biome-ignore lint/suspicious/noArrayIndexKey: approvers are positional
-                  <div key={k} className="flex items-center gap-2">
-                    <select
-                      aria-label={`Step ${i + 1} approver ${k + 1}`}
-                      className={inputCls}
-                      value={c}
-                      onChange={(e) =>
-                        setStep(i, (x) => ({
-                          ...x,
-                          approvers: x.approvers.map((y, j) => (j === k ? e.target.value : y)),
-                        }))
+                      className={`${btn} ml-9`}
+                      onClick={() =>
+                        setSteps((all) => [...all, { mode: 'any', min: '', approvers: ['owner'] }])
                       }
                     >
-                      <option value="admin">Any admin</option>
-                      <option value="owner">Owner</option>
-                      <option value="dept_head">Requester's department head</option>
-                      {people
-                        .filter((p) => p.role !== 'guest')
-                        .map((p) => (
-                          <option key={p.user_id} value={p.user_id}>
-                            {p.name}
-                          </option>
-                        ))}
-                    </select>
-                    {st.approvers.length > 1 && (
-                      <button
-                        type="button"
-                        className="text-[12px] underline"
-                        aria-label={`Remove approver ${k + 1} from step ${i + 1}`}
-                        onClick={() =>
-                          setStep(i, (x) => ({ ...x, approvers: x.approvers.filter((_, j) => j !== k) }))
-                        }
-                      >
-                        Remove
-                      </button>
-                    )}
-                  </div>
-                ))}
-                <div className="flex flex-wrap items-end gap-3">
-                  {st.approvers.length < 5 && (
-                    <button
-                      type="button"
-                      className="text-[13px] underline"
-                      onClick={() => setStep(i, (x) => ({ ...x, approvers: [...x.approvers, 'admin'] }))}
-                    >
-                      Add approver
+                      <Plus size={13} aria-hidden /> Add step
                     </button>
                   )}
-                  {st.approvers.length > 1 && (
-                    <label className="block space-y-1">
-                      <span className="text-[12px] font-medium text-muted">Needs</span>
-                      <select
-                        className={inputCls}
-                        value={st.mode}
-                        onChange={(e) => setStep(i, (x) => ({ ...x, mode: e.target.value as 'any' | 'all' }))}
-                      >
-                        <option value="any">Any one of them</option>
-                        <option value="all">Every one of them</option>
-                      </select>
-                    </label>
-                  )}
-                  <label className="block space-y-1">
-                    <span className="text-[12px] font-medium text-muted">Required from (₹, 0 = always)</span>
+                </section>
+
+                <section className="space-y-2">
+                  <h4 className="text-[11px] font-medium uppercase tracking-wide text-muted">
+                    If no one answers
+                  </h4>
+                  <div className="flex flex-wrap items-center gap-2 text-[13px]">
+                    <span>Ask</span>
+                    <select
+                      aria-label="If no answer, ask"
+                      className={`${sized} w-auto`}
+                      value={fallback}
+                      onChange={(e) => setFallback(e.target.value)}
+                    >
+                      <option value="">nobody else</option>
+                      {people2.map((p) => (
+                        <option key={p.user_id} value={p.user_id}>
+                          {p.name}
+                        </option>
+                      ))}
+                    </select>
+                    <span>after</span>
                     <input
-                      className={inputCls}
-                      inputMode="decimal"
-                      value={st.min}
-                      onChange={(e) => setStep(i, (x) => ({ ...x, min: e.target.value }))}
-                      placeholder="0"
+                      aria-label="after (hours)"
+                      className={`${sized} w-20`}
+                      inputMode="numeric"
+                      value={hours}
+                      disabled={!fallback}
+                      onChange={(e) => setHours(e.target.value)}
                     />
-                  </label>
-                </div>
-              </div>
-            ))}
-            {steps.length < 5 && (
+                    <span>hours</span>
+                  </div>
+                </section>
+
+                <p className="flex gap-2 text-[12px] text-muted">
+                  <Info size={14} aria-hidden className="mt-px shrink-0" />
+                  Nobody approves their own request, and a person fills a step once. A missing department head
+                  falls back to the admins. The owner is never held.
+                </p>
+              </>
+            )}
+            <div className="flex items-center gap-2">
+              <button type="submit" className={btnPrimary}>
+                Save
+              </button>
               <button
                 type="button"
                 className={btn}
-                onClick={() => setSteps((all) => [...all, { mode: 'any', min: '', approvers: ['owner'] }])}
+                onClick={() => {
+                  // discard unsaved edits so the summary always shows what the server has
+                  setOn(rule?.enabled ?? false)
+                  setAmount(rule ? toRupees(rule.min_amount_minor) : '')
+                  setSteps(savedSteps(rule))
+                  setFallback(rule?.fallback_user_id ?? '')
+                  setHours(String(rule?.escalate_after_hours ?? 24))
+                  setOpen(false)
+                  setErr(undefined)
+                }}
               >
-                Add step
+                Cancel
               </button>
-            )}
-            <p className="text-[12px] text-muted">
-              Nobody approves their own request, and a person fills a step once. A missing department head
-              falls back to the admins.
-            </p>
-          </fieldset>
+              <span role="status" className="text-[13px] text-muted">
+                {msg}
+              </span>
+            </div>
+            <ErrorText error={err} />
+          </div>
         )}
-        <div className="flex items-center gap-3">
-          <button type="submit" className={btnPrimary}>
-            Save
-          </button>
-          <span role="status" className="text-[13px] text-muted">
-            {msg}
-          </span>
-        </div>
-        <ErrorText error={err} />
       </form>
     </li>
   )
@@ -296,12 +407,15 @@ export function ApprovalRules({ ws }: { ws: string }) {
   if (!rules.data || !members.data)
     return <div aria-busy="true" className="h-24 animate-pulse rounded-lg bg-hover" />
   return (
-    <div className="space-y-3">
-      <p className="text-[13px] text-muted">
-        Hold an action until a named person approves it. Amounts are compared before tax for drafts. Tip:
-        GSTR-1 corrections are painful, so consider approval on issuing invoices above an amount you choose.
-      </p>
-      <ul className="divide-y divide-line">
+    <div className="space-y-4">
+      <div className="flex gap-2 rounded-md border border-line bg-hover/50 p-3 text-[13px] text-muted">
+        <Info size={15} aria-hidden className="mt-0.5 shrink-0" />
+        <p>
+          Hold an action until the right person approves it. Amounts are compared before tax for drafts. Tip:
+          GSTR-1 corrections are painful, so consider approval on issuing invoices above an amount you choose.
+        </p>
+      </div>
+      <ul className="space-y-3">
         {rules.data.commands.map((c) => (
           <RuleRow
             key={c.command}

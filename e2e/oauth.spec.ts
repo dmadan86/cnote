@@ -82,7 +82,10 @@ test('consent page: sign in, approve, token works on MCP, disconnect in settings
   await page.goto('/')
   await page.waitForURL(/\/w\/[0-9a-f-]+$/)
   await page.goto(`${page.url()}/settings`)
-  await page.getByRole('tab', { name: 'Connected apps' }).click()
+  await page
+    .getByRole('navigation', { name: 'Settings' })
+    .getByRole('link', { name: 'Connected apps', exact: true })
+    .click()
   await expect(page.getByText('E2E Agent')).toBeVisible()
   await page.getByRole('button', { name: 'Disconnect E2E Agent' }).click()
   await expect(page.getByText('No connected apps')).toBeVisible()

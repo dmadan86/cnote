@@ -9,12 +9,12 @@ import {
   useSensor,
   useSensors,
 } from '@dnd-kit/core'
-import { Inbox, Plus, Save, Zap } from 'lucide-react'
+import { Inbox, ListChecks, Plus, Save, Search, Zap } from 'lucide-react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useShell } from '@/components/shell'
-import { btn, btnPrimary, ErrorText, Field, inputCls, Modal, Pill } from '@/components/ui'
+import { btn, btnPrimary, EmptyState, ErrorText, Field, inputCls, Modal, Pill } from '@/components/ui'
 import { cmd, type Space } from '@/lib/api'
 import { useCmd } from '@/lib/hooks'
 import {
@@ -518,9 +518,12 @@ export function SpaceView({ space }: { space: Space }) {
           {!wf.data || (items.loading && !all.length) ? (
             <p className="p-6 text-muted">Loading...</p>
           ) : flat.length === 0 && !items.error ? (
-            <p className="p-6 text-muted">
-              {applied ? 'No items match this query.' : 'No items yet. Press c to create one.'}
-            </p>
+            <EmptyState
+              icon={applied ? Search : ListChecks}
+              title={applied ? 'No items match' : 'No items yet'}
+            >
+              {applied ? 'Change or clear the query to see more.' : 'Press c to create one.'}
+            </EmptyState>
           ) : null}
           {wf.data &&
             (layout === 'list' ? (
