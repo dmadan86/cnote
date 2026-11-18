@@ -9,6 +9,7 @@ import {
   Plus,
   Search,
   Settings,
+  Sparkles,
   Store,
   UsersRound,
 } from 'lucide-react'
@@ -17,6 +18,7 @@ import { usePathname, useRouter } from 'next/navigation'
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { auth, cmd, type Me, type Member, type Note, type SharedNote, type Space } from '@/lib/api'
 import { MODULES, moduleOn } from '@/lib/modules'
+import { AskPanel } from './ai/ask-panel'
 import { BusinessTypeChooser } from './business-type'
 import { ChatNavLink } from './chat/nav'
 import { NotificationBell } from './notifications'
@@ -40,6 +42,8 @@ type Shell = {
   newPage: (opts?: { spaceId?: string; parentId?: string }) => Promise<void>
   openSpaceDialog: () => void
   togglePalette: () => void
+  /** Open the Ask panel, optionally submitting a question. */
+  openAsk: (q?: string) => void
 }
 
 const Ctx = createContext<Shell | null>(null)
@@ -278,6 +282,8 @@ export function ShellView({ ws, children }: { ws: string; children: React.ReactN
   const [tick, setTick] = useState(0)
   const [spaceDialog, setSpaceDialog] = useState(false)
   const [palette, setPalette] = useState(false)
+  const [ask, setAsk] = useState(false)
+  const [askSeed, setAskSeed] = useState<{ q: string; n: number } | null>(null)
   const fold = useFold(notes, path.match(/\/n\/([^/?]+)/)?.[1])
 
   useEffect(() => {
@@ -316,6 +322,10 @@ export function ShellView({ ws, children }: { ws: string; children: React.ReactN
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault()
         setPalette((p) => !p)
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'j') {
+        e.preventDefault()
+        setAsk((a) => !a)
       }
     }
     window.addEventListener('keydown', k)
@@ -370,6 +380,10 @@ export function ShellView({ ws, children }: { ws: string; children: React.ReactN
     newPage,
     openSpaceDialog: () => setSpaceDialog(true),
     togglePalette: () => setPalette((p) => !p),
+    openAsk: (q) => {
+      if (q) setAskSeed((s) => ({ q, n: (s?.n ?? 0) + 1 }))
+      setAsk(true)
+    },
   }
   const current = me.workspaces.find((w) => w.id === ws)
   const isAdmin = current?.role === 'owner' || current?.role === 'admin'
@@ -572,6 +586,15 @@ export function ShellView({ ws, children }: { ws: string; children: React.ReactN
                 <Search size={14} /> Search or jump to...
                 <kbd className="ml-auto rounded border border-line px-1 text-[11px]">⌘K</kbd>
               </button>
+              <button
+                type="button"
+                onClick={() => setAsk((a) => !a)}
+                aria-label="Ask your business"
+                aria-keyshortcuts="Meta+J Control+J"
+                className="flex items-center gap-1.5 rounded-md border border-line px-2.5 py-1 text-[13px] hover:bg-hover"
+              >
+                <Sparkles size={14} /> Ask
+              </button>
               <NotificationBell ws={ws} />
               <Menu label="User menu" align="right" trigger={<Avatar name={me.user.name} />}>
                 {(close) => (
@@ -606,6 +629,7 @@ export function ShellView({ ws, children }: { ws: string; children: React.ReactN
           </div>
         </div>
         <SpaceDialog open={spaceDialog} onClose={() => setSpaceDialog(false)} />
+        <AskPanel open={ask} onClose={() => setAsk(false)} seed={askSeed} />
         <Palette open={palette} onClose={() => setPalette(false)} />
         <PersonHoverLayer />
         {needType && isAdmin && !skipType && (

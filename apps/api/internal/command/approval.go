@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 
+	"github.com/cnote/api/internal/notify"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -14,11 +15,15 @@ type AmountFunc func(c *Ctx, input json.RawMessage) (noteID string, amount int64
 // approvalGate runs before the handler of a command that has an Amount. A human who is not the owner and acts
 // at or above the workspace rule's threshold does not execute: a pending approval is stored (kind 'approval') and
 // the caller gets approval_required. approval.decide later replays the stored input as the requester (RunApproved).
+// An agent or API key with a person behind it (UserID) is routed the same way, in that person's name; c.Emit records
+// the agent as the actor and the agent run links the request through its step's confirmation_id.
 func (r *Registry) approvalGate(c *Ctx, cmd Command, input json.RawMessage) ([]byte, bool, error) {
 	p := c.Principal
-	// Agents and API keys can't open approval requests, and their own confirmation could be decided by the member
-	// who owns them, so above the threshold they are refused outright rather than let through.
 	machine := p.Kind == KindAgent || p.Kind == KindAPIKey
+	if machine && p.UserID == nil {
+		return nil, false, nil // no person to ask in the name of; Confirm or the role gate still applies
+	}
+	// A person who owns the workspace skips the gate; their agent is capped at admin, so it does not.
 	if !machine && (p.Kind != KindUser || p.UserID == nil || p.Role >= Owner) {
 		return nil, false, nil
 	}
@@ -49,9 +54,6 @@ func (r *Registry) approvalGate(c *Ctx, cmd Command, input json.RawMessage) ([]b
 	if len(steps) == 0 { // every step's own threshold is above this amount
 		return nil, false, nil
 	}
-	if machine {
-		return nil, false, ErrForbidden("this amount needs a person's approval; ask a workspace member to make the request in C Note")
-	}
 	var id string
 	err = c.Tx.QueryRow(c.Context, `select id::text from core.confirmations where kind = 'approval' and status = 'pending'
 		and command = $1 and note_id is not distinct from nullif($2,'')::uuid and requested_by = $3 and input = $4::jsonb`, cmd.Name, noteID, *p.UserID, input).Scan(&id)
@@ -70,7 +72,7 @@ func (r *Registry) approvalGate(c *Ctx, cmd Command, input json.RawMessage) ([]b
 		if noteID != "" {
 			np = &noteID
 		}
-		if _, err := c.Emit("approval.requested", np, map[string]any{"approval_id": id, "command": cmd.Name, "amount_minor": amount}); err != nil {
+		if _, err := c.Emit("approval.requested", np, map[string]any{"approval_id": id, "command": cmd.Name, "amount_minor": amount, "agent_id": p.AgentID}); err != nil {
 			return nil, false, err
 		}
 		if err := steps[0].Notify(c, np, *p.UserID); err != nil {
@@ -167,15 +169,32 @@ func snapshotSteps(c *Ctx, rule []ApprovalStep, amount int64, requester string) 
 }
 
 // NotifyApprovers notifies the named approver, or every owner/admin (owners only for role 'owner'), except actor.
+// An owner is not excluded: their own agent opens requests in their name and the owner may decide them.
 func NotifyApprovers(c *Ctx, approver, role *string, kind string, noteID *string, actor string) error {
-	_, err := c.Tx.Exec(c.Context,
-		`insert into core.notifications (workspace_id, user_id, kind, note_id, actor_user_id, title)
-		 select $1::uuid, m.user_id, $2, $3::uuid, $4::uuid, coalesce((select title from core.notes where id = $3::uuid), '')
+	rows, err := c.Tx.Query(c.Context,
+		`select m.user_id::text, coalesce((select title from core.notes where id = $2::uuid), '')
 		   from core.memberships m
-		  where m.workspace_id = $1::uuid and m.user_id <> $4::uuid
-		    and case when $5::uuid is not null then m.user_id = $5::uuid
-		             when $6::text = 'owner' then m.role = 'owner' else m.role in ('owner','admin') end`,
-		c.Principal.WorkspaceID, kind, noteID, actor, approver, role)
+		  where m.workspace_id = $1::uuid and (m.user_id <> $3::uuid or m.role = 'owner')
+		    and case when $4::uuid is not null then m.user_id = $4::uuid
+		             when $5::text = 'owner' then m.role = 'owner' else m.role in ('owner','admin') end`,
+		c.Principal.WorkspaceID, noteID, actor, approver, role)
+	if err != nil {
+		return DB(err)
+	}
+	var ns []notify.Notification
+	for rows.Next() {
+		n := notify.Notification{WorkspaceID: c.Principal.WorkspaceID, Kind: kind, NoteID: noteID, ActorUserID: &actor}
+		if err := rows.Scan(&n.UserID, &n.Title); err != nil {
+			rows.Close()
+			return DB(err)
+		}
+		ns = append(ns, n)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return DB(err)
+	}
+	_, err = notify.Send(c.Context, c.Tx, ns...)
 	return DB(err)
 }
 

@@ -111,7 +111,7 @@ function Body({ m }: { m: Msg }) {
 
 function Who({ m }: { m: Msg }) {
   return m.agent ? (
-    <span className="inline-flex size-7 shrink-0 items-center justify-center rounded-md bg-hover text-muted">
+    <span className="inline-flex size-7 shrink-0 items-center justify-center rounded-md bg-accent/10 text-accent">
       <Bot size={16} aria-hidden />
     </span>
   ) : (
@@ -214,14 +214,16 @@ function MessageView({
   openThread?: (m: Msg, from: HTMLElement) => void
 }) {
   return (
-    <article className="group flex gap-2 rounded px-1 py-1 focus-within:bg-hover hover:bg-hover">
+    <article
+      className={`group flex gap-2 rounded px-1 py-1 focus-within:bg-hover hover:bg-hover ${m.agent ? 'border-l-2 border-accent/40 bg-accent/5' : ''}`}
+    >
       <Who m={m} />
       <div className="min-w-0 flex-1">
         <p className="flex flex-wrap items-baseline gap-2 text-[13px]">
           <span className="font-semibold">{m.author}</span>
           {m.agent && (
-            <span className="rounded border border-line px-1 text-[10px] font-semibold uppercase tracking-wide text-muted">
-              Agent
+            <span className="rounded border border-accent/40 bg-accent/10 px-1 text-[10px] font-semibold uppercase tracking-wide text-accent">
+              AI<span className="sr-only"> Agent</span>
             </span>
           )}
           <time dateTime={m.created_at} className="text-[11px] text-muted">
@@ -389,6 +391,7 @@ export function ChatPage() {
   const [announce, setAnnounce] = useState('')
   const [live, setLive] = useState(true)
   const [version, setVersion] = useState(0)
+  const [chanAgents, setChanAgents] = useState<{ id: string; name: string }[]>([])
   const scroller = useRef<HTMLDivElement>(null)
   const stick = useRef(true) // follow the bottom while the reader is at it
   const divider = useRef<{ id: string; at: string | null }>({ id: '', at: null })
@@ -402,6 +405,15 @@ export function ChatPage() {
     chans: () => {},
   })
   const current = chans?.find((c) => c.id === sel)
+  const curId = current && current.kind !== 'dm' ? current.id : undefined
+  // biome-ignore lint/correctness/useExhaustiveDependencies: version refetches after agents are added or removed
+  useEffect(() => {
+    if (!curId) return setChanAgents([])
+    cmd<AgentInfo>(ws, 'chat.channel_agents', { channel_id: curId }).then(
+      (i) => setChanAgents(i.agents),
+      () => setChanAgents([]),
+    )
+  }, [ws, curId, version])
 
   const loadChans = useCallback(
     () =>
@@ -747,6 +759,7 @@ export function ChatPage() {
             <Composer
               onSend={send}
               k={sel}
+              agents={chanAgents}
               label="Message"
               placeholder={`Message ${current?.kind === 'public' ? `#${current.name}` : (current?.name ?? '')}. Enter to send, Shift+Enter for a new line.`}
             />
@@ -794,6 +807,7 @@ export function ChatPage() {
             <Composer
               onSend={(e) => send(e, tdata.parent.id)}
               k={tdata.parent.id}
+              agents={chanAgents}
               label="Reply"
               placeholder="Reply in thread. Enter to send."
             />
@@ -830,11 +844,13 @@ function Composer({
   k,
   label,
   placeholder,
+  agents,
 }: {
   onSend: (e: React.FormEvent<HTMLFormElement>) => void
   k: string
   label: string
   placeholder: string
+  agents: { id: string; name: string }[]
 }) {
   return (
     <form
@@ -852,6 +868,7 @@ function Composer({
         <MentionField
           key={k}
           name="body"
+          agents={agents}
           multiline
           rows={2}
           aria-label={label}

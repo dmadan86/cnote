@@ -59,13 +59,11 @@ func parseTrigger(raw json.RawMessage) (trigger, bool) {
 }
 
 type action struct {
-	Type    string          `json:"type"`
-	To      string          `json:"to"`
-	UserID  *string         `json:"user_id"`
-	AgentID *string         `json:"agent_id"`
-	Body    string          `json:"body"`
-	Name    string          `json:"name"`
-	Input   json.RawMessage `json:"input"`
+	Type    string  `json:"type"`
+	To      string  `json:"to"`
+	UserID  *string `json:"user_id"`
+	AgentID *string `json:"agent_id"`
+	Body    string  `json:"body"`
 }
 
 func subst(v any, id *string, key string) any {
@@ -130,11 +128,6 @@ func runAction(c *command.Ctx, a action, item *string, key string) error {
 		var id string
 		if id, err = needItem(); err == nil {
 			_, err = c.Call("comment.add", map[string]any{"note_id": id, "body": subst(a.Body, item, key)})
-		}
-	case "command":
-		var in any
-		if in, err = decodeAny(a.Input); err == nil {
-			_, err = c.Call(a.Name, subst(in, item, key))
 		}
 	default:
 		err = command.ErrInvalid("unknown action")

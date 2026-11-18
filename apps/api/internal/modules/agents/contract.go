@@ -28,19 +28,10 @@ type Model func(context.Context, ai.StepRequest) (ai.StepResult, error)
 
 // CreateRun inserts the run row and its job in c.Tx. created is false when the dedupe key already exists.
 func CreateRun(c *command.Ctx, n NewRun) (id string, created bool, err error) {
-	return "", false, errNotImplemented
+	return createRun(c, n)
 }
-
-// OnEvent starts runs for agents whose events prefixes match e.
-func OnEvent(c *command.Ctx, e jobs.Event) error { return nil }
-
-// Sweep starts due scheduled runs and purges old transcripts.
-func Sweep(ctx context.Context, pool *pgxpool.Pool) error { return nil }
 
 // RunJob is the long-lane handler for agent.ask and agent.run jobs.
 func RunJob(pool *pgxpool.Pool, reg *command.Registry) func(context.Context, jobs.Job) error {
-	return func(context.Context, jobs.Job) error { return errNotImplemented }
+	return runJob(pool, reg, nil)
 }
-
-// Commands are the agent.* commands of section 2.3.
-func Commands() []command.Command { return []command.Command{} }

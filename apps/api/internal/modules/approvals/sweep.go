@@ -5,10 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/cnote/api/internal/command"
 	"github.com/cnote/api/internal/db"
+	"github.com/cnote/api/internal/notify"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -76,27 +79,46 @@ func sweepOne(ctx context.Context, pool *pgxpool.Pool, ws, day string) error {
 		}
 	}
 
-	const ins = `insert into core.notifications (workspace_id, user_id, kind, title, source, source_day)
-		select $1::uuid, r.user_id, 'reminder', r.n::text || $3::text, $4::text, $2::date from (`
-	const tail = `) r on conflict (user_id, source, source_day) where source is not null do nothing`
 	for _, q := range []struct{ sql, title, source string }{
 		// approvals waiting more than a day, per person who can decide them
-		{`select m.user_id, count(*) n from core.confirmations p
+		{`select m.user_id::text, count(*) n from core.confirmations p
 		    join core.memberships m on m.workspace_id = p.workspace_id and (p.approver_user_id = m.user_id or (p.approver_user_id is null and m.role in ('owner','admin')))
 		   where p.kind = 'approval' and p.status = 'pending' and p.created_at < now() - interval '24 hours' and m.role <> 'guest' group by m.user_id`,
 			" approval(s) waiting for more than a day", "approvals"},
 		// tasks due today, per assignee
-		{`select i.assignee_id as user_id, count(*) n from projects.items i join core.notes n on n.id = i.note_id
-		   where i.assignee_id is not null and i.due_date = $2::date and i.status_category <> 'done' and n.deleted_at is null group by i.assignee_id`,
+		{`select i.assignee_id::text as user_id, count(*) n from projects.items i join core.notes n on n.id = i.note_id
+		   where i.assignee_id is not null and i.due_date = $1::date and i.status_category <> 'done' and n.deleted_at is null group by i.assignee_id`,
 			" task(s) due today", "tasks_due"},
 		// overdue invoices, for owners and admins
-		{`select m.user_id, count(*) n from billing.invoices i join core.notes n on n.id = i.note_id
+		{`select m.user_id::text, count(*) n from billing.invoices i join core.notes n on n.id = i.note_id
 		    join core.memberships m on m.workspace_id = i.workspace_id and m.role in ('owner','admin')
-		   where i.kind = 'invoice' and i.status in ('issued','irn_generated','sent','partly_paid') and i.due_date < $2::date
+		   where i.kind = 'invoice' and i.status in ('issued','irn_generated','sent','partly_paid') and i.due_date < $1::date
 		     and i.total_minor - i.paid_minor - i.credited_minor - i.written_off_minor > 0 and n.deleted_at is null group by m.user_id`,
 			" invoice(s) overdue", "invoices_overdue"},
 	} {
-		if _, err := tx.Exec(ctx, ins+q.sql+tail, ws, day, q.title, q.source); err != nil {
+		var args []any
+		if strings.Contains(q.sql, "$1") {
+			args = []any{day}
+		}
+		rows, err := tx.Query(ctx, q.sql, args...)
+		if err != nil {
+			return err
+		}
+		var ns []notify.Notification
+		for rows.Next() {
+			var u string
+			var n int64
+			if err := rows.Scan(&u, &n); err != nil {
+				rows.Close()
+				return err
+			}
+			ns = append(ns, notify.Notification{WorkspaceID: ws, UserID: u, Kind: "reminder", Title: strconv.FormatInt(n, 10) + q.title, Source: &q.source, SourceDay: &day})
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		if _, err := notify.Send(ctx, tx, ns...); err != nil { // one reminder per person per source per day
 			return err
 		}
 	}

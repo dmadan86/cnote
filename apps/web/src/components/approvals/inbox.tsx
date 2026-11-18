@@ -6,6 +6,7 @@ import { useShell } from '@/components/shell'
 import { btn, btnPrimary, ErrorText, inputCls, Pill } from '@/components/ui'
 import { cmd } from '@/lib/api'
 import { ago, useCmd } from '@/lib/hooks'
+import { ConfirmationList } from './confirmations'
 import { ACTION, type Approval, docPath } from './labels'
 
 const TABS = ['Waiting for me', 'My requests', 'History'] as const
@@ -182,6 +183,12 @@ export function ApprovalInbox() {
         ))}
       </div>
       <ErrorText error={error} />
+      {tab === 'Waiting for me' && (
+        <section aria-label="From AI employees" className="space-y-2">
+          <h2 className="text-[13px] font-semibold text-muted">From AI employees</h2>
+          <ConfirmationList ws={ws} agentsOnly />
+        </section>
+      )}
       {!all.data && !error ? (
         <div aria-busy="true" className="h-24 animate-pulse rounded-lg bg-hover" />
       ) : rows.length === 0 ? (

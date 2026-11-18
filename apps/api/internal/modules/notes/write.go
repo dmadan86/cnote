@@ -15,6 +15,7 @@ import (
 
 	"github.com/cnote/api/internal/access"
 	"github.com/cnote/api/internal/command"
+	"github.com/cnote/api/internal/notify"
 )
 
 const defaultVerifyDays = 90
@@ -402,14 +403,15 @@ func notifyMentions(c *command.Ctx, noteID, title, oldMD, newMD string) error {
 		if !canRead {
 			continue
 		}
-		var id string
-		if err := c.Tx.QueryRow(c.Context,
-			`insert into core.notifications (workspace_id, user_id, kind, note_id, actor_user_id, title)
-			 values ($1::uuid,$2::uuid,'mention',$3::uuid,$4::uuid,$5) returning id::text`,
-			ws, user, noteID, c.Principal.UserID, title).Scan(&id); err != nil {
+		ids, err := notify.Send(c.Context, c.Tx, notify.Notification{
+			WorkspaceID: ws, UserID: user, Kind: "mention", Title: title, NoteID: &noteID, ActorUserID: c.Principal.UserID})
+		if err != nil {
 			return err
 		}
-		if _, err := c.Emit("mention.created", &noteID, map[string]any{"notification_id": id}); err != nil {
+		if len(ids) == 0 {
+			continue
+		}
+		if _, err := c.Emit("mention.created", &noteID, map[string]any{"notification_id": ids[0]}); err != nil {
 			return err
 		}
 	}

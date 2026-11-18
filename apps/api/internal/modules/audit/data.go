@@ -295,6 +295,15 @@ func eraseSubject(c *command.Ctx, raw json.RawMessage) (any, error) {
 	exec("portal_tokens", `delete from crm.portal_tokens where contact_id = $1::uuid`)
 	exec("search_chunks", `delete from ai.chunks where note_id = $1::uuid or note_id in (select note_id from crm.tickets where contact_id = $1::uuid)`)
 	exec("collab_log", `delete from core.note_updates where note_id = $1::uuid`)
+	// AI employee runs attached to the contact, its deals or its tickets keep prompts, tool inputs and drafts that quote
+	// the person: delete the held drafts first (their input is the text), then the runs (steps cascade).
+	// Gap: Ask or chat runs that merely mention the contact are not tied to a note and are not found here; they follow
+	// the 30-day transcript purge. ai.audit prompts are not covered either.
+	const runSubject = `select id from core.agent_runs where note_id = $1::uuid
+		or note_id in (select note_id from crm.deals where contact_id = $1::uuid)
+		or note_id in (select note_id from crm.tickets where contact_id = $1::uuid)`
+	exec("agent_drafts", `delete from core.confirmations where id in (select confirmation_id from core.agent_run_steps where confirmation_id is not null and run_id in (`+runSubject+`))`)
+	exec("agent_runs", `delete from core.agent_runs where id in (`+runSubject+`)`)
 	if err != nil {
 		return nil, err
 	}

@@ -47,10 +47,11 @@ CREATE TABLE core.agent_run_steps (
   text text, raw json, stop text, tokens_in int, tokens_out int, cache_read int,       -- model step; raw is json, not jsonb: provider content replays byte for byte
   call_id text, command text, input jsonb, result text,                                -- tool step
   outcome text CHECK (outcome IN ('ok','error','denied','held')),
-  confirmation_id uuid REFERENCES core.confirmations(id) ON DELETE SET NULL,
+  confirmation_id uuid,
   ms int, created_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (run_id, seq),
-  FOREIGN KEY (workspace_id, run_id) REFERENCES core.agent_runs (workspace_id, id) ON DELETE CASCADE
+  FOREIGN KEY (workspace_id, run_id) REFERENCES core.agent_runs (workspace_id, id) ON DELETE CASCADE,
+  FOREIGN KEY (workspace_id, confirmation_id) REFERENCES core.confirmations (workspace_id, id) ON DELETE SET NULL (confirmation_id)
 );
 CREATE INDEX agent_run_steps_conf ON core.agent_run_steps (confirmation_id) WHERE confirmation_id IS NOT NULL;
 

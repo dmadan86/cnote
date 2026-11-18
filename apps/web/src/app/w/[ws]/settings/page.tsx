@@ -24,7 +24,8 @@ import {
 } from 'lucide-react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
+import { AgentsTab } from '@/components/agents/tab'
 import { ConfirmationsTab } from '@/components/approvals/confirmations'
 import { ApprovalRules } from '@/components/approvals/rules'
 import { AuditLog } from '@/components/audit/log'
@@ -472,7 +473,7 @@ function KeysTab({ ws }: { ws: string }) {
   )
 }
 
-function AgentsTab({ ws }: { ws: string }) {
+function OutsideAgents({ ws }: { ws: string }) {
   const { data, reload } = useCmd<Agent[]>(ws, 'agent.list')
   const [secret, setSecret] = useState<string>()
   const [err, setErr] = useState<string>()
@@ -762,7 +763,7 @@ export default function Settings() {
           {tab === 'Messages' && <CustomerMessages ws={ws} />}
           {tab === 'Members' && <MembersTab ws={ws} />}
           {tab === 'API keys' && <KeysTab ws={ws} />}
-          {tab === 'Agents' && <AgentsTab ws={ws} />}
+          {tab === 'Agents' && <AgentsTab ws={ws} outside={<OutsideAgents ws={ws} />} />}
           {tab === 'Tool groups' && <GroupsTab ws={ws} />}
           {tab === 'Approvals' && <ApprovalRules ws={ws} />}
           {tab === 'Confirmations' && <ConfirmationsTab ws={ws} />}

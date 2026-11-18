@@ -1102,8 +1102,7 @@ func validateActions(c *command.Ctx, actions json.RawMessage) error {
 		case "comment":
 			// any body is valid
 		case "command":
-			// shortcut: Rust checks the target command's role, confirmation and group; port that check before handling these in Go
-			return command.ErrFallback
+			return command.ErrInvalid("the run-command action is no longer supported")
 		default:
 			return command.ErrFallback
 		}

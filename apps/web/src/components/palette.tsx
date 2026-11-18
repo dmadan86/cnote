@@ -1,5 +1,5 @@
 'use client'
-import { FileText, Navigation, Plus, Search } from 'lucide-react'
+import { FileText, Navigation, Plus, Search, Sparkles } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { useEffect, useState } from 'react'
 import { cmd } from '@/lib/api'
@@ -11,7 +11,7 @@ type Hit = { id: string; title: string; snippet: string }
 type Item = { key: string; label: string; hint?: string; icon: React.ReactNode; run: () => void }
 
 export function Palette({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { ws, spaces, newPage, modules } = useShell()
+  const { ws, spaces, newPage, modules, openAsk } = useShell()
   const router = useRouter()
   const [q, setQ] = useState('')
   const [hits, setHits] = useState<Hit[]>([])
@@ -54,6 +54,15 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
     })),
     ...(needle
       ? [
+          {
+            key: 'ask',
+            label: `Ask your business: ${q.trim()}`,
+            icon: <Sparkles size={14} />,
+            run: () => {
+              onClose()
+              openAsk(q.trim())
+            },
+          },
           {
             key: 'search',
             label: `Search for "${q.trim()}"`,
@@ -98,6 +107,7 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
       !needle ||
       hits.some((h) => h.id === i.key) ||
       i.key === 'search' ||
+      i.key === 'ask' ||
       i.label.toLowerCase().includes(needle),
   )
 

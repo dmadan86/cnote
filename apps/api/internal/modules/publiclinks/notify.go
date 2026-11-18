@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/cnote/api/internal/mailer"
+	"github.com/cnote/api/internal/notify"
 )
 
 type decisionMail struct{ to, subject, noteID string }
@@ -25,17 +26,26 @@ func notifyDecision(ctx context.Context, tx pgx.Tx, l link, status, customer str
 	what := "quote " + strings.TrimSpace(strings.Join([]string{deref(number), deref(title)}, " "))
 	verb := map[string]string{"accepted": "accepted", "rejected": "declined"}[status]
 	text := fmt.Sprintf("%s %s %s", customer, verb, strings.TrimSpace(what))
-	rows, err := tx.Query(ctx, `insert into core.notifications (workspace_id, user_id, kind, note_id, title)
-		select $1::uuid, u.id, 'quote_decided', $2::uuid, $3 from core.users u
+	rows, err := tx.Query(ctx, `select u.id::text from core.users u
 		 where u.id in (select m.user_id from core.memberships m where m.workspace_id = $1::uuid and m.deactivated_at is null
-		                 and (m.role in ('owner','admin') or m.user_id in ($4::uuid, (select created_by from core.notes where id = $2::uuid))))
-		on conflict do nothing returning user_id::text`, l.ws, l.note, text, l.creator)
+		                 and (m.role in ('owner','admin') or m.user_id in ($2::uuid, (select created_by from core.notes where id = $3::uuid))))`,
+		l.ws, l.creator, l.note)
 	if err != nil {
 		return nil, err
 	}
-	ids, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	recipients, err := pgx.CollectRows(rows, pgx.RowTo[string])
 	if err != nil {
 		return nil, err
+	}
+	var ids []string // recipients that got a new row; the unique index makes a replay a no-op
+	for _, u := range recipients {
+		created, err := notify.Send(ctx, tx, notify.Notification{WorkspaceID: l.ws, UserID: u, Kind: "quote_decided", Title: text, NoteID: &l.note})
+		if err != nil {
+			return nil, err
+		}
+		if len(created) > 0 {
+			ids = append(ids, u)
+		}
 	}
 	var out []decisionMail
 	for _, id := range ids {

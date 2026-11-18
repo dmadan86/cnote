@@ -21,6 +21,7 @@ import (
 	"github.com/cnote/api/internal/access"
 	"github.com/cnote/api/internal/command"
 	"github.com/cnote/api/internal/mailer"
+	"github.com/cnote/api/internal/notify"
 )
 
 func Commands() []command.Command {
@@ -670,8 +671,13 @@ func send(c *command.Ctx, raw json.RawMessage) (any, error) {
 			return nil, command.DB(err)
 		}
 	}
-	if err := notify(c, ch, w, "", text); err != nil {
+	if err := notifyMentions(c, ch, w, "", text); err != nil {
 		return nil, err
+	}
+	if w.user != nil { // people only: an agent's message never starts another agent
+		if err := agentMentioned(c, ch, id, parent, text); err != nil {
+			return nil, err
+		}
 	}
 	return map[string]any{"id": id, "created_at": command.Ts(at)}, nil
 }
@@ -688,10 +694,10 @@ func mentions(md, ws string) []string {
 	return out
 }
 
-// notify tells people newly @mentioned in newMD (in-app notification, then email when SMTP_URL is set). Only those who
+// notifyMentions tells people newly @mentioned in newMD (in-app notification, then email when SMTP_URL is set). Only those who
 // can see the channel are told: every member for a public one, its members otherwise. An agent's mention has no actor
 // person (it is not its owner's words).
-func notify(c *command.Ctx, ch chanInfo, actor ident, oldMD, newMD string) error {
+func notifyMentions(c *command.Ctx, ch chanInfo, actor ident, oldMD, newMD string) error {
 	ws := strings.ToLower(c.WorkspaceID())
 	old := map[string]bool{}
 	for _, u := range mentions(oldMD, ws) {
@@ -705,24 +711,57 @@ func notify(c *command.Ctx, ch chanInfo, actor ident, oldMD, newMD string) error
 		if old[user] || (actor.user != nil && user == *actor.user) {
 			continue
 		}
-		var id, email string
+		var email string
 		err := c.Tx.QueryRow(c.Context,
-			`insert into core.notifications (workspace_id, user_id, kind, channel_id, actor_user_id, title)
-			 select $1::uuid, m.user_id, 'chat_mention', $3::uuid, $4::uuid, $5 from core.memberships m
+			`select u.email from core.memberships m join core.users u on u.id = m.user_id
 			  where m.workspace_id = $1::uuid and m.user_id = $2::uuid and m.role <> 'guest'
-			    and ($6 or exists (select 1 from chat.members cm where cm.channel_id = $3::uuid and cm.user_id = m.user_id))
-			 returning id::text, (select email from core.users where id = $2::uuid)`,
-			ws, user, ch.id, actor.user, title, ch.kind == "public").Scan(&id, &email)
+			    and ($3 or exists (select 1 from chat.members cm where cm.channel_id = $4::uuid and cm.user_id = m.user_id))`,
+			ws, user, ch.kind == "public", ch.id).Scan(&email)
 		if errors.Is(err, pgx.ErrNoRows) {
 			continue
 		}
 		if err != nil {
 			return command.DB(err)
 		}
+		ids, err := notify.Send(c.Context, c.Tx, notify.Notification{WorkspaceID: ws, UserID: user, Kind: "chat_mention", Title: title, ChannelID: &ch.id, ActorUserID: actor.user})
+		if err != nil {
+			return command.DB(err)
+		}
+		if len(ids) == 0 {
+			continue
+		}
+		id := ids[0]
 		if _, err := c.Emit("chat.mention", nil, map[string]any{"notification_id": id, "channel_id": ch.id}); err != nil {
 			return err
 		}
 		mailMention(c, actor, ws, ch.id, email, title)
+	}
+	return nil
+}
+
+var agentMentionRe = regexp.MustCompile(`\]\(/w/([0-9a-fA-F-]{36})/agents/([0-9a-fA-F-]{36})\)`)
+
+// agentMentioned emits chat.agent_mentioned for each agent that is in the channel and linked in a person's message
+// (docs/design/agent-runtime.md section 6). The body rides in the payload so the agents module never reads chat tables.
+func agentMentioned(c *command.Ctx, ch chanInfo, msgID string, parent *string, text string) error {
+	ws := strings.ToLower(c.WorkspaceID())
+	seen := map[string]bool{}
+	for _, m := range agentMentionRe.FindAllStringSubmatch(text, -1) {
+		a := strings.ToLower(m[2])
+		if strings.ToLower(m[1]) != ws || !uuidRe.MatchString(a) || seen[a] {
+			continue
+		}
+		seen[a] = true
+		var in bool
+		if err := c.Tx.QueryRow(c.Context, `select exists (select 1 from chat.agent_members where channel_id = $1::uuid and agent_id = $2::uuid)`, ch.id, a).Scan(&in); err != nil {
+			return command.DB(err)
+		}
+		if !in {
+			continue
+		}
+		if _, err := c.Emit("chat.agent_mentioned", nil, map[string]any{"channel_id": ch.id, "message_id": msgID, "agent_id": a, "parent_id": parent, "body": text}); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -805,7 +844,7 @@ func edit(c *command.Ctx, raw json.RawMessage) (any, error) {
 	if _, err := c.Tx.Exec(c.Context, `update chat.messages set body = $2, edited_at = now() where id = $1::uuid`, strings.ToLower(in.ID), text); err != nil {
 		return nil, command.DB(err)
 	}
-	return map[string]any{"ok": true}, notify(c, ch, w, old, text)
+	return map[string]any{"ok": true}, notifyMentions(c, ch, w, old, text)
 }
 
 func del(c *command.Ctx, raw json.RawMessage) (any, error) {

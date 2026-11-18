@@ -11,6 +11,7 @@ import (
 
 	"github.com/cnote/api/internal/access"
 	"github.com/cnote/api/internal/command"
+	"github.com/cnote/api/internal/notify"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -431,11 +432,11 @@ type request struct {
 }
 
 // slotFor is the approver slot of the current step this person may fill, or false. Nobody decides their own request
-// or the same step twice; a named slot (a member or a resolved department head) is theirs alone, admins fill it only
+// or the same step twice (an owner may decide a request their own agent opened in their name); a named slot (a member or a resolved department head) is theirs alone, admins fill it only
 // after escalation, admins fill open role slots, and so does the fallback approver after an escalation.
 func slotFor(p command.Principal, requester string, st command.ApprovalStep, taken map[int]string, approver *string, escalated bool) (int, bool) {
 	uid := *p.UserID
-	if requester == uid {
+	if requester == uid && p.Role < command.Owner {
 		return 0, false
 	}
 	for _, u := range taken {
@@ -605,10 +606,12 @@ func finish(c *command.Ctx, p pending, status, reason, label string) error {
 	if p.requester == *c.Principal.UserID {
 		return nil
 	}
-	_, err := c.Tx.Exec(c.Context,
-		`insert into core.notifications (workspace_id, user_id, kind, note_id, actor_user_id, title)
-		 values ($1::uuid, $2::uuid, 'approval_decided', $3::uuid, $4::uuid, $5 || ': ' || coalesce((select title from core.notes where id = $3::uuid), ''))`,
-		c.WorkspaceID(), p.requester, p.note, c.Principal.UserID, label)
+	var title string
+	if err := c.Tx.QueryRow(c.Context, `select coalesce((select title from core.notes where id = $1::uuid), '')`, p.note).Scan(&title); err != nil {
+		return command.DB(err)
+	}
+	_, err := notify.Send(c.Context, c.Tx, notify.Notification{WorkspaceID: c.WorkspaceID(), UserID: p.requester, Kind: "approval_decided",
+		NoteID: p.note, ActorUserID: c.Principal.UserID, Title: label + ": " + title})
 	return command.DB(err)
 }
 
