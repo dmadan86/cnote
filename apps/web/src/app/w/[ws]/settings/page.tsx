@@ -577,7 +577,12 @@ export default function Settings() {
           </select>
         </label>
         <header className="mb-6 border-b border-line pb-4">
-          <h2 className="text-lg font-semibold">{cur.label}</h2>
+          <h2 className="flex items-center gap-2.5 text-lg font-semibold">
+            <span className="flex h-8 w-8 items-center justify-center rounded-md border border-line text-muted">
+              <cur.icon size={17} aria-hidden />
+            </span>
+            {cur.label}
+          </h2>
           <p className="mt-1 text-[13px] text-muted">{cur.desc}</p>
         </header>
         <div className="max-w-3xl">
