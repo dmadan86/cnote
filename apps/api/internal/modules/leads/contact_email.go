@@ -3,7 +3,6 @@ package leads
 import (
 	"encoding/json"
 	"errors"
-	"log/slog"
 
 	"github.com/cnote/api/internal/access"
 	"github.com/cnote/api/internal/command"
@@ -18,7 +17,7 @@ func contactEmailCommand() command.Command {
 	return c
 }
 
-// contactEmail sends a free-form reply to a contact's address in the workspace's branded layout and logs it as an
+// contactEmail queues a free-form reply to a contact's address in the workspace's branded layout and logs it as an
 // email activity (on the deal when given, which also counts as the first response).
 func contactEmail(c *command.Ctx, raw json.RawMessage) (any, error) {
 	m, err := decode(raw)
@@ -80,9 +79,9 @@ func contactEmail(c *command.Ctx, raw json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err := mailer.Send(c.Context, mailer.Mail{To: *email, ReplyTo: r.ReplyTo, FromName: r.FromName, Subject: r.Subject, Text: r.Text, HTML: r.HTML}); err != nil {
-		slog.Warn("contact email failed", "error", err)
-		return nil, command.ErrInvalid("the email could not be sent; try again")
+	// Queued in this transaction (outbox): nothing is sent unless the confirmation commits, and the worker sends once.
+	if err := mailer.Enqueue(c.Context, c.Tx, c.WorkspaceID(), mailer.Mail{To: *email, ReplyTo: r.ReplyTo, FromName: r.FromName, Subject: r.Subject, Text: r.Text, HTML: r.HTML}); err != nil {
+		return nil, command.DB(err)
 	}
 	log, _ := json.Marshal(map[string]string{"note_id": logOn, "kind": "email", "summary": "Emailed: " + subject})
 	if _, err := activityLog(c, log); err != nil {
@@ -91,5 +90,5 @@ func contactEmail(c *command.Ctx, raw json.RawMessage) (any, error) {
 	if _, err := c.Emit("contact.emailed", &id, map[string]any{"deal_id": logOn}); err != nil {
 		return nil, err
 	}
-	return map[string]any{"contact_id": id, "to": *email, "sent": true}, nil
+	return map[string]any{"contact_id": id, "to": *email, "queued": true}, nil
 }

@@ -177,7 +177,7 @@ func (r *Registry) run(c *Ctx, name string, input json.RawMessage, o ExecOptions
 		}
 	}
 
-	if cmd.Confirm && p.IsMachine() {
+	if cmd.Confirm && p.IsMachine() && !o.approved { // an approved replay is the human decision the confirmation asks for
 		return r.confirm(c, cmd, input, o)
 	}
 

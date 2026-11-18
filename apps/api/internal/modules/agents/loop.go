@@ -621,6 +621,12 @@ func (e *runExec) modelStep(ctx context.Context) (ai.StepResult, error) {
 		return res, err
 	}
 	used := int64(res.TokensIn) + int64(res.TokensOut)
+	// The provider has been paid: charge it now, in its own transaction, so a fenced or failed step write below can
+	// never turn consumed tokens back into budget.
+	if serr := e.reg.WithTx(context.WithoutCancel(ctx), e.pool, command.Principal{Kind: command.KindSystem, WorkspaceID: e.ws},
+		func(c *command.Ctx) error { return settle(c, day, n, used) }); serr != nil {
+		return res, serr
+	}
 	var calls any
 	if len(res.Calls) > 0 {
 		cs := make([]map[string]any, 0, len(res.Calls))
@@ -653,10 +659,9 @@ func (e *runExec) modelStep(ctx context.Context) (ai.StepResult, error) {
 		if err := e.sess.Record(c, map[string]any{"run_id": e.runID, "seq": e.nextSeq, "agent_id": e.run.agentID}, res); err != nil {
 			return err
 		}
-		return settle(c, day, n, used)
+		return nil
 	})
 	if err != nil {
-		e.release(ctx, day, n) // the step was not recorded, so its reservation is given back
 		return res, err
 	}
 	e.nextSeq++

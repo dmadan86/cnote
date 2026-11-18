@@ -71,3 +71,10 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON core.agent_runs, core.agent_run_steps, c
 
 -- Section 9b: the automation "run command" action ran any command as System; leftover rows are switched off.
 UPDATE projects.automations SET enabled = false WHERE actions @> '[{"type":"command"}]';
+
+-- An approval opened by an agent or API key remembers it: the replay re-derives that machine's rights (a paused agent or
+-- a removed scope refuses) instead of running as the person.
+ALTER TABLE core.confirmations
+  ADD COLUMN requested_by_agent uuid,
+  ADD COLUMN requested_by_kind text CHECK (requested_by_kind IN ('Agent','ApiKey')),
+  ADD FOREIGN KEY (workspace_id, requested_by_agent) REFERENCES core.agents (workspace_id, id) ON DELETE SET NULL (requested_by_agent);

@@ -101,6 +101,10 @@ func createRun(c *command.Ctx, n NewRun) (string, bool, error) {
 			return "", false, command.DB(err)
 		}
 	}
+	// Serialize creates per agent: the count below and the insert must not interleave with another create.
+	if _, err := c.Tx.Exec(c.Context, "select 1 from core.agents where id = $1::uuid for update", n.AgentID); err != nil {
+		return "", false, command.DB(err)
+	}
 	var ran, skipped int
 	if err := c.Tx.QueryRow(c.Context,
 		`select count(*) filter (where status <> 'skipped'), count(*) filter (where status = 'skipped')

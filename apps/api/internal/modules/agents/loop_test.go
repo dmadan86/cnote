@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -445,5 +446,57 @@ func TestCreateRunGuards(t *testing.T) {
 	f.sql("update core.agents set daily_runs = 1 where id = $1::uuid", f.agent)
 	if id, created, err := f.newRun(NewRun{}); id != "" || created || err != nil {
 		t.Fatalf("over the daily limit: %q %v %v", id, created, err)
+	}
+}
+
+// Tokens the provider consumed are charged even when the step cannot be recorded (the executor was fenced out).
+func TestFencedStepStillChargesUsage(t *testing.T) {
+	f := newFx(t)
+	f.sql("update core.workspaces set settings = settings || '{\"ai_daily_tokens\":2000000000}' where id = $1::uuid", f.ws)
+	usedNow := func() (used int64) {
+		f.exec(f.ws, func(c *command.Ctx) {
+			_ = c.Tx.QueryRow(c.Context, "select coalesce(sum(used),0) from core.agent_budget where day = (now() at time zone 'utc')::date").Scan(&used)
+		})
+		return
+	}
+	before := usedNow()
+	id := f.mustRun(NewRun{Input: "x"})
+	res := answer("ok")
+	res.TokensIn, res.TokensOut = 700, 300
+	_ = f.work(id, func(ctx context.Context, r ai.StepRequest) (ai.StepResult, error) {
+		f.sql("update core.agent_runs set attempt = gen_random_uuid() where id = $1::uuid", id) // fenced after the call began
+		return res, nil
+	})
+	if got := usedNow() - before; got != 1000 {
+		t.Fatalf("charged %d tokens, want 1000", got)
+	}
+	var reserved int64
+	f.exec(f.ws, func(c *command.Ctx) {
+		_ = c.Tx.QueryRow(c.Context, "select reserved from core.agent_budget where day = (now() at time zone 'utc')::date").Scan(&reserved)
+	})
+	if reserved != 0 {
+		t.Fatalf("reservation left: %d", reserved)
+	}
+}
+
+// Concurrent creates cannot exceed daily_runs (count and insert are serialized per agent).
+func TestConcurrentCreateRunRespectsDailyLimit(t *testing.T) {
+	f := newFx(t)
+	f.sql("update core.agents set daily_runs = 3 where id = $1::uuid", f.agent)
+	var wg sync.WaitGroup
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, _, _ = f.newRun(NewRun{})
+		}()
+	}
+	wg.Wait()
+	var real int
+	f.exec(f.ws, func(c *command.Ctx) {
+		_ = c.Tx.QueryRow(c.Context, "select count(*) from core.agent_runs where agent_id = $1::uuid and status <> 'skipped'", f.agent).Scan(&real)
+	})
+	if real != 3 {
+		t.Fatalf("%d real runs, want 3", real)
 	}
 }

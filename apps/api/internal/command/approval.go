@@ -47,6 +47,11 @@ func (r *Registry) approvalGate(c *Ctx, cmd Command, input json.RawMessage) ([]b
 	if machine && p.UserID == nil { // fail closed: no person to open the approval in the name of
 		return nil, false, ErrForbidden("this amount needs a person's approval; ask a workspace member to make the request in C Note")
 	}
+	var byKind *string // a machine's request remembers who made it, so the replay is bounded by that machine
+	if machine {
+		k := string(p.Kind)
+		byKind = &k
+	}
 	steps, err := snapshotSteps(c, ruleSteps, amount, *p.UserID)
 	if err != nil {
 		return nil, false, err
@@ -60,11 +65,11 @@ func (r *Registry) approvalGate(c *Ctx, cmd Command, input json.RawMessage) ([]b
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = c.Tx.QueryRow(c.Context,
 			`insert into core.confirmations (workspace_id, command, input, requested_by, kind, note_id, amount_minor,
-			   approver_user_id, fallback_user_id, escalate_at, steps)
+			   approver_user_id, fallback_user_id, escalate_at, steps, requested_by_agent, requested_by_kind)
 			 values ($1::uuid,$2,$3,$4,'approval',nullif($5,'')::uuid,$6,$7::uuid,$8::uuid,
-			   case when $9::int is null then null else now() + $9::int * interval '1 hour' end, $10::jsonb)
+			   case when $9::int is null then null else now() + $9::int * interval '1 hour' end, $10::jsonb, $11::uuid, $12)
 			 returning id::text`,
-			p.WorkspaceID, cmd.Name, input, *p.UserID, noteID, amount, steps[0].FirstUser(), fallback, hours, steps).Scan(&id)
+			p.WorkspaceID, cmd.Name, input, *p.UserID, noteID, amount, steps[0].FirstUser(), fallback, hours, steps, p.AgentID, byKind).Scan(&id)
 		if err != nil {
 			return nil, false, DB(err)
 		}
@@ -198,15 +203,40 @@ func NotifyApprovers(c *Ctx, approver, role *string, kind string, noteID *string
 	return DB(err)
 }
 
-// RunApproved executes a stored command as the person who asked for it, with their current role, inside the
-// caller's transaction. The approval gate is skipped (that is the decision being applied); every other gate runs.
-func (c *Ctx) RunApproved(requester, name string, input json.RawMessage) ([]byte, error) {
+// ApprovedCtx is the context an approved request replays in: the requester as a person, or, when a machine made the
+// request (agent set, or kind ApiKey for a key without an agent), that machine's principal rebuilt from the database now
+// (an agent paused or removed, or a member deactivated, refuses). name must still be allowed to that principal.
+func (c *Ctx) ApprovedCtx(requester, name string, agent *string, kind string) (*Ctx, error) {
 	var role string
-	if err := c.Tx.QueryRow(c.Context, `select role from core.memberships where workspace_id = $1::uuid and user_id = $2::uuid`,
+	if err := c.Tx.QueryRow(c.Context, `select role from core.memberships where workspace_id = $1::uuid and user_id = $2::uuid and deactivated_at is null`,
 		c.Principal.WorkspaceID, requester).Scan(&role); err != nil {
 		return nil, ErrConflict("the requester is no longer a member")
 	}
 	sub := &Ctx{Context: c.Context, Tx: c.Tx, reg: c.reg,
 		Principal: Principal{Kind: KindUser, UserID: &requester, WorkspaceID: c.Principal.WorkspaceID, Role: ParseRole(role)}}
+	switch {
+	case kind == string(KindAgent) && agent == nil:
+		return nil, ErrForbidden("the AI employee that made this request was removed")
+	case agent != nil:
+		p, err := AgentPrincipal(sub, *agent, requester)
+		if err != nil {
+			return nil, err
+		}
+		sub.Principal = p
+	case kind == string(KindAPIKey): // shortcut: a key's own scopes are not stored, so it replays with its owner's role capped at admin
+		sub.Principal.Kind, sub.Principal.Role = KindAPIKey, min(sub.Principal.Role, Admin)
+	default:
+		return sub, nil
+	}
+	return sub, sub.Allowed(name)
+}
+
+// RunApproved executes a stored command as whoever asked for it (see ApprovedCtx), inside the caller's
+// transaction. The approval gate is skipped (that is the decision being applied); every other gate runs.
+func (c *Ctx) RunApproved(requester, name string, input json.RawMessage, agent *string, kind string) ([]byte, error) {
+	sub, err := c.ApprovedCtx(requester, name, agent, kind)
+	if err != nil {
+		return nil, err
+	}
 	return c.reg.run(sub, name, input, ExecOptions{approved: true})
 }

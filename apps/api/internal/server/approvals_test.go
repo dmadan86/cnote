@@ -322,3 +322,53 @@ func TestApprovalAgentAboveThresholdRoutesInPersonsName(t *testing.T) {
 	eq(t, b.okAs(b.owner, "approval.decide", map[string]any{"id": id, "decision": "approve"})["status"], "approved")
 	eq(t, b.ok("quote.get", map[string]any{"id": q})["status"], "sent")
 }
+
+// An approved machine request replays with the machine's rights as they are at the final approval, never as the person.
+func TestApprovalAgentReplayIsRegated(t *testing.T) {
+	setup := func() (*bt, who, string, string, string) {
+		b := newBT(t, false)
+		b.rule(map[string]any{"min_amount_minor": 1})
+		b.must(b.owner, "workspace.update", map[string]any{"settings": map[string]any{"agent_tool_groups": []string{"read", "manage_crm", "manage_invoices", "admin"}}})
+		adm := b.addMember(b.owner, b.signup("Ada", false), "admin")
+		created := b.must(adm, "agent.create", map[string]any{"name": "Biller", "scopes": []string{"*"}})
+		agent := who{ws: b.owner.ws, bearer: created["api_key"].(string)}
+		q := b.quote(b.contact, "")
+		id := b.sendReq(agent, q)["confirmation_id"].(string)
+		eq(t, b.dbStrings(b.owner.ws, "select requested_by_agent::text || ':' || requested_by_kind from core.confirmations where id = $1::uuid", id),
+			[]string{created["agent_id"].(string) + ":Agent"})
+		return b, adm, created["agent_id"].(string), q, id
+	}
+	t.Run("still allowed executes", func(t *testing.T) {
+		b, _, _, q, id := setup()
+		eq(t, b.okAs(b.owner, "approval.decide", map[string]any{"id": id, "decision": "approve"})["status"], "approved")
+		eq(t, b.ok("quote.get", map[string]any{"id": q})["status"], "sent")
+	})
+	t.Run("paused agent does not execute", func(t *testing.T) {
+		b, _, agent, q, id := setup()
+		b.agentSQL("update core.agents set enabled = false where id = $1::uuid", agent)
+		r := b.okAs(b.owner, "approval.decide", map[string]any{"id": id, "decision": "approve"})
+		eq(t, r["status"], "expired")
+		eq(t, b.ok("quote.get", map[string]any{"id": q})["status"], "draft")
+		eq(t, b.dbStrings(b.owner.ws, "select status from core.confirmations where id = $1::uuid", id), []string{"expired"})
+	})
+	t.Run("scope removed does not execute", func(t *testing.T) {
+		b, _, agent, q, id := setup()
+		b.agentSQL("update core.agents set scopes = '{read}' where id = $1::uuid", agent)
+		eq(t, b.okAs(b.owner, "approval.decide", map[string]any{"id": id, "decision": "approve"})["status"], "expired")
+		eq(t, b.ok("quote.get", map[string]any{"id": q})["status"], "draft")
+	})
+}
+
+func (b *bt) agentSQL(q string, args ...any) {
+	b.t.Helper()
+	tx, err := dbTenant(b.env, b.owner.ws)
+	if err == nil {
+		_, err = tx.Exec(context.Background(), q, args...)
+	}
+	if err == nil {
+		err = tx.Commit(context.Background())
+	}
+	if err != nil {
+		b.t.Fatal(err)
+	}
+}

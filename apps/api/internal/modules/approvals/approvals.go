@@ -551,6 +551,7 @@ type pending struct {
 	escalated          bool
 	steps              []command.ApprovalStep
 	step               int
+	agent, kind        *string // the machine that made the request, when one did
 }
 
 // takenSlots: who has already approved each slot of a step. Rows are read before the loop's next query.
@@ -577,9 +578,9 @@ func lockPending(c *command.Ctx, id string) (pending, error) {
 	var status string
 	err := c.Tx.QueryRow(c.Context,
 		`select id::text, command, requested_by, input, note_id::text, amount_minor, approver_user_id::text, status,
-		        escalated_at is not null, steps, step_idx
+		        escalated_at is not null, steps, step_idx, requested_by_agent::text, requested_by_kind
 		   from core.confirmations where id = $1::uuid and kind = 'approval' for update`, id).Scan(
-		&p.id, &p.cmd, &p.requester, &p.input, &p.note, &p.amount, &p.approver, &status, &p.escalated, &p.steps, &p.step)
+		&p.id, &p.cmd, &p.requester, &p.input, &p.note, &p.amount, &p.approver, &status, &p.escalated, &p.steps, &p.step, &p.agent, &p.kind)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return p, command.ErrNotFound("approval")
 	}
@@ -694,10 +695,28 @@ func decide(c *command.Ctx, input json.RawMessage) (any, error) {
 		}
 		return map[string]any{"status": "pending", "step": p.step + 1}, nil
 	}
+	// A machine's request is replayed with that machine's rights as they are now; when it may no longer do this, the
+	// request ends here instead of running with a person's privileges.
+	if p.kind != nil {
+		if _, err := c.ApprovedCtx(p.requester, p.cmd, p.agent, *p.kind); err != nil {
+			var ce *command.Error
+			if !errors.As(err, &ce) {
+				return nil, err
+			}
+			if err := finish(c, p, "expired", "no longer allowed: "+ce.Message, "Expired"); err != nil {
+				return nil, err
+			}
+			return map[string]any{"status": "expired", "reason": ce.Message}, nil
+		}
+	}
 	if err := finish(c, p, "confirmed", why, "Approved"); err != nil {
 		return nil, err
 	}
-	res, err := c.RunApproved(p.requester, p.cmd, p.input)
+	kind := ""
+	if p.kind != nil {
+		kind = *p.kind
+	}
+	res, err := c.RunApproved(p.requester, p.cmd, p.input, p.agent, kind)
 	if err != nil {
 		return nil, err // rolls back: the request stays pending and the approver sees the reason
 	}

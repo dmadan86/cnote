@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cnote/api/internal/mailer"
 	"github.com/cnote/api/internal/modules/agents"
 )
 
@@ -148,7 +149,7 @@ func TestAgentLeadResponderHoldsEmailUntilApproved(t *testing.T) {
 		t.Fatalf("contact.email step: %v", st)
 	}
 	cid := st["confirmation"].(map[string]any)["id"].(string)
-	eq(t, len(sink.msgs), 0) // nothing leaves C Note before a person approves
+	eq(t, countMail(sink, "asha@example.test"), 0) // nothing leaves C Note before a person approves
 
 	pend := b.okList("confirmation.list", map[string]any{})
 	if len(pend) != 1 || pend[0].(map[string]any)["agent_name"] != "Lead responder" || pend[0].(map[string]any)["command"] != "contact.email" {
@@ -159,22 +160,22 @@ func TestAgentLeadResponderHoldsEmailUntilApproved(t *testing.T) {
 	}
 	b.errAs(mia, "confirmation.decide", map[string]any{"id": cid, "approve": true}, 403, "forbidden")
 	b.errAs(b.owner, "confirmation.decide", map[string]any{"id": cid, "approve": true, "input": map[string]any{"body": "edited"}}, 400, "invalid")
-	eq(t, len(sink.msgs), 0)
+	eq(t, countMail(sink, "asha@example.test"), 0)
 
 	d := b.ok("confirmation.decide", map[string]any{"id": cid, "approve": true})
 	eq(t, d["status"], "confirmed")
 	eq(t, d["executed"], true)
-	sink.mu.Lock()
-	n, mail := len(sink.msgs), strings.Join(sink.msgs, "\n")
-	sink.mu.Unlock()
+	// the mail is an outbox job: exactly one is queued, and the worker sends it
+	eq(t, b.dbStrings(b.owner.ws, "select count(*)::text from core.jobs where kind = 'mail.send'"), []string{"1"})
+	mail := waitMail(t, sink, "asha@example.test")
+	n := countMail(sink, "asha@example.test")
 	if n != 1 || !strings.Contains(mail, "asha@example.test") || !strings.Contains(mail, "Hello Asha") {
 		t.Fatalf("want one mail to the inquirer, got %d: %s", n, mail)
 	}
 	b.ok("confirmation.decide", map[string]any{"id": cid, "approve": true}) // a double click answers the same
-	sink.mu.Lock()
-	n = len(sink.msgs)
-	sink.mu.Unlock()
-	eq(t, n, 1)
+	time.Sleep(300 * time.Millisecond)
+	eq(t, b.dbStrings(b.owner.ws, "select count(*)::text from core.jobs where kind = 'mail.send'"), []string{"1"})
+	eq(t, countMail(sink, "asha@example.test"), 1)
 }
 
 // The run is about one inquiry: its tools cannot reach another contact.
@@ -316,4 +317,47 @@ func TestAgentInjectedInquiryCannotEmailSomeoneElse(t *testing.T) {
 	n := len(sink.msgs)
 	sink.mu.Unlock()
 	eq(t, n, 0)
+}
+
+// A decision that rolls back leaves no mail job behind (the outbox row lives and dies with the transaction).
+func TestMailOutboxRolledBackTxQueuesNothing(t *testing.T) {
+	b := newBT(t, false)
+	tx, err := dbTenant(b.env, b.owner.ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := mailer.Enqueue(context.Background(), tx, b.owner.ws, mailer.Mail{To: "a@example.test", Subject: "s", Text: "t"}); err != nil {
+		t.Fatal(err)
+	}
+	_ = tx.Rollback(context.Background())
+	eq(t, b.dbStrings(b.owner.ws, "select count(*)::text from core.jobs where kind = 'mail.send'"), []string{"0"})
+}
+
+// waitMail waits for the worker to deliver a mail containing substr (mail.send is an outbox job) and returns it.
+func waitMail(t *testing.T, s *smtpSink, substr string) string {
+	t.Helper()
+	for i := 0; i < 100; i++ {
+		s.mu.Lock()
+		for _, m := range s.msgs {
+			if strings.Contains(m, substr) {
+				s.mu.Unlock()
+				return m
+			}
+		}
+		s.mu.Unlock()
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatalf("no mail containing %q", substr)
+	return ""
+}
+
+func countMail(s *smtpSink, substr string) (n int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, m := range s.msgs {
+		if strings.Contains(m, substr) {
+			n++
+		}
+	}
+	return
 }

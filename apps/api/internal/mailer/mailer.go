@@ -6,14 +6,14 @@ package mailer
 import "context"
 
 type Mail struct {
-	To       string
-	ReplyTo  string // optional; must be one valid address
-	FromName string // business name; rendered as "<FromName> via <EMAIL_FROM name or C Note>"
-	Subject  string
-	Text     string // required
-	HTML     string // optional; when empty the mail is text/plain only
+	To       string `json:"to,omitempty"`
+	ReplyTo  string `json:"reply_to,omitempty"`  // optional; must be one valid address
+	FromName string `json:"from_name,omitempty"` // business name; rendered as "<FromName> via <EMAIL_FROM name or C Note>"
+	Subject  string `json:"subject,omitempty"`
+	Text     string `json:"text,omitempty"` // required
+	HTML     string `json:"html,omitempty"` // optional; when empty the mail is text/plain only
 	// MessageID is optional ("<id@host>"); empty means a random one at the sender's domain.
-	MessageID string
+	MessageID string `json:"message_id,omitempty"`
 }
 
 // Send delivers m and returns the Message-ID it set. Implemented by agent B (see docs/design/customer-messages.md).

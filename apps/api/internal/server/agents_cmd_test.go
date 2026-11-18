@@ -332,8 +332,8 @@ func TestContactEmailIsHeldForAgents(t *testing.T) {
 	sink := startSMTP(t)
 	t.Setenv("SMTP_URL", "smtp://"+sink.ln.Addr().String())
 	t.Setenv("EMAIL_FROM", "Acme <hello@acme.example.test>")
-	eq(t, b.ok("contact.email", in)["sent"], true)
-	subject, _, _, text, _ := parseMail(t, lastMail(t, sink))
+	eq(t, b.ok("contact.email", in)["queued"], true)
+	subject, _, _, text, _ := parseMail(t, waitMail(t, sink, "here is our reply"))
 	if subject != "Re: your enquiry" || !strings.Contains(text, "here is our reply") {
 		t.Fatalf("mail: %q %q", subject, text)
 	}
