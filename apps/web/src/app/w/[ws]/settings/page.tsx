@@ -2,6 +2,7 @@
 import {
   Bot,
   Building2,
+  Cpu,
   EyeOff,
   Gauge,
   History,
@@ -13,8 +14,10 @@ import {
   Plug,
   Settings2,
   ShieldCheck,
+  Sparkles,
   Users,
   Webhook,
+  Zap,
 } from 'lucide-react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
@@ -57,7 +60,7 @@ const SECTIONS: { group: string; tabs: SettingsTab[] }[] = [
         label: 'Members',
         desc: 'Who is in this workspace and what they can do.',
       },
-      { key: 'Usage', icon: Gauge, label: 'Usage', desc: 'What this workspace has used this month.' },
+      { key: 'Usage', icon: Gauge, label: 'Usage', desc: 'What this workspace used in the last 30 days.' },
     ],
   },
   {
@@ -519,23 +522,84 @@ function AppsTab({ ws }: { ws: string }) {
   )
 }
 
+// Friendly names for core.usage kinds; anything else is listed under "Other" as recorded.
+const USAGE_CARDS = [
+  {
+    label: 'AI tokens',
+    kinds: ['ai.tokens_in', 'ai.tokens_out'],
+    icon: Sparkles,
+    hint: 'Text the AI read and wrote for summaries, drafts and answers.',
+  },
+  {
+    label: 'Agent & API calls',
+    kinds: ['mcp.call'],
+    icon: Bot,
+    hint: 'Actions agents and connected apps ran through C Note.',
+  },
+  {
+    label: 'Automation runs',
+    kinds: ['automation.run'],
+    icon: Zap,
+    hint: 'Times a project automation fired.',
+  },
+  {
+    label: 'Background jobs',
+    kinds: ['worker.atomic'],
+    icon: Cpu,
+    hint: 'Imports, reminders and other work done in the background.',
+  },
+]
+
 function UsageTab({ ws }: { ws: string }) {
   const { data } = useCmd<{ kind: string; quantity: number }[]>(ws, 'usage.summary')
-  if (data?.length === 0) return <p className="text-muted">No usage in the last 30 days.</p>
+  if (!data) return <div aria-busy="true" className="h-24 animate-pulse rounded-lg bg-hover" />
+  if (data.length === 0)
+    return (
+      <div className="rounded-lg border border-line">
+        <EmptyState icon={Gauge} title="No usage in the last 30 days">
+          AI, agent calls and automations this workspace uses will be counted here.
+        </EmptyState>
+      </div>
+    )
+  const n = (k: string) => data.find((u) => u.kind === k)?.quantity ?? 0
+  const fmt = (v: number) => v.toLocaleString('en-IN')
+  const known = USAGE_CARDS.flatMap((c) => c.kinds)
+  const other = data.filter((u) => !known.includes(u.kind))
   return (
-    <table className="w-full max-w-md text-left">
-      <caption className="mb-2 text-left text-[13px] text-muted">Last 30 days</caption>
-      <tbody>
-        {data?.map((u) => (
-          <tr key={u.kind} className="border-b border-line">
-            <th scope="row" className="py-1.5 font-normal">
-              {u.kind}
-            </th>
-            <td className="text-right tabular-nums">{u.quantity.toLocaleString()}</td>
-          </tr>
+    <div className="space-y-6">
+      <div className="grid gap-3 sm:grid-cols-2">
+        {USAGE_CARDS.map((c) => (
+          <div key={c.label} className="rounded-lg border border-line p-4">
+            <div className="flex items-center gap-2 text-[13px] text-muted">
+              <c.icon size={15} aria-hidden />
+              {c.label}
+            </div>
+            <div className="mt-2 text-xl font-semibold tabular-nums">
+              {fmt(c.kinds.reduce((t, k) => t + n(k), 0))}
+            </div>
+            {c.kinds.length === 2 ? (
+              <p className="mt-1 text-[12px] text-muted">
+                {fmt(n(c.kinds[0]))} read · {fmt(n(c.kinds[1]))} written
+              </p>
+            ) : null}
+            <p className="mt-1 text-[12px] text-muted">{c.hint}</p>
+          </div>
         ))}
-      </tbody>
-    </table>
+      </div>
+      {other.length > 0 && (
+        <section>
+          <h3 className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted">Other</h3>
+          <ul className="divide-y divide-line rounded-lg border border-line">
+            {other.map((u) => (
+              <li key={u.kind} className="flex justify-between px-4 py-2 text-[13px]">
+                <span>{u.kind}</span>
+                <span className="tabular-nums">{fmt(u.quantity)}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+    </div>
   )
 }
 
