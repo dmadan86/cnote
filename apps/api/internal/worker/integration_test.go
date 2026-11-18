@@ -107,10 +107,17 @@ func TestMentionEmail(t *testing.T) {
 	g.drain(100)
 	smtp.mu.Lock()
 	defer smtp.mu.Unlock()
-	if len(smtp.msgs) != 1 {
-		t.Fatalf("want one email, got %d", len(smtp.msgs))
+	// drain also runs other tests' queued jobs against this sink, so count only this test's recipient
+	var mine []smtpMsg
+	for _, x := range smtp.msgs {
+		if x.to == mo.email {
+			mine = append(mine, x)
+		}
 	}
-	m := smtp.msgs[0]
+	if len(mine) != 1 {
+		t.Fatalf("want one email to %s, got %d", mo.email, len(mine))
+	}
+	m := mine[0]
 	if m.from != "noreply@example.test" || m.to != mo.email {
 		t.Fatalf("envelope %q -> %q", m.from, m.to)
 	}
