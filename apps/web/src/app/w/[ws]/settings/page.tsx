@@ -28,7 +28,7 @@ import { HooksTab } from '@/components/hooks-settings'
 import { Secret } from '@/components/secret'
 import { SignInSecurity } from '@/components/security/sign-in'
 import { useShell } from '@/components/shell'
-import { btn, btnPrimary, ErrorText, Field, inputCls } from '@/components/ui'
+import { btn, btnPrimary, EmptyState, ErrorText, Field, inputCls } from '@/components/ui'
 import { cmd } from '@/lib/api'
 import { ago, useCmd } from '@/lib/hooks'
 import { GROUPS } from '@/lib/tool-groups'
@@ -445,17 +445,31 @@ function ConfirmationsTab({ ws }: { ws: string }) {
     await cmd(ws, 'confirmation.decide', { id, approve })
     reload()
   }
-  if (data?.length === 0) return <p className="text-muted">No pending confirmations.</p>
+  if (!data) return <div aria-busy="true" className="h-24 animate-pulse rounded-lg bg-hover" />
+  if (data.length === 0)
+    return (
+      <div className="rounded-lg border border-line">
+        <EmptyState icon={ShieldCheck} title="No pending confirmations">
+          When an agent asks to send, pay or delete something, the request waits here for you to approve or
+          reject.
+        </EmptyState>
+      </div>
+    )
   return (
-    <ul className="space-y-2">
-      {data?.map((c) => (
-        <li key={c.id} className="rounded-md border border-line p-3">
-          <div className="flex items-center gap-2">
-            <code className="font-medium">{c.command}</code>
-            <span className="text-[12px] text-muted">
-              by {c.requested_by} · {ago(c.created_at)}
+    <ul className="space-y-3">
+      {data.map((c) => (
+        <li key={c.id} className="rounded-lg border border-line">
+          <div className="flex items-start gap-3 p-4">
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-line bg-hover text-muted">
+              <Bot size={16} aria-hidden />
             </span>
-            <div className="ml-auto flex gap-2">
+            <div className="min-w-0 flex-1">
+              <code className="text-[13px] font-medium">{c.command}</code>
+              <p className="mt-0.5 text-[12px] text-muted">
+                Requested by {c.requested_by} · {ago(c.created_at)}
+              </p>
+            </div>
+            <div className="flex shrink-0 gap-2">
               <button type="button" className={btn} onClick={() => decide(c.id, false)}>
                 Reject
               </button>
@@ -464,9 +478,10 @@ function ConfirmationsTab({ ws }: { ws: string }) {
               </button>
             </div>
           </div>
-          <pre className="mt-2 overflow-x-auto rounded bg-side p-2 text-[12px]">
-            {JSON.stringify(c.input, null, 2)}
-          </pre>
+          <details className="border-t border-line px-4 py-2 text-[12px]">
+            <summary className="cursor-pointer text-muted hover:text-fg">What it will do</summary>
+            <pre className="mt-2 overflow-x-auto rounded bg-side p-2">{JSON.stringify(c.input, null, 2)}</pre>
+          </details>
         </li>
       ))}
     </ul>
