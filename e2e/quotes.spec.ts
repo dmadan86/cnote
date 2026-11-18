@@ -33,7 +33,7 @@ test('Quotation: draft -> send -> accept -> convert to invoice draft', async ({ 
   await expect(page.getByRole('link', { name: customer })).toBeVisible()
 
   await page.goto(`${base}/billing/quotes`)
-  await expect(page.getByText('No quotes yet.')).toBeVisible()
+  await expect(page.getByText('No quotes yet')).toBeVisible()
   await page.getByRole('button', { name: 'New quote' }).click()
   await page
     .getByRole('dialog', { name: 'New quote' })

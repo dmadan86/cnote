@@ -1,10 +1,11 @@
 'use client'
+import { Banknote } from 'lucide-react'
 import Link from 'next/link'
 import { useState } from 'react'
 import { download } from '@/components/audit/log'
 import { money, parseMinor, STATES, toRupees } from '@/components/billing/fmt'
 import { BranchSelect } from '@/components/company/branch-filter'
-import { btn, btnPrimary, ErrorText, Field, inputCls, Modal, Pill } from '@/components/ui'
+import { btn, btnPrimary, EmptyState, ErrorText, Field, inputCls, Modal, Pill } from '@/components/ui'
 import { cmd } from '@/lib/api'
 import { useCmd } from '@/lib/hooks'
 import { PeopleTabs, useRole } from './shared'
@@ -171,9 +172,9 @@ export function PayrollHome() {
             </p>
             <ErrorText error={err} />
             {runs.data && runs.data.length === 0 && (
-              <p className="text-[14px] text-muted">
-                No payroll runs yet. Set salary structures below, then create a draft.
-              </p>
+              <EmptyState icon={Banknote} title="No payroll runs yet">
+                Set salary structures below, then create a draft.
+              </EmptyState>
             )}
             {runs.data && runs.data.length > 0 && (
               <ul className="divide-y divide-line rounded-lg border border-line" aria-label="Payroll runs">
@@ -1034,9 +1035,9 @@ export function Payslips() {
         </h2>
         <ErrorText error={list.error} />
         {list.data?.length === 0 && (
-          <p className="text-[14px] text-muted">
-            No payslips yet. They appear here once payroll for a month is finalised.
-          </p>
+          <EmptyState compact icon={Banknote} title="No payslips yet">
+            They appear here once payroll for a month is finalised.
+          </EmptyState>
         )}
         <ul
           className="divide-y divide-line rounded-lg border border-line empty:hidden"

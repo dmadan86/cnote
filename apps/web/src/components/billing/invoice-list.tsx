@@ -1,12 +1,12 @@
 'use client'
-import { Plus } from 'lucide-react'
+import { FileText, Plus } from 'lucide-react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useState } from 'react'
 import { BranchSelect, useBranches } from '@/components/company/branch-filter'
 import { NeedSpace } from '@/components/crm/contacts'
 import { useShell } from '@/components/shell'
-import { btn, btnPrimary, ErrorText, Field, inputCls, Modal, Pill } from '@/components/ui'
+import { btn, btnPrimary, EmptyState, ErrorText, Field, inputCls, Modal, Pill } from '@/components/ui'
 import { useCmd } from '@/lib/hooks'
 import { newDraft } from './bits'
 import { FilterBanner, today } from './filter'
@@ -145,9 +145,21 @@ export function InvoiceList() {
       <ErrorText error={error} />
       {!spaces.length && <NeedSpace />}
       {data?.length === 0 && spaces.length > 0 && (
-        <p className="py-8 text-center text-muted">
-          {data !== all ? 'Nothing matches.' : 'No invoices yet.'}
-        </p>
+        <EmptyState
+          icon={FileText}
+          title={data !== all ? 'No invoices match' : 'No invoices yet'}
+          action={
+            data !== all ? undefined : (
+              <button type="button" className={btnPrimary} onClick={() => setAdding(true)}>
+                <Plus size={14} /> Create first invoice
+              </button>
+            )
+          }
+        >
+          {data !== all
+            ? 'Nothing fits this filter.'
+            : 'Invoices you send to customers, and what they owe, show up here.'}
+        </EmptyState>
       )}
       {!!data?.length && (
         <table className="w-full text-left text-[14px]">

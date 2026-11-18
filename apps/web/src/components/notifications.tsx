@@ -2,6 +2,7 @@
 import { Bell } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { EmptyState } from '@/components/ui'
 import { cmd } from '@/lib/api'
 import { ago } from '@/lib/hooks'
 
@@ -111,7 +112,13 @@ export function NotificationBell({ ws }: { ws: string }) {
             </button>
           </div>
           <ul aria-label="Notifications" className="max-h-96 overflow-y-auto p-1">
-            {items.length === 0 && <li className="px-2 py-3 text-[13px] text-muted">Nothing yet.</li>}
+            {items.length === 0 && (
+              <li>
+                <EmptyState compact icon={Bell} title="Nothing yet">
+                  Mentions and approvals will show up here.
+                </EmptyState>
+              </li>
+            )}
             {items.map((n) => (
               <li key={n.id}>
                 <button

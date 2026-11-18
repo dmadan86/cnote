@@ -1,11 +1,12 @@
 'use client'
-import { AlertTriangle } from 'lucide-react'
+import { AlertTriangle, CircleCheck } from 'lucide-react'
 import Link from 'next/link'
 import { useState } from 'react'
 import { money } from '@/components/billing/fmt'
 import { BranchSelect } from '@/components/company/branch-filter'
 import { CheckInCard } from '@/components/hr/checkin'
 import { useShell } from '@/components/shell'
+import { EmptyState } from '@/components/ui'
 import { useCmd } from '@/lib/hooks'
 
 type Tile<T> = T | undefined
@@ -248,7 +249,9 @@ export function HomeDashboard() {
           Needs your attention
         </h2>
         {data.attention.length === 0 ? (
-          <p className="text-muted">You are caught up. Nothing needs action today.</p>
+          <EmptyState compact icon={CircleCheck} title="You are caught up">
+            Nothing needs action today.
+          </EmptyState>
         ) : (
           <ul className="divide-y divide-line rounded-lg border border-line">
             {rows.map((a) => (

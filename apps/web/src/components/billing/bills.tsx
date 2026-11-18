@@ -1,12 +1,12 @@
 'use client'
-import { Plus, Trash2 } from 'lucide-react'
+import { Plus, Receipt, Trash2 } from 'lucide-react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { use, useState } from 'react'
 import { ApprovalBanner } from '@/components/approvals/banner'
 import { NeedSpace } from '@/components/crm/contacts'
 import { useShell } from '@/components/shell'
-import { btn, btnPrimary, ErrorText, Field, inputCls, Modal, Pill } from '@/components/ui'
+import { btn, btnPrimary, EmptyState, ErrorText, Field, inputCls, Modal, Pill } from '@/components/ui'
 import { useCmd } from '@/lib/hooks'
 import { Confirm, run } from './bits'
 import { Totals } from './editor'
@@ -170,7 +170,17 @@ export function BillList() {
       <ErrorText error={error} />
       {!spaces.length && <NeedSpace />}
       {data?.length === 0 && spaces.length > 0 && (
-        <p className="py-8 text-center text-muted">No bills yet.</p>
+        <EmptyState
+          icon={Receipt}
+          title="No bills yet"
+          action={
+            <button type="button" className={btnPrimary} onClick={() => setAdding(true)}>
+              <Plus size={14} /> Add first bill
+            </button>
+          }
+        >
+          Bills from your vendors, and when they are due, show up here.
+        </EmptyState>
       )}
       {!!data?.length && (
         <div className="overflow-x-auto">

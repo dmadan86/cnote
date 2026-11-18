@@ -34,7 +34,7 @@ test('Purchase bill: vendor -> draft -> record -> partial and full payment', asy
   await expect(page.getByRole('link', { name: vendor })).toBeVisible()
 
   await page.goto(`${base}/billing/bills`)
-  await expect(page.getByText('No bills yet.')).toBeVisible()
+  await expect(page.getByText('No bills yet')).toBeVisible()
   await page.getByRole('button', { name: 'New bill' }).click()
   const nb = page.getByRole('dialog', { name: 'New bill' })
   await nb.getByLabel('Vendor', { exact: true }).selectOption({ label: vendor })
