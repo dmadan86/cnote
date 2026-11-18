@@ -57,15 +57,6 @@ func expenseScope(g *gen, env Env) string {
 		g.push(env.Admin, "boolean"), g.push(env.UserID, "uuid"), g.push(env.Finance, "boolean"))
 }
 
-// timelog/timelog.go list: readable spaces only (no per-page access check there).
-func timeScope(g *gen, env Env) string {
-	spaces := env.Spaces
-	if spaces == nil {
-		spaces = []string{}
-	}
-	return "n.deleted_at is null and n.space_id = any(" + g.push(spaces, "text[]") + "::uuid[])"
-}
-
 func ist(col string) string { return "(" + col + " at time zone 'Asia/Kolkata')::date" }
 
 func opts(kv ...string) []Option {
@@ -218,7 +209,8 @@ var registry = []*dataset{
 	{
 		key: "time_entries", label: "Time logged", noun: "time entries", desc: "One row per time entry logged on a task", module: "projects",
 		from: "projects.time_entries e join core.notes n on n.id = e.item_id join projects.items pi on pi.note_id = e.item_id join core.users u on u.id = e.user_id join core.spaces sp on sp.id = n.space_id",
-		pk:   "e.id", scope: timeScope, defDate: "worked_on",
+		pk:   "e.id", scope: noteScope("n.space_id"), // stricter than time.list: private tasks stay hidden here too
+		defDate: "worked_on",
 		defCols: []string{"worked_on", "person", "project", "task", "hours", "billable"},
 		fields: []field{
 			{key: "worked_on", label: "Date", typ: TDate, sql: "e.worked_on", group: true},

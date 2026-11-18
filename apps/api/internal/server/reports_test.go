@@ -253,6 +253,8 @@ func TestReportDashboards(t *testing.T) {
 
 	r.errAs(r.member, "dashboard.save", map[string]any{"id": d["id"], "name": "x", "tiles": []any{}}, 403, "forbidden")
 	r.errAs(r.member, "dashboard.delete", map[string]any{"id": d["id"]}, 403, "forbidden")
+	// someone else's private report id must look exactly like a missing one
+	r.errAs(r.member, "dashboard.save", map[string]any{"name": "x", "tiles": []any{map[string]any{"report_id": priv, "size": "half"}}}, 400, "invalid")
 	r.errIs("dashboard.save", map[string]any{"name": "x", "tiles": []any{map[string]any{"report_id": pub, "size": "huge"}}}, 400, "invalid")
 	r.errIs("dashboard.save", map[string]any{"name": "x", "tiles": []any{map[string]any{"report_id": "3f1c1f0e-1b1b-4b1b-8b1b-1b1b1b1b1b1b", "size": "half"}}}, 400, "invalid")
 	r.errIs("dashboard.save", map[string]any{"name": "x", "tiles": []any{}, "period": map[string]any{"preset": "someday"}}, 400, "invalid")

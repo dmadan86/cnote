@@ -172,7 +172,7 @@ func dashboardSave(c *command.Ctx, input json.RawMessage) (any, error) {
 	}
 	if len(ids) > 0 {
 		var n int
-		if err := c.Tx.QueryRow(c.Context, "select count(*) from core.reports where workspace_id = $1::uuid and id = any($2::text[]::uuid[])", c.WorkspaceID(), ids).Scan(&n); err != nil {
+		if err := c.Tx.QueryRow(c.Context, "select count(*) from core.reports where workspace_id = $1::uuid and id = any($2::text[]::uuid[]) and (visibility = 'workspace' or created_by = $3::uuid)", c.WorkspaceID(), ids, nilIfEmpty(uidOf(c))).Scan(&n); err != nil {
 			return nil, command.DB(err)
 		}
 		if n != len(ids) {
