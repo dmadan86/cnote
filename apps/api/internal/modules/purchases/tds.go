@@ -260,6 +260,14 @@ func computeTDS(c *command.Ctx, b row, amount int64, code string, at time.Time) 
 	if err := c.Tx.QueryRow(c.Context, "select pan, default_tds_code from crm.contacts where note_id = $1::uuid", b.VendorID).Scan(&pan, &def); err != nil {
 		return t, command.DB(err)
 	}
+	var opening bool
+	if err := c.Tx.QueryRow(c.Context, "select opening from billing.purchase_bills where note_id = $1::uuid", b.ID).Scan(&opening); err != nil {
+		return t, command.DB(err)
+	}
+	if opening { // carried over from another system: TDS was handled there
+		t.Reason = "opening balance bill: no TDS is deducted"
+		return t, nil
+	}
 	if code == "" && def != nil {
 		code = *def
 	}
@@ -296,7 +304,7 @@ func computeTDS(c *command.Ctx, b row, amount int64, code string, at time.Time) 
 	if err := c.Tx.QueryRow(c.Context,
 		`select coalesce(sum(p.tds_base_minor),0)::bigint, coalesce(sum(p.tds_on_minor),0)::bigint
 		   from billing.purchase_payments p join billing.purchase_bills pb on pb.note_id = p.bill_id
-		  where pb.vendor_id = $1::uuid and p.tds_code = $2 and p.paid_at >= $3 and p.paid_at < $4`,
+		  where pb.vendor_id = $1::uuid and not pb.opening and p.tds_code = $2 and p.paid_at >= $3 and p.paid_at < $4`,
 		b.VendorID, code, start, start.AddDate(1, 0, 0)).Scan(&prior, &priorOn); err != nil {
 		return t, command.DB(err)
 	}
@@ -385,7 +393,7 @@ func tdsPayable(c *command.Ctx, input json.RawMessage) (any, error) {
 		   join billing.purchase_bills b on b.note_id = p.bill_id join core.notes n on n.id = b.note_id
 		   join crm.contacts ct on ct.note_id = b.vendor_id join core.notes vn on vn.id = b.vendor_id
 		   left join billing.tds_rates r on r.code = p.tds_code
-		  where p.tds_minor > 0 and (p.paid_at at time zone 'Asia/Kolkata')::date between $1::date and $2::date
+		  where p.tds_minor > 0 and not b.opening and (p.paid_at at time zone 'Asia/Kolkata')::date between $1::date and $2::date
 		    and n.space_id = any($3::text[]::uuid[]) and core.note_access(n.id, $4::uuid, $5, $3::text[]::uuid[]) <> 'none'
 		  group by p.tds_code, r.label, b.vendor_id, vn.title, ct.pan order by p.tds_code, vn.title`, *v.From, *v.To, spaces, uid, admin)
 	if err != nil {

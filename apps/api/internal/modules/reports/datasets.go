@@ -38,6 +38,11 @@ func (g *gen) push(v any, cast string) string {
 	return fmt.Sprintf("$%d::%s", len(g.args), cast)
 }
 
+// skipOpening keeps opening balance documents (carried over from another system) out of tax-flavoured datasets.
+func skipOpening(inner func(g *gen, env Env) string, alias string) func(g *gen, env Env) string {
+	return func(g *gen, env Env) string { return "(" + inner(g, env) + ") and not " + alias + ".opening" }
+}
+
 // noteScope is the page-level rule every note-backed list command uses: readable spaces + core.note_access.
 func noteScope(spaceCol string) func(g *gen, env Env) string {
 	return func(g *gen, env Env) string {
@@ -78,7 +83,7 @@ var registry = []*dataset{
 	{
 		key: "invoices", label: "Invoices", noun: "invoices", desc: "One row per invoice or credit note", module: "billing", finance: true,
 		from: "billing.invoices i join core.notes n on n.id = i.note_id left join core.notes cn on cn.id = i.contact_id",
-		pk:   "i.note_id", scope: noteScope("n.space_id"), defDate: "invoice_date",
+		pk:   "i.note_id", scope: skipOpening(noteScope("n.space_id"), "i"), defDate: "invoice_date",
 		defCols: []string{"number", "contact", "invoice_date", "status", "total", "balance"},
 		fields: []field{
 			{key: "number", label: "Invoice number", typ: TText, sql: "i.number"},
@@ -101,7 +106,7 @@ var registry = []*dataset{
 	{
 		key: "payments", label: "Payments received", noun: "payments", desc: "One row per payment received against an invoice", module: "billing", finance: true,
 		from: "billing.payments p join billing.invoices i on i.note_id = p.invoice_id join core.notes n on n.id = i.note_id left join core.notes cn on cn.id = i.contact_id",
-		pk:   "p.id", scope: noteScope("n.space_id"), defDate: "received_on",
+		pk:   "p.id", scope: skipOpening(noteScope("n.space_id"), "i"), defDate: "received_on",
 		defCols: []string{"received_on", "contact", "invoice_number", "amount", "method"},
 		fields: []field{
 			{key: "received_on", label: "Date received", typ: TDate, sql: ist("p.received_at"), group: true},
@@ -115,7 +120,7 @@ var registry = []*dataset{
 	{
 		key: "purchase_bills", label: "Purchase bills", noun: "bills", desc: "One row per bill from a supplier", module: "billing", finance: true,
 		from: "billing.purchase_bills b join core.notes n on n.id = b.note_id left join core.notes cn on cn.id = b.vendor_id",
-		pk:   "b.note_id", scope: noteScope("n.space_id"), defDate: "bill_date",
+		pk:   "b.note_id", scope: skipOpening(noteScope("n.space_id"), "b"), defDate: "bill_date",
 		defCols: []string{"vendor_bill_number", "vendor", "bill_date", "status", "total", "balance"},
 		fields: []field{
 			{key: "vendor_bill_number", label: "Supplier bill number", typ: TText, sql: "b.vendor_bill_number"},

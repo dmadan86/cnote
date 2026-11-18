@@ -268,7 +268,7 @@ func IRNWarnWorkspace(c *command.Ctx, today time.Time) (int, error) {
 	day := today.Format(time.DateOnly)
 	rows, err := c.Tx.Query(c.Context,
 		`select i.note_id::text, i.number, i.invoice_date::text from billing.invoices i
-				 where i.status in ('issued','sent','partly_paid','paid') and i.irn is null and i.buyer_gstin is not null
+				 where i.status in ('issued','sent','partly_paid','paid') and i.irn is null and i.buyer_gstin is not null and not i.opening
 				   and $1::date - i.invoice_date >= $2
 				   and not exists (select 1 from core.events e where e.note_id = i.note_id and e.kind = 'invoice.irn_window_warning')`, day, int32(warnDay))
 	if err != nil {

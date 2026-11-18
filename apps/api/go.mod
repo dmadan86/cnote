@@ -9,6 +9,7 @@ require (
 	github.com/mattermost/xml-roundtrip-validator v0.1.0
 	github.com/russellhaering/goxmldsig v1.6.1
 	golang.org/x/crypto v0.46.0
+	golang.org/x/text v0.32.0
 )
 
 require (
@@ -18,5 +19,4 @@ require (
 	github.com/jonboulle/clockwork v0.5.0 // indirect
 	golang.org/x/sync v0.19.0 // indirect
 	golang.org/x/sys v0.39.0 // indirect
-	golang.org/x/text v0.32.0 // indirect
 )

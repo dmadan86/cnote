@@ -40,6 +40,7 @@ func New(pool *pgxpool.Pool, reg *command.Registry) *Worker {
 	w.OnJob("hook.deliver", hooks.DeliverJob)
 	w.OnJob(mailer.JobKind, mailSendJob)
 	w.OnJob("import.run", importers.RunJob)
+	w.OnJob("data_import.run", importers.RunDataJob)
 	w.OnLong("agent.ask", 4, agents.RunJob(pool, reg))
 	w.OnLong("agent.run", 2, agents.RunJob(pool, reg))
 	day := 24 * time.Hour

@@ -17,6 +17,7 @@ import {
   Settings2,
   ShieldCheck,
   Sparkles,
+  Upload,
   UserPlus,
   Users,
   Webhook,
@@ -73,6 +74,12 @@ const SECTIONS: { group: string; tabs: SettingsTab[] }[] = [
         desc: 'Who is in this workspace and what they can do.',
       },
       { key: 'Usage', icon: Gauge, label: 'Usage', desc: 'What this workspace used in the last 30 days.' },
+      {
+        key: 'Import',
+        icon: Upload,
+        label: 'Import data',
+        desc: 'Bring in customers, items, opening balances or your Tally data.',
+      },
     ],
   },
   {
@@ -770,6 +777,17 @@ export default function Settings() {
           {tab === 'Connected apps' && <AppsTab ws={ws} />}
           {tab === 'Webhooks' && <HooksTab ws={ws} />}
           {tab === 'Usage' && <UsageTab ws={ws} />}
+          {tab === 'Import' && (
+            <Link
+              href={`/w/${ws}/import`}
+              className="block rounded-lg border border-line p-4 text-[13px] hover:bg-hover"
+            >
+              <span className="font-semibold">Open the import hub</span>
+              <span className="mt-0.5 block text-muted">
+                Contacts, items, opening balances and Tally, with your recent imports and Undo.
+              </span>
+            </Link>
+          )}
           {tab === 'Audit log' && <AuditLog ws={ws} />}
           {tab === 'Privacy' && <Privacy ws={ws} />}
           {tab === 'Security' && <SignInSecurity ws={ws} />}
