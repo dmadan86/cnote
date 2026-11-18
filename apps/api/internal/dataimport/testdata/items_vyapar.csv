@@ -1,0 +1,6 @@
+Name of Item;Item Code;HSN/SAC;Rate of Tax;Unit;Selling Price;Opening Stock;Stock Value
+Steel widget 10mm;WID-10;7318;18%;Nos;250.00;100;20,000.00
+Cotton fabric;COT-1;5208;5;Mtr;"1,250.50";12.5;10000
+No sku row;;7318;18;Nos;10;;
+Odd rate;ODD-1;7318;7;Nos;10;;
+Bad hsn;HSN-1;73;18;Nos;10;;

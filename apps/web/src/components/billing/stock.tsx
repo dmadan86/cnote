@@ -597,6 +597,9 @@ export function StockList() {
           <button type="button" className={btn} onClick={() => setDlg({ kind: 'locations' })}>
             Locations
           </button>
+          <Link href={`/w/${ws}/import/items`} className={btn}>
+            Import
+          </Link>
           <button type="button" className={btnPrimary} onClick={() => setDlg({ kind: 'new' })}>
             <Plus size={14} /> New item
           </button>

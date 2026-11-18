@@ -34,7 +34,7 @@ func Commands() []command.Command {
 		confirm(nc("credit_note.create", mi, creditNoteCreate)),
 		confirm(nc("payment.record", mi, paymentRecord)),
 		role(confirm(nc("invoice.write_off", mi, invoiceWriteOff)), command.Admin),
-	}, reportCommands()...)
+	}, append(reportCommands(), openingCommands()...)...)
 }
 
 // ---------- dates ----------
@@ -103,6 +103,7 @@ type invoiceRow struct {
 	IssuedAt          *command.Ts `json:"issued_at"`
 	CancelledAt       *command.Ts `json:"cancelled_at"`
 	BranchID          *string     `json:"branch_id,omitempty"`
+	Opening           bool        `json:"opening"`
 	ackTime           *time.Time  // not serialized
 }
 
@@ -113,7 +114,7 @@ func (i invoiceRow) outstanding() int64 {
 const invCols = `i.note_id::text, i.kind, i.number, i.status, i.contact_id::text, i.original_invoice_id::text, i.currency::text,
 	i.supplier_gstin, i.supplier_state, i.buyer_gstin, i.place_of_supply, i.reverse_charge, i.invoice_date::text, i.due_date::text,
 	i.subtotal_minor, i.cgst_minor, i.sgst_minor, i.igst_minor, i.total_minor, i.paid_minor, i.credited_minor,
-	i.written_off_minor, i.irn, i.ack_no, i.ack_date, i.signed_qr, i.irn_cancelled_at, i.issued_at, i.cancelled_at, i.branch_id::text`
+	i.written_off_minor, i.irn, i.ack_no, i.ack_date, i.signed_qr, i.irn_cancelled_at, i.issued_at, i.cancelled_at, i.branch_id::text, i.opening`
 
 func scanInvoice(row pgx.Row) (invoiceRow, error) {
 	var r invoiceRow
@@ -121,7 +122,7 @@ func scanInvoice(row pgx.Row) (invoiceRow, error) {
 	err := row.Scan(&r.ID, &r.Kind, &r.Number, &r.Status, &r.ContactID, &r.OriginalInvoiceID, &r.Currency,
 		&r.SupplierGSTIN, &r.SupplierState, &r.BuyerGSTIN, &r.PlaceOfSupply, &r.ReverseCharge, &r.InvoiceDate, &r.DueDate,
 		&r.SubtotalMinor, &r.CGSTMinor, &r.SGSTMinor, &r.IGSTMinor, &r.TotalMinor, &r.PaidMinor, &r.CreditedMinor,
-		&r.WrittenOffMinor, &r.IRN, &r.AckNo, &ack, &r.SignedQR, &irnC, &issued, &canc, &r.BranchID)
+		&r.WrittenOffMinor, &r.IRN, &r.AckNo, &ack, &r.SignedQR, &irnC, &issued, &canc, &r.BranchID, &r.Opening)
 	r.AckDate, r.IRNCancelledAt, r.IssuedAt, r.CancelledAt = command.TsPtr(ack), command.TsPtr(irnC), command.TsPtr(issued), command.TsPtr(canc)
 	r.ackTime = ack
 	return r, err
@@ -1018,6 +1019,9 @@ func invoiceGenerateIRN(c *command.Ctx, input json.RawMessage) (any, error) {
 	if inv.Number == nil || inv.Status == "draft" || inv.Status == "cancelled" {
 		return nil, command.ErrConflict("invoice must be issued and not cancelled")
 	}
+	if inv.Opening {
+		return nil, errOpeningDoc
+	}
 	if inv.IRN != nil {
 		return nil, command.ErrConflict("an IRN already exists for this document")
 	}
@@ -1193,6 +1197,9 @@ func creditNoteCreate(c *command.Ctx, input json.RawMessage) (any, error) {
 	if err := requireOpen(orig); err != nil {
 		return nil, err
 	}
+	if orig.Opening {
+		return nil, errOpeningDoc
+	}
 	lines, err := parseLines(rawLines)
 	if err != nil {
 		return nil, err
@@ -1223,6 +1230,9 @@ func invoiceCancel(c *command.Ctx, input json.RawMessage) (any, error) {
 	}
 	if err := requireOpen(inv); err != nil {
 		return nil, err
+	}
+	if inv.Opening {
+		return nil, errOpeningDoc
 	}
 	if inv.Status == "partly_paid" || inv.PaidMinor+inv.CreditedMinor+inv.WrittenOffMinor > 0 {
 		return nil, command.ErrConflict("invoice has payments, credits or write-offs; use a partial credit note instead")

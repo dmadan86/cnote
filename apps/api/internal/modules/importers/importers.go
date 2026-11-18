@@ -21,7 +21,7 @@ func Commands() []command.Command {
 	for _, c := range []*command.Command{&start, &status, &list} {
 		c.MinRole = command.Admin
 	}
-	return []command.Command{start, status, list}
+	return append([]command.Command{start, status, list}, dataCommands()...)
 }
 
 var sources = map[string]bool{"jira": true, "confluence": true, "notion": true, "trello": true, "csv": true}
@@ -167,7 +167,7 @@ func importStatus(c *command.Ctx, input json.RawMessage) (any, error) {
 		return nil, err
 	}
 	var raw []byte
-	err = c.Tx.QueryRow(c.Context, "select (to_jsonb(j) - 'input')::text from importers.jobs j where id = $1::uuid", id).Scan(&raw)
+	err = c.Tx.QueryRow(c.Context, "select (to_jsonb(j) - 'input')::text from importers.jobs j where id = $1::uuid and kind = 'notes'", id).Scan(&raw)
 	if err != nil {
 		if command.DB(err).(*command.Error).Code == command.NotFound {
 			return nil, command.ErrNotFound("import")
@@ -188,7 +188,7 @@ func importList(c *command.Ctx, input json.RawMessage) (any, error) {
 	var raw []byte
 	if err := c.Tx.QueryRow(c.Context,
 		`select (coalesce(jsonb_agg(to_jsonb(j) - 'input' order by j.created_at desc), '[]'::jsonb))::text
-		 from (select * from importers.jobs order by created_at desc limit 50) j`).Scan(&raw); err != nil {
+		 from (select * from importers.jobs where kind = 'notes' order by created_at desc limit 50) j`).Scan(&raw); err != nil {
 		return nil, err
 	}
 	return notes.NormValue(raw)

@@ -67,6 +67,9 @@ func TestQARoleMatrixFromRegistry(t *testing.T) {
 	denied, allowed := 0, 0
 	for _, p := range ps {
 		for _, c := range cmds {
+			if c.Internal { // never reachable by a client: TestImportOnlyCommandsAreInternal
+				continue
+			}
 			wantDenied := p.role < c.MinRole || p.bot && !agentGroups[c.Group]
 			g := e.cmd(e.gosv.URL, p.w, owner.ws, c.Name, map[string]any{}, nil)
 			label := p.name + " x " + c.Name + " (" + string(c.Group) + ", min " + c.MinRole.String() + ")"

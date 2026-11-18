@@ -60,7 +60,7 @@ func Catalog(reg *command.Registry) []Entry {
 		known[e.Name] = true
 	}
 	for _, c := range reg.List() {
-		if c.Description == "" || known[c.Name] {
+		if c.Description == "" || c.Internal || known[c.Name] {
 			continue
 		}
 		schema, err := command.Norm(c.Schema)

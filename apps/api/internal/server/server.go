@@ -80,6 +80,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case strings.HasPrefix(r.URL.EscapedPath(), "/api/w/") && isFileRoute(r):
 		ws, id, _ := fileRoute(r)
 		s.files(w, r, ws, id)
+	case strings.HasPrefix(r.URL.EscapedPath(), "/api/w/") && isImportRoute(r):
+		s.importUpload(w, r)
 	case oauth.Handles(r):
 		s.OAuth.ServeHTTP(w, r)
 	case strings.HasPrefix(r.URL.EscapedPath(), "/api/w/"):

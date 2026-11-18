@@ -156,9 +156,12 @@ export function ContactsList() {
             className={`${inputCls} w-64 pl-8`}
           />
         </label>
+        <Link href={`/w/${ws}/import/contacts`} className={`${btn} ml-auto`}>
+          Import
+        </Link>
         <button
           type="button"
-          className={`${btnPrimary} ml-auto`}
+          className={btnPrimary}
           disabled={!spaces.length}
           onClick={() => setAdding(true)}
         >
