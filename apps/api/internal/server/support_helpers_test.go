@@ -351,12 +351,15 @@ func (e *env) useModel(o who, m *scriptedModel) {
 // waitRun waits for a finished run matching where ("$1" is the first arg) and returns its id.
 func (e *env) waitRun(ws, where string, args ...any) string {
 	e.t.Helper()
-	for i := 0; i < 300; i++ {
+	// 90 s: the shared worker's agent lane (2 at a time) may be busy with other tests' runs on a slow CI machine
+	for i := 0; i < 900; i++ {
 		if l := e.dbStrings(ws, "select id::text from core.agent_runs where status in ('completed','held','failed','skipped','cancelled') and "+where+" order by created_at limit 1", args...); len(l) > 0 {
 			return l[0]
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	e.t.Fatalf("no finished run where %s", where)
+	runs := e.dbStrings(ws, "select status || ' ' || trigger || ' ' || coalesce(error,'') from core.agent_runs order by created_at")
+	jobs := e.dbStrings(ws, "select kind || ' ' || status || ' attempts=' || attempts || ' ' || coalesce(last_error,'') from core.jobs where kind like 'agent.%'")
+	e.t.Fatalf("no finished run where %s; runs %v; jobs %v", where, runs, jobs)
 	return ""
 }
