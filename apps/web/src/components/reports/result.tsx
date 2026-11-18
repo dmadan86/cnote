@@ -154,6 +154,9 @@ export function headline(res: RunResult): { col: Col; value: unknown } | null {
   const i = grouped ? 1 : 0
   const col = res.columns[i]
   if (!col) return null
+  // row mode has no measure: the only honest single number is how many rows matched
+  if (!grouped && !col.key.startsWith('m'))
+    return { col: { key: 'count', label: 'Number of rows', type: 'number' }, value: res.count }
   return { col, value: grouped ? res.totals?.[i] : res.rows[0]?.[i] }
 }
 

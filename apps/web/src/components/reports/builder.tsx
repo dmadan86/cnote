@@ -643,7 +643,11 @@ export function Builder({ id, template }: { id?: string; template?: string }) {
           setRes(r)
           setErr(undefined)
         })
-        .catch((e) => !ac.signal.aborted && setErr(errText(e)))
+        .catch((e) => {
+          if (ac.signal.aborted) return
+          setRes(undefined) // never leave old totals under the new filters
+          setErr(errText(e))
+        })
         .finally(() => !ac.signal.aborted && setLoading(false))
     }, 400)
     return () => {
@@ -760,6 +764,7 @@ export function Builder({ id, template }: { id?: string; template?: string }) {
           {!res && !err && <div aria-busy="true" className="h-40 animate-pulse rounded-lg bg-hover" />}
           {res && (
             <div className={`space-y-4 ${loading ? 'opacity-60' : ''}`}>
+              {loading && <p className="text-[12px] text-muted">Updating…</p>}
               {spec.viz === 'number' && !grouped && <BigNumber res={res} />}
               {spec.viz === 'bar' && grouped && <Bars res={res} spec={spec} ds={ds} onDrill={doDrill} />}
               {res.rows.length === 0 ? (

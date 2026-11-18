@@ -38,7 +38,9 @@ const OPS_BY_TYPE: Record<string, string[]> = {
 const NO_VALUE = ['empty', 'not_empty', 'me']
 
 /** Money filters are typed in rupees and sent in paise. */
-const toWire = (t: string, s: string) => (t === 'money' ? Math.round(Number(s) * 100) : Number(s))
+// an emptied box stays empty (not 0) so filterReady keeps the half-typed filter out of the query
+const toWire = (t: string, s: string) =>
+  s.trim() === '' ? '' : t === 'money' ? Math.round(Number(s) * 100) : Number(s)
 const fromWire = (t: string, v: unknown) => (typeof v === 'number' ? String(t === 'money' ? v / 100 : v) : '')
 
 export const newFilter = (f: FieldInfo): Filter => {
@@ -69,6 +71,17 @@ function Pick({ field, filter, set }: { field: FieldInfo; filter: Filter; set: (
     field.type === 'contact',
   )
   const [q, setQ] = useState('')
+  if (contacts.error)
+    return (
+      <div className="space-y-1 text-[13px]">
+        <p role="alert" className="text-bad">
+          Could not load contacts.
+        </p>
+        <button type="button" className="underline" onClick={contacts.reload}>
+          Try again
+        </button>
+      </div>
+    )
   const opts =
     field.type === 'enum'
       ? (field.values ?? [])
