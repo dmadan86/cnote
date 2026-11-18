@@ -17,6 +17,7 @@ import (
 	"github.com/cnote/api/internal/modules/company"
 	"github.com/cnote/api/internal/modules/crm"
 	"github.com/cnote/api/internal/modules/docs"
+	"github.com/cnote/api/internal/modules/emailtpl"
 	"github.com/cnote/api/internal/modules/expenses"
 	"github.com/cnote/api/internal/modules/files"
 	"github.com/cnote/api/internal/modules/home"
@@ -79,6 +80,7 @@ func Commands() []command.Command {
 	cmds = append(cmds, revisions.Commands()...)
 	cmds = append(cmds, oauthapps.Commands()...)
 	cmds = append(cmds, reports.Commands()...)
+	cmds = append(cmds, emailtpl.Commands()...)
 	cmds = append(cmds, agents.Commands()...)
 	return withMeta(markFinance(approvals.Wire(cmds)))
 }

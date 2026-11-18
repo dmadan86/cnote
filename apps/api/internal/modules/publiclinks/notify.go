@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/cnote/api/internal/mailer"
 )
 
 type decisionMail struct{ to, subject, noteID string }
@@ -71,7 +73,7 @@ func sendDecisionMail(m decisionMail, ws string) {
 		base = "http://localhost:3000"
 	}
 	body := fmt.Sprintf("%s\n\n%s/w/%s/n/%s\n", m.subject, strings.TrimRight(base, "/"), ws, m.noteID)
-	if err := sendMail(smtpURL, from, m.to, m.subject, body); err != nil {
+	if _, err := mailer.Send(context.Background(), mailer.Mail{To: m.to, Subject: m.subject, Text: body}); err != nil {
 		slog.Warn("quote decision email failed", "error", err)
 	}
 }

@@ -104,8 +104,11 @@ func human(c *command.Ctx) error {
 // ---------- company profile ----------
 
 // Flat keys of workspaces.settings, shared with the billing settings form and invoice printing.
+var accentRe = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
+
 var profileKeys = []string{"legal_name", "trade_name", "pan", "gstin", "state_code", "address", "pincode", "phone", "email",
-	"upi_vpa", "upi_payee_name", "bank_name", "bank_account", "bank_ifsc", "bank_details"}
+	"upi_vpa", "upi_payee_name", "bank_name", "bank_account", "bank_ifsc", "bank_details",
+	"email_from_name", "email_reply_to", "email_accent", "email_signature", "email_footer"}
 
 func settingsOf(c *command.Ctx) (map[string]any, string, error) {
 	var raw []byte
@@ -145,6 +148,7 @@ var checks = map[string]struct {
 	"pan": {panRe, 10, "PAN looks like ABCDE1234F"}, "pincode": {pinRe, 6, "PIN code is 6 digits"},
 	"bank_ifsc": {ifscRe, 11, "IFSC looks like HDFC0001234"}, "bank_account": {acctRe, 18, "bank account is 9 to 18 digits"},
 	"upi_vpa": {upiRe, 100, "UPI ID looks like name@bank"}, "email": {emailRe, 120, "email is not valid"},
+	"email_reply_to": {emailRe, 120, "reply-to must be one email address"}, "email_accent": {accentRe, 7, "accent colour looks like #1d4ed8"},
 }
 
 func companyUpdate(c *command.Ctx, b json.RawMessage) (any, error) {
@@ -167,7 +171,8 @@ func companyUpdate(c *command.Ctx, b json.RawMessage) (any, error) {
 		v, ok := cur[k].(string)
 		return v, ok && v != ""
 	}
-	maxLen := map[string]int{"legal_name": 120, "trade_name": 120, "address": 400, "upi_payee_name": 80, "bank_name": 80, "bank_details": 300, "phone": 20, "gstin": 15, "state_code": 2}
+	maxLen := map[string]int{"legal_name": 120, "trade_name": 120, "address": 400, "upi_payee_name": 80, "bank_name": 80, "bank_details": 300, "phone": 20, "gstin": 15, "state_code": 2,
+		"email_from_name": 80, "email_signature": 500, "email_footer": 500}
 	for _, k := range profileKeys {
 		max := maxLen[k]
 		if ck, ok := checks[k]; ok {

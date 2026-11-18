@@ -1,4 +1,5 @@
 'use client'
+import Link from 'next/link'
 import { useState } from 'react'
 import { useShell } from '@/components/shell'
 import { btnPrimary, ErrorText, Field, inputCls } from '@/components/ui'
@@ -48,6 +49,13 @@ export function BillingSettings() {
       }}
     >
       <h2 className="text-[14px] font-semibold">Seller details</h2>
+      <p className="text-[12px] text-muted">
+        Emails to your customers:{' '}
+        <Link href={`/w/${ws}/settings?tab=Messages`} className="underline">
+          edit the wording
+        </Link>
+        .
+      </p>
       <Field label="Legal name">
         {(id) => <input id={id} name="legal_name" defaultValue={str('legal_name')} className={inputCls} />}
       </Field>
