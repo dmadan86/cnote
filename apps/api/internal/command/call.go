@@ -24,7 +24,7 @@ func (c *Ctx) Call(name string, input any) (json.RawMessage, error) {
 			return nil, ErrInvalid(err.Error())
 		}
 	}
-	out, err := c.reg.run(c, name, b, ExecOptions{})
+	out, err := c.reg.run(c, name, b, ExecOptions{internal: true})
 	return out, err
 }
 

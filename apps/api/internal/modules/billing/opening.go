@@ -30,22 +30,36 @@ func openingCommands() []command.Command {
 	adm := func(name string, h command.Handler) command.Command {
 		c := command.NewCommand(name, command.GroupAdmin, h)
 		c.MinRole = command.Admin
+		c.Internal = true
 		return c
 	}
 	rd := func(name string, h command.Handler) command.Command { // read helpers of opening.get: the caller is a read command
 		c := adm(name, h)
 		c.Group = command.GroupRead
+		c.Internal = c.Name != "ledger.account_list"
 		return c
 	}
 	return []command.Command{
 		adm("invoice.import_opening", invoiceImportOpening),
 		adm("invoice.import_opening_cancel", invoiceImportOpeningCancel),
 		rd("invoice.import_opening_summary", openingSummary),
-		rd("ledger.account_list", accountList),
+		rd("ledger.account_list", accountList), // the web grid reads it directly
 		adm("ledger.account_ensure", accountEnsure),
 		adm("ledger.opening_post", openingPost),
 		adm("ledger.opening_reverse", openingReverse),
 	}
+}
+
+// openingPosted refuses changes to the opening documents once the opening entry holds them.
+func openingPosted(c *command.Ctx) error {
+	var st string
+	if err := c.Tx.QueryRow(c.Context, "select status from core.opening_balances").Scan(&st); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return command.DB(err)
+	}
+	if st == "posted" {
+		return command.ErrConflict("opening balances are posted: reverse them before changing opening documents")
+	}
+	return nil
 }
 
 func decodeTo(input json.RawMessage, v any) error {
@@ -82,6 +96,9 @@ func invoiceImportOpening(c *command.Ctx, input json.RawMessage) (any, error) {
 	}
 	if !validDay(in.InvoiceDate) || (in.DueDate != nil && !validDay(*in.DueDate)) {
 		return nil, command.ErrInvalid("dates must be YYYY-MM-DD")
+	}
+	if err := openingPosted(c); err != nil {
+		return nil, err
 	}
 	ci, err := loadContact(c, in.ContactID)
 	if err != nil {
@@ -126,6 +143,9 @@ func invoiceImportOpeningCancel(c *command.Ctx, input json.RawMessage) (any, err
 		ID string `json:"id"`
 	}
 	if err := decodeTo(input, &in); err != nil {
+		return nil, err
+	}
+	if err := openingPosted(c); err != nil {
 		return nil, err
 	}
 	inv, err := loadInvoice(c, in.ID, true)
@@ -224,6 +244,10 @@ func openingPost(c *command.Ctx, input json.RawMessage) (any, error) {
 	if err != nil || !validDay(in.GoLive) {
 		return nil, command.ErrInvalid("go_live must be YYYY-MM-DD")
 	}
+	var st string // the importers module holds this row locked; only a draft (or a reversed one, to post again) posts
+	if err := c.Tx.QueryRow(c.Context, "select status from core.opening_balances").Scan(&st); err != nil || st == "posted" {
+		return nil, command.ErrConflict("opening balances are already posted, or have no draft to post")
+	}
 	for _, a := range [][2]string{{acctPayable, "Accounts payable"}, {acctOpening, "Opening balance adjustments"}} {
 		kind := "liability"
 		if a[0] == acctOpening {
@@ -297,7 +321,8 @@ func openingReverse(c *command.Ctx, input json.RawMessage) (any, error) {
 		return nil, err
 	}
 	var memo *string
-	if err := c.Tx.QueryRow(c.Context, "select memo from billing.journal_entries where id = $1::uuid and source_type = 'opening_balance'", in.EntryID).Scan(&memo); err != nil {
+	var at time.Time // the reversal carries the original's date, so a report never sees both
+	if err := c.Tx.QueryRow(c.Context, "select memo, posted_at from billing.journal_entries where id = $1::uuid and source_type = 'opening_balance'", in.EntryID).Scan(&memo, &at); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, command.ErrNotFound("opening entry")
 		}
@@ -327,7 +352,7 @@ func openingReverse(c *command.Ctx, input json.RawMessage) (any, error) {
 	if err := rows.Err(); err != nil {
 		return nil, command.DB(err)
 	}
-	entry, err := postAt(c, "opening_balance_reversal", in.EntryID, "Reversal of: "+deref(memo), legs, nil)
+	entry, err := postAt(c, "opening_balance_reversal", in.EntryID, "Reversal of: "+deref(memo), legs, &at)
 	if err != nil {
 		return nil, err
 	}

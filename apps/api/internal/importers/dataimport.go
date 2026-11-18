@@ -1294,7 +1294,7 @@ func applyUndo(c *command.Ctx, j *dataJob, targets []targetRow, why func(rowRec,
 		case "opening_line":
 			var f ledgerFields
 			_ = json.Unmarshal(t.row.Fields, &f)
-			err = draftRemoveLine(c, f.Code)
+			err = draftSubLine(c, f.Code, f.Dr, f.Cr) // the row's fields are its recorded contribution
 		}
 		if err != nil {
 			fail(t, err)

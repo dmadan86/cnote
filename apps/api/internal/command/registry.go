@@ -71,6 +71,7 @@ type Command struct {
 	Confirm       bool
 	ReturnsSecret bool
 	Handler       Handler
+	Internal      bool       // callable only through Ctx.Call from another command; Registry.Execute (HTTP, MCP) answers not found, and MCP never lists it
 	Finance       bool       // money data: refused below Admin when the member's finance_access is off (core.memberships)
 	Amount        AmountFunc // set: a workspace approval rule may hold this command for a person's decision
 	// Description and Schema (JSON Schema of the input) are what agents see over MCP. Set for Go-only commands;
@@ -90,6 +91,7 @@ func NewCommand(name string, g Group, h Handler) Command {
 type ExecOptions struct {
 	IdempotencyKey *string
 	ConfirmationID *string
+	internal       bool // set by Ctx.Call: the caller is a command, not a client
 	approved       bool // replay of an approved request: skip the approval gate
 }
 
@@ -132,6 +134,9 @@ func (r *Registry) Execute(ctx context.Context, pool *pgxpool.Pool, name string,
 func (r *Registry) run(c *Ctx, name string, input json.RawMessage, o ExecOptions) ([]byte, error) {
 	cmd, ok := r.cmds[name]
 	if !ok {
+		return nil, ErrNotFound("command " + name)
+	}
+	if cmd.Internal && !o.internal {
 		return nil, ErrNotFound("command " + name)
 	}
 	p := c.Principal

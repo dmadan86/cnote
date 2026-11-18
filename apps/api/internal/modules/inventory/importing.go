@@ -18,6 +18,7 @@ func importCommands() []command.Command {
 	adm := func(name string, h command.Handler) command.Command {
 		c := command.NewCommand(name, command.GroupAdmin, h)
 		c.MinRole = command.Admin
+		c.Internal = true
 		return c
 	}
 	return []command.Command{

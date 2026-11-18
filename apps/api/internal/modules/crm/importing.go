@@ -3,6 +3,7 @@ package crm
 import (
 	"encoding/json"
 
+	"github.com/cnote/api/internal/access"
 	"github.com/cnote/api/internal/command"
 )
 
@@ -11,14 +12,21 @@ import (
 func importCmd(name string, h command.Handler) command.Command {
 	c := command.NewCommand(name, command.GroupAdmin, h)
 	c.MinRole = command.Admin
+	c.Internal = true
 	return c
 }
 
 // contact.import_keys {} -> {contacts:[{id,name,gstin,phone,email,is_vendor}]} for duplicate detection.
 func importKeys(c *command.Ctx, _ json.RawMessage) (any, error) {
+	spaces, err := access.ReadableSpaceIDs(c)
+	if err != nil {
+		return nil, err
+	}
+	uid, admin := access.Viewer(c)
 	rows, err := c.Tx.Query(c.Context,
 		`select n.id::text, n.title, c.gstin, c.phone, c.email, c.is_vendor from crm.contacts c join core.notes n on n.id = c.note_id
-		  where n.deleted_at is null order by n.created_at, n.id`)
+		  where n.deleted_at is null and n.space_id = any($1::text[]::uuid[]) and core.note_access(n.id, $2::uuid, $3, $1::text[]::uuid[]) <> 'none'
+		  order by n.created_at, n.id`, spaces, uid, admin)
 	if err != nil {
 		return nil, command.DB(err)
 	}

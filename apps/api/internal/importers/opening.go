@@ -112,16 +112,22 @@ func draftAddLine(c *command.Ctx, code string, dr, cr int64) error {
 	return saveDraft(c, o.GoLive, append(o.Lines, OpenLine{code, dr, cr}))
 }
 
-func draftRemoveLine(c *command.Ctx, code string) error {
+// draftSubLine takes back exactly what draftAddLine put in, so a manual part of the same account stays.
+func draftSubLine(c *command.Ctx, code string, dr, cr int64) error {
 	o, err := editable(c)
 	if err != nil {
 		return err
 	}
 	kept := []OpenLine{}
 	for _, l := range o.Lines {
-		if l.AccountCode != code {
-			kept = append(kept, l)
+		if l.AccountCode == code {
+			net := l.DrMinor - l.CrMinor - dr + cr
+			if net == 0 {
+				continue
+			}
+			l = OpenLine{code, max(net, 0), max(-net, 0)}
 		}
+		kept = append(kept, l)
 	}
 	return saveDraft(c, o.GoLive, kept)
 }
@@ -236,6 +242,11 @@ func OpeningSave(c *command.Ctx, goLive string, lines []OpenLine) (any, error) {
 }
 
 func OpeningPost(c *command.Ctx) (any, error) {
+	// make sure the row exists, then lock it: two first posts queue here and the second sees 'posted'
+	if _, err := c.Tx.Exec(c.Context, "insert into core.opening_balances (workspace_id, go_live, updated_by) select $1::uuid, $2::date, $3::uuid on conflict do nothing",
+		c.WorkspaceID(), mustDefault(c), c.Principal.UserID); err != nil {
+		return nil, command.DB(err)
+	}
 	o, err := loadOpening(c, true)
 	if err != nil {
 		return nil, err
@@ -288,3 +299,5 @@ func OpeningReverse(c *command.Ctx) (any, error) {
 }
 
 func mustJSON(v any) []byte { b, _ := json.Marshal(v); return b }
+
+func mustDefault(c *command.Ctx) string { g, _ := defaultGoLive(c); return g }

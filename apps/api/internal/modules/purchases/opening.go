@@ -2,8 +2,11 @@ package purchases
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 
 	"github.com/cnote/api/internal/command"
 	"github.com/cnote/api/internal/modules/notes"
@@ -16,6 +19,7 @@ import (
 func adminOnly(name string, h command.Handler) command.Command {
 	c := command.NewCommand(name, command.GroupAdmin, h)
 	c.MinRole = command.Admin
+	c.Internal = true
 	return c
 }
 
@@ -33,6 +37,18 @@ func openingBillSummary() command.Command {
 }
 func openingBillCancel() command.Command {
 	return adminOnly("bill.import_opening_cancel", importOpeningCancel)
+}
+
+// openingPosted refuses changes to the opening documents once the opening entry holds them.
+func openingPosted(c *command.Ctx) error {
+	var st string
+	if err := c.Tx.QueryRow(c.Context, "select status from core.opening_balances").Scan(&st); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return command.DB(err)
+	}
+	if st == "posted" {
+		return command.ErrConflict("opening balances are posted: reverse them before changing opening documents")
+	}
+	return nil
 }
 
 func validDay(s string) bool {
@@ -62,6 +78,9 @@ func importOpening(c *command.Ctx, input json.RawMessage) (any, error) {
 	}
 	if !validDay(v.BillDate) || (v.DueDate != nil && !validDay(*v.DueDate)) {
 		return nil, command.ErrInvalid("dates must be YYYY-MM-DD")
+	}
+	if err := openingPosted(c); err != nil {
+		return nil, err
 	}
 	ven, err := loadVendor(c, v.VendorID)
 	if err != nil {
@@ -99,6 +118,9 @@ func importOpeningCancel(c *command.Ctx, input json.RawMessage) (any, error) {
 	}
 	if json.Unmarshal(input, &v) != nil || v.ID == "" {
 		return nil, command.ErrInvalid("id is required")
+	}
+	if err := openingPosted(c); err != nil {
+		return nil, err
 	}
 	var opening bool
 	var status string

@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -354,9 +355,52 @@ func TestOpeningBalancesPostAndReverse(t *testing.T) {
 	}
 	b.errIs("opening.reverse", map[string]any{}, 409, "conflict")
 	eq(t, adminScalar(b.env, b.owner.ws, "select count(*) from billing.journal_entries where source_type = 'opening_balance_reversal'"), "1")
+	// the reversal is dated like the original: a report as at go-live sees neither
+	eq(t, adminScalar(b.env, b.owner.ws, "select (posted_at at time zone 'Asia/Kolkata')::date::text from billing.journal_entries where source_type = 'opening_balance_reversal'"), "2026-03-31")
+	for _, a := range b.ok("ledger.trial_balance", map[string]any{"as_of": "2026-04-01"})["accounts"].([]any) {
+		m := a.(map[string]any)
+		eq(t, n(m["debit_minor"]), n(m["credit_minor"]))
+	}
 	// saving a reversed page makes it a draft again; it can be posted once more
 	b.ok("opening.save", map[string]any{"go_live": "2026-04-01", "lines": []any{}})
 	eq(t, b.ok("opening.post", map[string]any{})["status"], "posted")
+	// post, reverse, repost: a report from go-live to today shows the balances once
+	tb := map[string][2]int64{}
+	for _, a := range b.ok("ledger.trial_balance", map[string]any{})["accounts"].([]any) {
+		m := a.(map[string]any)
+		tb[m["code"].(string)] = [2]int64{n(m["debit_minor"]), n(m["credit_minor"])}
+	}
+	eq(t, tb["1100"], [2]int64{23_600_000, 11_800_000}) // 2 posts of 11.8M, one reversal
+}
+
+// The import-only commands are for the importers module alone: a client, even an admin, gets "not found".
+func TestImportOnlyCommandsAreInternal(t *testing.T) {
+	b := newBT(t, false)
+	for _, cmd := range []string{"ledger.opening_post", "ledger.opening_reverse", "ledger.account_ensure", "invoice.import_opening", "invoice.import_opening_cancel",
+		"bill.import_opening", "bill.import_opening_cancel", "stock.import_opening", "stock.import_reverse", "stock_item.import_keys", "contact.import_keys", "contact.import_usage"} {
+		if r := b.call(b.owner, cmd, map[string]any{}); r.status != 404 {
+			t.Fatalf("%s over HTTP: %d %s", cmd, r.status, r.body)
+		}
+	}
+	eq(t, adminScalar(b.env, b.owner.ws, "select count(*) from billing.journal_entries where source_type = 'opening_balance'"), "0")
+	// the importer flow still works
+	b.openingFixture()
+	b.ok("opening.post", map[string]any{})
+}
+
+// Two first posts at once make one journal entry.
+func TestOpeningPostConcurrent(t *testing.T) {
+	b := newBT(t, false)
+	b.openingFixture()
+	var wg sync.WaitGroup
+	codes := make([]int, 2)
+	for i := range codes {
+		wg.Add(1)
+		go func() { defer wg.Done(); codes[i] = b.call(b.owner, "opening.post", map[string]any{}).status }()
+	}
+	wg.Wait()
+	eq(t, codes[0]+codes[1], 200+409)
+	eq(t, adminScalar(b.env, b.owner.ws, "select count(*) from billing.journal_entries where source_type = 'opening_balance'"), "1")
 }
 
 func TestOpeningDocumentsAreOutOfEveryTaxPath(t *testing.T) {
@@ -530,7 +574,26 @@ func TestImportTallyMasters(t *testing.T) {
 	eq(t, g["status"], "draft")
 	eq(t, len(g["lines"].([]any)) > 0, true)
 	eq(t, adminScalar(b.env, b.owner.ws, "select count(*) from billing.journal_entries where source_type = 'opening_balance'"), "0")
-	// undo takes the contacts and the draft lines back
+	// a manual amount added to an imported account survives the undo; only the imported part goes
+	lines := g["lines"].([]any)
+	first := lines[0].(map[string]any)
+	side := "dr_minor"
+	if n(first["cr_minor"]) > 0 {
+		side = "cr_minor"
+	}
+	keep := []any{}
+	for _, l := range lines {
+		m := l.(map[string]any)
+		in := map[string]any{"account_code": m["account_code"], "dr_minor": m["dr_minor"], "cr_minor": m["cr_minor"]}
+		if m["account_code"] == first["account_code"] {
+			in[side] = n(m[side]) + 777
+		}
+		keep = append(keep, in)
+	}
+	b.ok("opening.save", map[string]any{"lines": keep})
 	b.ok("data_import.undo", map[string]any{"id": id})
-	eq(t, len(b.ok("opening.get", map[string]any{})["lines"].([]any)), 0)
+	after := b.ok("opening.get", map[string]any{})["lines"].([]any)
+	eq(t, len(after), 1)
+	eq(t, after[0].(map[string]any)["account_code"], first["account_code"])
+	eq(t, n(after[0].(map[string]any)[side]), int64(777))
 }
