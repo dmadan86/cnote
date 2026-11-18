@@ -1,0 +1,30 @@
+# Collections assistant v1 (18 Nov 2026)
+
+Goal: get small businesses paid. Builds on Customer messages (PR #5: emailtpl events invoice.reminder_1..3, share.email, mailer outbox) and the agent runtime (PR #6). Service boundaries per docs/architecture/service-boundaries.md (mail only through internal/mailer outbox; notifications through internal/notify; other modules via commands/events).
+
+## Scope v1
+1. **Automatic payment reminders** (the Mobbin design from the Customer messages study, card D): Settings → Customer messages → "Payment reminders" card with up to 5 steps — N days before due, on due date, N days overdue (×3) — each on/off, each mapped to a message event (before/on due → new events `invoice.reminder_due_soon`, `invoice.reminder_due_today`; overdue → existing reminder_1/2/3). Sent at 10:00 IST daily by a worker sweep. Stops when the invoice is paid, cancelled, written off, or the customer/invoice opts out. Never sends the same step twice for an invoice (unique log row). Uses the existing public invoice link (pay by UPI/QR) and the mailer outbox. Per-invoice "Pause reminders" toggle on the invoice view; per-contact "Don't send reminders".
+2. **Reminder log**: every send recorded (invoice, step, sent_at, message id) and shown on the invoice timeline and in a "Reminders sent" list.
+3. **Collections assistant (AI employee template `collections`)**: weekly (Monday 09:30 IST) and on demand; read-only tools over receivables ageing, invoice list, contact get, payments; produces a short collections brief posted to the owner's chosen channel ("₹4.2L overdue across 9 customers; 3 are over 60 days: …") and, for invoices over 60 days overdue where the automatic reminders are exhausted, drafts a personal follow-up email (contact.email → held for approval). Never auto-sends; subject-bound per draft.
+4. **Payment gateway seam (no live gateway in v1)**: `internal/payments` package with `Provider` interface (CreateLink(invoice) → url, VerifyWebhook(body, sig) → event) and a `None` default; invoice public page keeps UPI QR. Razorpay/Cashfree adapters are added when the owner provides merchant keys (documented, not built).
+
+Out of v1: WhatsApp Business API sends (reminders list "WhatsApp: tap to send" links only), SMS, UPI Autopay, gateway adapters, per-customer cadence, late fees.
+
+## Data / commands
+Migration `migrations/1270_collections.sql` (1260 = importers): `billing.reminder_log(workspace_id, invoice_note_id, step, sent_at, message_id, PK(workspace_id, invoice_note_id, step))`; invoices `reminders_paused boolean default false`; contacts `no_reminders boolean default false`; reminder schedule stored in workspace settings key `payment_reminders` = {enabled, steps:[{kind:'before'|'on'|'after', days, event, enabled}]} with defaults (3 before, on due, 3/7/15 after; 15-after off).
+Commands: `reminder.settings_get/set` (admin), `invoice.reminders_pause {id, paused}` (finance), `contact.reminders_opt_out {id, opt_out}`, `reminder.log_list {invoice_id?}`; sweep in worker (AddSweep) that runs once per day per workspace after 10:00 IST, enqueues mail via emailtpl + mailer.Enqueue in the same tx as the log row; emits `invoice.reminder_sent`.
+Agent template `collections` in agents/templates.go: tools = report.receivables_ageing, invoice.list, invoice.get, contact.get, payment.list (read) + contact.email (held); schedule weekly; deliver to channel.
+
+## Tests
+Sweep picks the right step per invoice/date (IST boundaries), never twice, stops on paid/paused/opt-out/cancelled, respects disabled steps and finance; mail enqueued with the reminder wording and public link; collections agent template installs, posts a brief (Local provider), drafts held email only for >60-day invoices; e2e: configure schedule in Settings → Customer messages, see reminder log on an invoice.
+
+## Binding revisions after Codex design review
+1. **No new columns on invoices** (immutability trigger). Pause/opt-out live in a separate table `billing.reminder_prefs(workspace_id, note_id, paused bool, PK(workspace_id,note_id))` (note_id = invoice or contact note), tenant-bound FKs.
+2. **Eligibility** = the receivables ageing filter: kind = 'invoice', status open (issued/irn_generated/sent/partly_paid), balance = total − paid − credited − written_off > 0; credit notes never targeted.
+3. **Delivery states.** reminder_log has status queued | sent | failed | cancelled, message_id fixed at enqueue (mailer.Enqueue), sent_at set by the mail job's success hook (mail.send job carries reminder_log key; worker updates the log after send). `invoice.reminder_sent` emitted on sent, not on enqueue. At-least-once delivery documented.
+4. **Recheck at dispatch.** The mail.send job for a reminder re-checks eligibility (still open, balance > 0, not paused/opted out) right before sending; if not eligible → log cancelled, no send. Pause/opt-out/payment also cancel pending queued reminders for that invoice.
+5. **Scheduling.** Sweep runs every 5 minutes (AddSweep), claims per-workspace work atomically (`select … for update skip locked` on a per-workspace `billing.reminder_runs(workspace_id, day)` row, insert-on-conflict), uses IST calendar dates, runs only after 10:00 IST, and processes the current IST day only (missed days are NOT back-filled; a step whose day passed is skipped — documented).
+6. **Access.** reminder.settings_* Admin; invoice pause and log list need finance + page access; contact opt-out Member with CRM access. The collections agent's brief contains money: deliver only to a channel the agent owner chooses AND only if every channel member has finance access — otherwise deliver as a DM to the owner. Tenant RLS + workspace-consistent FKs on new tables.
+7. **Untrusted customer text** stays wrapped by the runtime; collections drafts stay subject-bound and held; add a test with a malicious contact name/notes.
+8. **Operational only:** reminders never create accounting documents; test GSTR-1/GST summary unchanged after reminders.
+9. **Cut the payment gateway seam** from v1 (defer until a real adapter is built).
