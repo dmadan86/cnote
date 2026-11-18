@@ -2,6 +2,7 @@ package server_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -274,7 +275,7 @@ func TestTicketReplyEmailsCustomerNotes(t *testing.T) {
 	r = b.ok("ticket.reply", map[string]any{"id": tk, "body": "Fixed now."})
 	eq(t, r["emailed"], true)
 	m := b.waitMails(sink, 1)[0]
-	for _, w := range []string{"To: cust@example.test", "From: support@acme.example.test", "Subject: [TKT-000001] Printer offline", "Fixed now.", "TKT-000001"} {
+	for _, w := range []string{"To: cust@example.test", "<support@acme.example.test>", "Subject: [TKT-000001] Printer offline", "Fixed now.", "TKT-000001"} {
 		if !strings.Contains(m, w) {
 			t.Fatalf("%q missing in %q", w, m)
 		}
@@ -289,7 +290,16 @@ func TestTicketReplyEmailsCustomerNotes(t *testing.T) {
 	}
 	eq(t, len(b.okList("comment.list", map[string]any{"note_id": tk})), 1)
 
-	b.inbound()
+	// the customer's reply quotes the agent mail's Message-ID and lands in the same ticket
+	_, _, mid, _, html := parseMail(t, m)
+	if html == "" || mid == "" {
+		t.Fatalf("ticket reply should be branded multipart with a Message-ID: %q", m)
+	}
+	sec := b.inbound()
+	rr := b.postMail(sec, mail("cust@example.test", "Re: [TKT-000001] Printer offline", "Thanks, works.", "cust-reply-1@cust", map[string]any{"in_reply_to": mid}), "", "")
+	if rr.status != 200 || rr.json()["created"] != false || rr.json()["ticket_id"] != tk {
+		t.Fatalf("reply did not thread: %d %s", rr.status, rr.body)
+	}
 
 	// a failing mail server saves nothing
 	n := len(b.okList("ticket.messages", map[string]any{"id": tk}))
@@ -510,4 +520,25 @@ func TestTicketMessagesFollowSubjectExportAndErase(t *testing.T) {
 	}
 	b.ok("data.erase_subject", map[string]any{"contact_id": b.contact, "reason": "customer request"})
 	eq(t, b.dbStrings(b.owner.ws, "select body from crm.ticket_messages"), []string{"[erased]"})
+}
+
+func TestPortalSignInIgnoresTicketReplyTemplate(t *testing.T) {
+	b := newBT(t, false)
+	ws := b.owner.ws
+	b.sqlArgs("update crm.contacts set email='cust@example.test' where note_id=$1::uuid", b.contact)
+	sink := startSMTP(t)
+	t.Setenv("SMTP_URL", "smtp://"+sink.ln.Addr().String())
+	t.Setenv("EMAIL_FROM", "support@acme.example.test")
+	b.ticket("Mine", nil)
+	b.ok("ticket_channels.set", map[string]any{"portal_enabled": true})
+	// a stored body that lacks the reply text (the save command refuses this, so write it directly)
+	b.sqlArgs(`insert into core.email_templates(workspace_id,event,subject,body) values ($1::uuid,'ticket.reply','CUSTOM SUBJECT','CUSTOM BODY ONLY')`, ws)
+	// direct call: the HTTP route shares a process-wide per-IP limiter with the other portal test
+	if err := leads.PortalRequestLink(context.Background(), b.pool, ws, "cust@example.test"); err != nil {
+		t.Fatal(err)
+	}
+	m := b.waitMails(sink, 1)[0]
+	if !strings.Contains(m, "/verify#") || strings.Contains(m, "CUSTOM BODY ONLY") || strings.Contains(m, "CUSTOM SUBJECT") {
+		t.Fatalf("portal mail used the editable ticket.reply template: %q", m)
+	}
 }

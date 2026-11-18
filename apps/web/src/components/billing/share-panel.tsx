@@ -1,6 +1,8 @@
 'use client'
 import { Copy, Mail, MessageCircle, Share2 } from 'lucide-react'
+import NextLink from 'next/link'
 import { useState } from 'react'
+import { SendEmail } from '@/components/messages/send-email'
 import { QrSvg } from '@/components/share/qr-svg'
 import { useShell } from '@/components/shell'
 import { btn, btnPrimary, ErrorText, Field, inputCls, Modal, Pill } from '@/components/ui'
@@ -58,7 +60,7 @@ function ShareDialog({
   const [made, setMade] = useState<Made>()
   const [err, setErr] = useState<string>()
   const [note, setNote] = useState<string>()
-  const [to, setTo] = useState('')
+  const [tab, setTab] = useState<'email' | 'whatsapp' | 'link'>('link')
   const [busy, setBusy] = useState(false)
   const base = { note_id: noteId, origin: window.location.origin, expires_in_days: Number(days) }
   const guard = async (f: () => Promise<void>) => {
@@ -83,11 +85,15 @@ function ShareDialog({
       await navigator.clipboard.writeText(made?.url ?? '')
       setNote('Link copied.')
     })
-  const email = () =>
+  const email = (a: Record<string, unknown>) =>
     guard(async () => {
-      await run(ws, 'share.email', { ...base, to: to.trim() })
-      setNote(`Email sent to ${to.trim()} with a new link.`)
-      setTo('')
+      await run(ws, 'share.email', { ...base, ...a })
+      setNote(`Email sent to ${a.to} with a new link.`)
+      links.reload()
+    })
+  const whatsapp = () =>
+    guard(async () => {
+      setMade(await run<Made>(ws, 'share.create', { ...base, reminder: overdue && kind === 'invoice' }))
       links.reload()
     })
   const revoke = (id: string) =>
@@ -104,71 +110,98 @@ function ShareDialog({
           {kind === 'quotation' ? ' and accept or decline it' : kind === 'invoice' ? ' and pay by UPI' : ''}.
           No login needed. Revoke a link at any time.
         </p>
-        <div className="flex items-end gap-2">
-          <Field label="Link expires after (days)">
-            {(id) => (
-              <input
-                id={id}
-                inputMode="numeric"
-                value={days}
-                onChange={(e) => setDays(e.target.value.replace(/\D/g, ''))}
-                className={`${inputCls} w-24`}
-              />
-            )}
-          </Field>
-          <button type="button" className={btnPrimary} disabled={busy || !days} onClick={create}>
-            {made ? 'Create another link' : 'Create link'}
-          </button>
-        </div>
-        {made && (
-          <section aria-label="New link" className="space-y-3 rounded-lg border border-line p-3">
-            <div className="flex gap-2">
-              <input
-                readOnly
-                aria-label="Share link"
-                value={made.url}
-                onFocus={(e) => e.currentTarget.select()}
-                className={`${inputCls} font-mono text-[12px]`}
-              />
-              <button type="button" className={btn} onClick={copy}>
-                <Copy size={14} /> Copy
-              </button>
-            </div>
-            <p className="text-[12px] text-muted">
-              Shown once: only a fingerprint of this link is stored. Create another to share again.
-            </p>
-            <div className="flex flex-wrap gap-2">
-              <a href={made.whatsapp_url} target="_blank" rel="noreferrer" className={btnPrimary}>
-                <MessageCircle size={14} />{' '}
-                {overdue && kind === 'invoice' ? 'Remind on WhatsApp' : 'Send on WhatsApp'}
-              </a>
-            </div>
-            <form
-              className="flex items-end gap-2"
-              onSubmit={(e) => {
-                e.preventDefault()
-                email()
-              }}
+        <div role="tablist" aria-label="How to send" className="flex gap-1 border-b border-line">
+          {(
+            [
+              ['email', 'Email'],
+              ['whatsapp', 'WhatsApp'],
+              ['link', 'Copy link'],
+            ] as const
+          ).map(([k, t]) => (
+            <button
+              key={k}
+              type="button"
+              role="tab"
+              id={`share-tab-${k}`}
+              aria-selected={tab === k}
+              aria-controls="share-tabpanel"
+              onClick={() => setTab(k)}
+              className="-mb-px border-b-2 border-transparent px-3 py-1.5 text-[13px] text-muted hover:text-fg aria-selected:border-fg aria-selected:font-medium aria-selected:text-fg"
             >
-              <Field label="Or email it to">
-                {(id) => (
-                  <input
-                    id={id}
-                    type="email"
-                    required
-                    value={to}
-                    onChange={(e) => setTo(e.target.value)}
-                    placeholder="customer@example.com"
-                    className={inputCls}
-                  />
-                )}
-              </Field>
-              <button type="submit" className={btn} disabled={busy}>
-                <Mail size={14} /> Send email
-              </button>
-            </form>
-          </section>
-        )}
+              {t}
+            </button>
+          ))}
+        </div>
+        <div role="tabpanel" id="share-tabpanel" aria-labelledby={`share-tab-${tab}`} className="space-y-3">
+          {tab === 'email' && (
+            <SendEmail ws={ws} noteId={noteId} kind={kind} overdue={overdue} busy={busy} onSend={email} />
+          )}
+          {tab === 'whatsapp' && (
+            <div className="space-y-3">
+              <p className="text-[13px] text-muted">
+                Creates a new link and opens WhatsApp with your wording.{' '}
+                <NextLink href={`/w/${ws}/settings?tab=Messages`} className="underline">
+                  Edit WhatsApp wording
+                </NextLink>
+              </p>
+              {made ? (
+                <a href={made.whatsapp_url} target="_blank" rel="noreferrer" className={btnPrimary}>
+                  <MessageCircle size={14} />{' '}
+                  {overdue && kind === 'invoice' ? 'Remind on WhatsApp' : 'Send on WhatsApp'}
+                </a>
+              ) : (
+                <button type="button" className={btnPrimary} disabled={busy} onClick={whatsapp}>
+                  <MessageCircle size={14} /> Create link for WhatsApp
+                </button>
+              )}
+            </div>
+          )}
+          {tab === 'link' && (
+            <>
+              <div className="flex items-end gap-2">
+                <Field label="Link expires after (days)">
+                  {(id) => (
+                    <input
+                      id={id}
+                      inputMode="numeric"
+                      value={days}
+                      onChange={(e) => setDays(e.target.value.replace(/\D/g, ''))}
+                      className={`${inputCls} w-24`}
+                    />
+                  )}
+                </Field>
+                <button type="button" className={btnPrimary} disabled={busy || !days} onClick={create}>
+                  {made ? 'Create another link' : 'Create link'}
+                </button>
+              </div>
+              {made && (
+                <section aria-label="New link" className="space-y-3 rounded-lg border border-line p-3">
+                  <div className="flex gap-2">
+                    <input
+                      readOnly
+                      aria-label="Share link"
+                      value={made.url}
+                      onFocus={(e) => e.currentTarget.select()}
+                      className={`${inputCls} font-mono text-[12px]`}
+                    />
+                    <button type="button" className={btn} onClick={copy}>
+                      <Copy size={14} /> Copy
+                    </button>
+                  </div>
+                  <p className="text-[12px] text-muted">
+                    Shown once: only a fingerprint of this link is stored. Create another to share again.
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    <a href={made.whatsapp_url} target="_blank" rel="noreferrer" className={btnPrimary}>
+                      <MessageCircle size={14} />{' '}
+                      {overdue && kind === 'invoice' ? 'Remind on WhatsApp' : 'Send on WhatsApp'}
+                    </a>
+                  </div>
+                </section>
+              )}
+            </>
+          )}
+        </div>
         <div role="status" className="text-[13px] text-ok">
           {note}
         </div>

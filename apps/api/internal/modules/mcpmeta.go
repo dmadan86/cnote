@@ -62,7 +62,14 @@ type meta struct {
 var idOnly = schema([]string{"id"}, props{"id": id})
 
 var mcpMeta = map[string]meta{
-	"company.get": {"Read the company profile that prints on documents: legal name, PAN, GSTIN, address, UPI and bank details, financial-year start.", schema(nil, props{})},
+	"email_template.list": {"List the customer messages (invoice sent, payment reminders, quotation, receipt, support reply) with their subject and body, the defaults, which are customised, their placeholders, and the sender look (from name, reply-to, accent colour, sign-off, footer). Admins only.", schema(nil, props{})},
+	"email_template.save": {"Customise one customer message. Placeholders look like {{invoice.number}}; unknown ones are refused. Send the version from email_template.list (0 for a message not yet customised); a stale version is a conflict. Admins only.", schema([]string{"event", "subject", "body", "version"}, props{
+		"event": str, "subject": str, "body": props{"type": "string", "description": "Plain text; **bold** and blank-line paragraphs"}, "version": num})},
+	"email_template.reset": {"Put a customer message back to its default wording. Send the current version. Admins only.", schema([]string{"event", "version"}, props{"event": str, "version": num})},
+	"email_template.preview": {"Render a customer message as the customer would see it, using a given invoice, quotation or receipt (note_id), else the latest one you can read, else sample data. Optional subject and body preview unsaved wording. Creates no link and sends nothing.", schema([]string{"event"}, props{
+		"event": str, "subject": str, "body": str, "note_id": id})},
+	"email_template.test": {"Email a rendered customer message to the caller's own address, subject prefixed [Test]. People only; 5 per 5 minutes. Admins only.", schema([]string{"event"}, props{"event": str, "subject": str, "body": str})},
+	"company.get":         {"Read the company profile that prints on documents: legal name, PAN, GSTIN, address, UPI and bank details, financial-year start.", schema(nil, props{})},
 	"company.update": {"Update the company profile. Only the fields you send change; an empty string clears one. GSTIN, PAN, IFSC, PIN, phone and UPI ID are format-checked and the GSTIN must agree with the PAN and state. Admins only.", schema(nil, props{
 		"legal_name": str, "trade_name": str, "pan": str, "gstin": str, "state_code": str, "address": str, "pincode": str, "phone": str, "email": str,
 		"upi_vpa": str, "upi_payee_name": str, "bank_name": str, "bank_account": str, "bank_ifsc": str, "bank_details": str, "fy_start_month": props{"type": "integer", "description": "1-12, default 4 (April)"}})},
@@ -89,8 +96,9 @@ var mcpMeta = map[string]meta{
 	"approval.cancel":    {"Cancel your own pending approval request.", idOnly},
 	"share.create": {"Create a public link to a quotation or invoice for the customer (accept or pay). Returns the link once, plus a WhatsApp click-to-chat URL. Needs human confirmation for agents.", schema([]string{"note_id"}, props{
 		"note_id": id, "expires_in_days": props{"type": "integer", "description": "1-365, default 30"}, "origin": str, "phone": str, "message": str, "reminder": flag})},
-	"share.email": {"Email a fresh public link to a quotation or invoice. Needs human confirmation for agents.", schema([]string{"note_id", "to"}, props{
-		"note_id": id, "to": props{"type": "string", "description": "Recipient email"}, "expires_in_days": num, "origin": str, "message": str, "reminder": flag})},
+	"share.email": {"Email a fresh public link to an invoice, quotation or receipt using the workspace's Customer messages wording (invoice.sent, invoice.reminder_1..3, quote.sent, receipt.sent). The emailed link always uses the server's PUBLIC_WEB_URL. message replaces the body for this send only; subject replaces the subject. Needs human confirmation for agents.", schema([]string{"note_id", "to"}, props{
+		"note_id": id, "to": props{"type": "string", "description": "Recipient email"}, "expires_in_days": num, "origin": props{"type": "string", "description": "Ignored for emailed links"}, "message": str, "subject": str, "reminder": flag, "reminder_level": props{"type": "integer", "description": "1-3: payment reminder wording (invoices that are not paid)"}})},
+	"share.preview":  {"Preview the email share.email would send for an invoice, quotation or receipt: event, subject, text, html and the customer's address. Creates no link.", schema([]string{"note_id"}, props{"note_id": id, "reminder_level": props{"type": "integer", "description": "1-3 for a payment reminder"}})},
 	"share.list":     {"List public links for a quotation or invoice with status and view counts.", schema([]string{"note_id"}, props{"note_id": id})},
 	"share.revoke":   {"Revoke a public link.", idOnly},
 	"invoice.upi_qr": {"UPI payment URI for an invoice's outstanding amount, for a QR code.", idOnly},

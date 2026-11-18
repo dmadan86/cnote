@@ -2,17 +2,13 @@ package worker
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"mime"
 	"mime/quotedprintable"
-	"net"
 	"net/mail"
-	"net/smtp"
-	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -21,6 +17,7 @@ import (
 
 	"github.com/cnote/api/internal/command"
 	"github.com/cnote/api/internal/jobs"
+	"github.com/cnote/api/internal/mailer"
 )
 
 // mentionEmail is the event handler for mention.created (notifications::email_handler). Skipped when SMTP_URL is
@@ -68,19 +65,8 @@ func mentionEmail(c *command.Ctx, ev jobs.Event) error {
 	return nil
 }
 
-// plainAuth is AUTH PLAIN without net/smtp's refusal to send credentials over an unencrypted link: the operator
-// chose the transport in SMTP_URL (like lettre, which only encrypts when the URL says so).
-type plainAuth struct{ user, pass string }
-
-func (a plainAuth) Start(*smtp.ServerInfo) (string, []byte, error) {
-	return "PLAIN", []byte("\x00" + a.user + "\x00" + a.pass), nil
-}
-func (a plainAuth) Next([]byte, bool) ([]byte, error) {
-	return nil, errors.New("unexpected server challenge")
-}
-
-// SendMail delivers one plain-text message. smtp_url follows lettre's from_url: smtps:// is implicit TLS (port
-// 465), smtp:// is cleartext (port 25) unless ?tls=required (STARTTLS, mandatory) or ?tls=opportunistic.
+// SendMail delivers one plain-text message over mailer's SMTP dialogue (smtp_url rules are documented on
+// mailer.Deliver); the per-event Message-ID makes a re-sent mail recognisable.
 func SendMail(ctx context.Context, smtpURL, from, to, subject, body, messageID string) error {
 	fa, err := mail.ParseAddress(from)
 	if err != nil {
@@ -90,73 +76,9 @@ func SendMail(ctx context.Context, smtpURL, from, to, subject, body, messageID s
 	if err != nil {
 		return err
 	}
-	u, err := url.Parse(smtpURL)
-	if err != nil {
-		return err
-	}
-	port := u.Port()
-	implicit := false
-	switch u.Scheme {
-	case "smtps":
-		implicit = true
-		if port == "" {
-			port = "465"
-		}
-	case "smtp":
-		if port == "" {
-			port = "25"
-		}
-	default:
-		return fmt.Errorf("unsupported scheme %q", u.Scheme)
-	}
-	host := u.Hostname()
-	d := net.Dialer{Timeout: 30 * time.Second}
-	conn, err := d.DialContext(ctx, "tcp", net.JoinHostPort(host, port))
-	if err != nil {
-		return err
-	}
-	if implicit {
-		conn = tls.Client(conn, &tls.Config{ServerName: host})
-	}
-	_ = conn.SetDeadline(time.Now().Add(60 * time.Second))
-	cl, err := smtp.NewClient(conn, host)
-	if err != nil {
-		_ = conn.Close()
-		return err
-	}
-	defer cl.Close()
-	if mode := u.Query().Get("tls"); !implicit && (mode == "required" || mode == "opportunistic") {
-		if ok, _ := cl.Extension("STARTTLS"); ok {
-			if err := cl.StartTLS(&tls.Config{ServerName: host}); err != nil {
-				return err
-			}
-		} else if mode == "required" {
-			return errors.New("server does not support STARTTLS")
-		}
-	}
-	if u.User != nil {
-		pass, _ := u.User.Password()
-		if err := cl.Auth(plainAuth{u.User.Username(), pass}); err != nil {
-			return err
-		}
-	}
-	if err := cl.Mail(fa.Address); err != nil {
-		return err
-	}
-	if err := cl.Rcpt(ta.Address); err != nil {
-		return err
-	}
-	w, err := cl.Data()
-	if err != nil {
-		return err
-	}
-	if _, err := w.Write([]byte(buildMessage(fa, ta, subject, body, messageID))); err != nil {
-		return err
-	}
-	if err := w.Close(); err != nil {
-		return err
-	}
-	return cl.Quit()
+	return mailer.Deliver(ctx, smtpURL, fa.Address, ta.Address, func(bool) []byte {
+		return []byte(buildMessage(fa, ta, subject, body, messageID))
+	})
 }
 
 func buildMessage(from, to *mail.Address, subject, body, messageID string) string {

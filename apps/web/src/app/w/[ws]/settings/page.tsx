@@ -11,6 +11,7 @@ import {
   ListChecks,
   Lock,
   type LucideIcon,
+  Mail,
   Plug,
   Plus,
   Settings2,
@@ -30,6 +31,7 @@ import { Privacy } from '@/components/audit/privacy'
 import { CompanyProfile } from '@/components/business-type'
 import { CompanyTab } from '@/components/company/profile'
 import { HooksTab } from '@/components/hooks-settings'
+import { CustomerMessages } from '@/components/messages/customer-messages'
 import { Secret } from '@/components/secret'
 import { SignInSecurity } from '@/components/security/sign-in'
 import { useShell } from '@/components/shell'
@@ -55,6 +57,12 @@ const SECTIONS: { group: string; tabs: SettingsTab[] }[] = [
         icon: Building2,
         label: 'Company profile',
         desc: 'Legal name, GSTIN, PAN, bank and branches printed on your documents.',
+      },
+      {
+        key: 'Messages',
+        icon: Mail,
+        label: 'Customer messages',
+        desc: 'The emails and WhatsApp messages your customers get: wording, look and sender.',
       },
       {
         key: 'Members',
@@ -809,6 +817,7 @@ export default function Settings() {
         <div className="max-w-3xl">
           {tab === 'Workspace' && <WorkspaceTab ws={ws} />}
           {tab === 'Company' && <CompanyTab ws={ws} />}
+          {tab === 'Messages' && <CustomerMessages ws={ws} />}
           {tab === 'Members' && <MembersTab ws={ws} />}
           {tab === 'API keys' && <KeysTab ws={ws} />}
           {tab === 'Agents' && <AgentsTab ws={ws} />}
