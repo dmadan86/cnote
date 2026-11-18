@@ -58,6 +58,7 @@ func Commands() []command.Command {
 		nc("vendor.list", rd, vendorList),
 		nc("vendor.set_tax", mi, vendorSetTax),
 		nc("bill.tds_preview", rd, tdsPreview),
+		openingBill(), openingBillCancel(), openingBillSummary(),
 		member(nc("tds.rate_list", rd, rateList)),
 		admin(nc("tds.rate_set", mi, rateSet)),
 		member(nc("report.payables_ageing", rd, payablesAgeing)),
@@ -814,6 +815,13 @@ func cancel(c *command.Ctx, input json.RawMessage) (any, error) {
 	if b.PaidMinor > 0 {
 		return nil, command.ErrConflict("bill has payments and cannot be cancelled")
 	}
+	var opening bool
+	if err := c.Tx.QueryRow(c.Context, "select opening from billing.purchase_bills where note_id = $1::uuid", b.ID).Scan(&opening); err != nil {
+		return nil, command.DB(err)
+	}
+	if opening {
+		return nil, command.ErrConflict("this is an opening balance bill carried over from another system: it cannot be cancelled here")
+	}
 	if b.Status == "recorded" {
 		if err := inventory.Reverse(c, "purchase_bill", b.ID); err != nil {
 			return nil, err
@@ -970,7 +978,7 @@ func itcSummary(c *command.Ctx, input json.RawMessage) (any, error) {
 		`select to_char(b.bill_date, 'YYYY-MM'), l.gst_rate_bp, sum(l.taxable_minor)::bigint, sum(l.cgst_minor)::bigint,
 		   sum(l.sgst_minor)::bigint, sum(l.igst_minor)::bigint
 		 from billing.purchase_bill_lines l join billing.purchase_bills b on b.note_id = l.bill_id join core.notes n on n.id = b.note_id
-		 where b.status in ('recorded','partly_paid','paid') and b.bill_date between $1::date and $2::date
+		 where b.status in ('recorded','partly_paid','paid') and not b.opening and b.bill_date between $1::date and $2::date
 		   and n.space_id = any($3::text[]::uuid[]) and core.note_access(n.id, $4::uuid, $5, $3::text[]::uuid[]) <> 'none'
 		 group by 1, 2 order by 1, 2`, *v.From, *v.To, spaces, uid, admin)
 	if err != nil {

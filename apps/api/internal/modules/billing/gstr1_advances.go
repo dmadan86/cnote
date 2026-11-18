@@ -65,7 +65,7 @@ func advanceTables(c *command.Ctx, from, to time.Time, spaces []string, uid *str
 		  join billing.receipts r on r.note_id = a.receipt_id
 		  join billing.invoices i on i.note_id = a.invoice_id
 		  join core.notes n on n.id = r.note_id
-		where r.supply_type = 'services' and n.deleted_at is null
+		where r.supply_type = 'services' and n.deleted_at is null and not i.opening
 		  and greatest(i.invoice_date, (a.applied_at at time zone 'Asia/Kolkata')::date) between $1::date and $2::date
 		  and n.space_id = any($3::text[]::uuid[]) and core.note_access(n.id, $4::uuid, $5, $3::text[]::uuid[]) <> 'none'
 		group by 1, 2 order by 1, 2`)

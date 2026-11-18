@@ -29,7 +29,7 @@ func Commands() []command.Command {
 	}
 	adjust := mk("stock.adjust", mi, command.Admin, adjust)
 	adjust.Confirm = true // writing stock off or on changes the books: a machine caller needs a person to confirm
-	return []command.Command{
+	return append(importCommands(), []command.Command{
 		mk("stock_item.create", mi, command.Member, itemCreate),
 		mk("stock_item.update", mi, command.Member, itemUpdate),
 		mk("stock_item.list", rd, command.Member, itemList),
@@ -44,7 +44,7 @@ func Commands() []command.Command {
 		mk("stock_batch.list", rd, command.Member, batchList),
 		mk("stock_serial.list", rd, command.Member, serialList_),
 		mk("report.stock_expiry", rd, command.Member, expiryReport),
-	}
+	}...)
 }
 
 var (
@@ -834,7 +834,11 @@ func Reverse(c *command.Ctx, srcType, srcID string) error {
 		}
 	}
 	if len(ms) > 0 {
-		_, err = c.Emit("stock.reversed", &srcID, map[string]any{"source_type": srcType, "items": len(ms)})
+		note := &srcID
+		if srcType == "import" { // the source is an import job, not a note
+			note = nil
+		}
+		_, err = c.Emit("stock.reversed", note, map[string]any{"source_type": srcType, "source_id": srcID, "items": len(ms)})
 	}
 	return err
 }

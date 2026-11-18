@@ -162,7 +162,7 @@ func decode(raw json.RawMessage, cmd string) (input, error) {
 	var ss, us, ds []string
 	switch cmd {
 	case "contact.create":
-		ss = []string{"kind", "email", "phone", "company", "gstin", "state_code", "billing_address"}
+		ss = []string{"kind", "email", "phone", "company", "gstin", "state_code", "billing_address", "pan"} // pan: import-only
 	case "contact.update":
 		ss = []string{"name", "email", "phone", "company", "gstin", "state_code", "billing_address"}
 	case "contact.list":
@@ -248,7 +248,7 @@ func Commands() []command.Command {
 			return execute(c, n, i)
 		}))
 	}
-	return append(out, command.NewCommand("contact.lifecycle", command.GroupRead, lifecycle))
+	return append(out, command.NewCommand("contact.lifecycle", command.GroupRead, lifecycle), importCmd("contact.import_keys", importKeys), importCmd("contact.import_usage", importUsage))
 }
 func emit(c *command.Ctx, kind, id string, p any) error { _, err := c.Emit(kind, &id, p); return err }
 func rename(c *command.Ctx, id string, title *string) error {
@@ -281,7 +281,7 @@ func execute(c *command.Ctx, cmd string, i input) (any, error) {
 		if err != nil {
 			return nil, err
 		}
-		_, err = c.Tx.Exec(c.Context, `insert into crm.contacts(note_id,workspace_id,kind,email,phone,company,gstin,state_code,billing_address,is_vendor) values($1::uuid,$2::uuid,$3,$4,$5,$6,$7,$8,$9,coalesce($10,false))`, n.ID, c.WorkspaceID(), kind, s["email"], s["phone"], s["company"], g, st, s["billing_address"], i.vendor)
+		_, err = c.Tx.Exec(c.Context, `insert into crm.contacts(note_id,workspace_id,kind,email,phone,company,gstin,state_code,billing_address,is_vendor,pan) values($1::uuid,$2::uuid,$3,$4,$5,$6,$7,$8,$9,coalesce($10,false),$11)`, n.ID, c.WorkspaceID(), kind, s["email"], s["phone"], s["company"], g, st, s["billing_address"], i.vendor, s["pan"])
 		if err != nil {
 			return nil, err
 		}

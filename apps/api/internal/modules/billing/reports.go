@@ -145,7 +145,7 @@ func gstSummary(c *command.Ctx, input json.RawMessage) (any, error) {
 		   sum(case when i.kind = 'credit_note' then -l.igst_minor else l.igst_minor end)::bigint
 		 from billing.invoice_lines l join billing.invoices i on i.note_id = l.invoice_id
 		   join core.notes n on n.id = i.note_id
-		 where i.status <> 'draft' and i.invoice_date between $1::date and $2::date and n.space_id = any($3::text[]::uuid[])
+		 where i.status <> 'draft' and not i.opening and i.invoice_date between $1::date and $2::date and n.space_id = any($3::text[]::uuid[])
 		   and core.note_access(n.id, $4::uuid, $5, $3::text[]::uuid[]) <> 'none'
 		 group by 1, 2 order by 1, 2`, pgDate(from), pgDate(to), spaces, uid, admin)
 	if err != nil {
@@ -273,7 +273,7 @@ func gstr1(c *command.Ctx, input json.RawMessage) (any, error) {
 	rows, err := c.Tx.Query(c.Context,
 		`select i.note_id::text, i.kind, i.number, i.invoice_date::text, i.total_minor, i.place_of_supply, i.buyer_gstin, i.reverse_charge
 		 from billing.invoices i join core.notes n on n.id = i.note_id
-		 where i.number is not null and i.invoice_date between $1::date and $2::date and n.space_id = any($3::text[]::uuid[])
+		 where i.number is not null and not i.opening and i.invoice_date between $1::date and $2::date and n.space_id = any($3::text[]::uuid[])
 		   and core.note_access(n.id, $4::uuid, $5, $3::text[]::uuid[]) <> 'none'
 		 order by i.number`, fmtDate(from), fmtDate(to), spaces, uid, admin)
 	if err != nil {
@@ -454,7 +454,8 @@ func exportTally(c *command.Ctx, input json.RawMessage) (any, error) {
 		   left join billing.payments p on e.source_type = 'payment' and p.id = e.source_id
 		   left join billing.invoices i on i.note_id = case when e.source_type = 'payment' then p.invoice_id else e.source_id end
 		   left join core.notes c on c.id = i.contact_id
-		 where e.posted_at >= $1::date and e.posted_at < $2::date + 1 order by e.posted_at, e.id`, pgDate(from), pgDate(to))
+		 where e.posted_at >= $1::date and e.posted_at < $2::date + 1 and e.source_type not in ('opening_balance', 'opening_balance_reversal')
+		 order by e.posted_at, e.id`, pgDate(from), pgDate(to))
 	if err != nil {
 		return nil, command.DB(err)
 	}

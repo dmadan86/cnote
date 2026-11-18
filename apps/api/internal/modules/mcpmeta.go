@@ -62,7 +62,18 @@ type meta struct {
 var idOnly = schema([]string{"id"}, props{"id": id})
 
 var mcpMeta = map[string]meta{
-	"email_template.list": {"List the customer messages (invoice sent, payment reminders, quotation, receipt, support reply) with their subject and body, the defaults, which are customised, their placeholders, and the sender look (from name, reply-to, accent colour, sign-off, footer). Admins only.", schema(nil, props{})},
+	"data_import.template": {"Fields and a sample CSV for an import kind (contacts, items, opening_docs). Admins only.", schema([]string{"kind"}, props{"kind": str})},
+	"data_import.preview":  {"Check an uploaded import file: columns, how many rows are ready, need fixing, or are already in C Note, and the first 200 rows with the reason for each. Send mapping {file header: field key} to change the column match. Admins only.", schema([]string{"id"}, props{"id": id, "mapping": props{"type": "object"}, "status": str})},
+	"data_import.run":      {"Start a checked import. Only ready rows are added; rows already in C Note are skipped. It runs in the background: poll data_import.status. Admins only.", schema([]string{"id"}, props{"id": id, "include": props{"type": "object", "description": "Tally only: {customers, vendors, ledgers, items} booleans"}})},
+	"data_import.status":   {"Progress of one import: status, total, processed, added, skipped, failed, undo_until. Admins only.", idOnly},
+	"data_import.list":     {"Recent data imports with their status. Admins only.", schema(nil, props{})},
+	"data_import.errors":   {"The rows that need fixing as a CSV with the reason for each. Admins only.", idOnly},
+	"data_import.undo":     {"Undo a finished import within 7 days: all of it or nothing, with a reason per blocked row. Needs human confirmation for agents.", idOnly},
+	"opening.get":          {"The opening balances page: go-live date, account lines, opening invoice and bill totals, the 3900 difference, and whether it is posted. Admins only.", schema(nil, props{})},
+	"opening.save":         {"Save the opening balances draft: go_live and lines [{account_code, dr_minor, cr_minor}]. 1100, 2100 and 3900 are filled in from opening invoices and bills. Admins only.", schema([]string{"lines"}, props{"go_live": date, "lines": props{"type": "array", "items": map[string]any{"type": "object"}}})},
+	"opening.post":         {"Post the opening balances as one journal entry dated the day before go-live. Needs human confirmation for agents.", schema(nil, props{})},
+	"opening.reverse":      {"Reverse the posted opening balances with an exact negating entry. Needs human confirmation for agents.", schema(nil, props{})},
+	"email_template.list":  {"List the customer messages (invoice sent, payment reminders, quotation, receipt, support reply) with their subject and body, the defaults, which are customised, their placeholders, and the sender look (from name, reply-to, accent colour, sign-off, footer). Admins only.", schema(nil, props{})},
 	"email_template.save": {"Customise one customer message. Placeholders look like {{invoice.number}}; unknown ones are refused. Send the version from email_template.list (0 for a message not yet customised); a stale version is a conflict. Admins only.", schema([]string{"event", "subject", "body", "version"}, props{
 		"event": str, "subject": str, "body": props{"type": "string", "description": "Plain text; **bold** and blank-line paragraphs"}, "version": num})},
 	"email_template.reset": {"Put a customer message back to its default wording. Send the current version. Admins only.", schema([]string{"event", "version"}, props{"event": str, "version": num})},
