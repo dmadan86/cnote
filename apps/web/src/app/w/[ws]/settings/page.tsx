@@ -12,6 +12,7 @@ import {
   Lock,
   type LucideIcon,
   Plug,
+  Plus,
   Settings2,
   ShieldCheck,
   Sparkles,
@@ -357,11 +358,12 @@ function KeysTab({ ws }: { ws: string }) {
   const { data, reload } = useCmd<Key[]>(ws, 'apikey.list')
   const [secret, setSecret] = useState<string>()
   const [err, setErr] = useState<string>()
+  const keys = data?.filter((k) => !k.agent_id)
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       {secret && <Secret value={secret} onDone={() => setSecret(undefined)} />}
       <form
-        className="flex max-w-xl items-end gap-2"
+        className="rounded-lg border border-line p-4"
         onSubmit={async (e) => {
           e.preventDefault()
           const form = e.currentTarget
@@ -378,44 +380,86 @@ function KeysTab({ ws }: { ws: string }) {
           }
         }}
       >
-        <div className="flex-1">
-          <Field label="Key name">
-            {(id) => <input id={id} name="name" required className={inputCls} />}
-          </Field>
+        <h3 className="text-[14px] font-medium">Create a key</h3>
+        <p className="mt-0.5 mb-3 text-[12px] text-muted">
+          The key is shown once. Store it in your script's settings, never in code you share.
+        </p>
+        <div className="flex flex-wrap items-end gap-2">
+          <div className="min-w-56 flex-1">
+            <Field label="Key name">
+              {(id) => (
+                <input
+                  id={id}
+                  name="name"
+                  required
+                  placeholder="e.g. Tally sync script"
+                  className={inputCls}
+                />
+              )}
+            </Field>
+          </div>
+          <button type="submit" className={btnPrimary}>
+            <Plus size={14} aria-hidden /> Create API key
+          </button>
         </div>
-        <button type="submit" className={btnPrimary}>
-          Create API key
-        </button>
       </form>
       <ErrorText error={err} />
-      <ul className="divide-y divide-line rounded-md border border-line">
-        {data
-          ?.filter((k) => !k.agent_id)
-          .map((k) => (
-            <li key={k.id} className="flex items-center gap-3 px-3 py-2">
-              <span className="font-medium">{k.name}</span>
-              <code className="text-muted">cn_{k.prefix}_...</code>
-              <span className="text-[12px] text-muted">
-                {k.last_used_at ? `used ${ago(k.last_used_at)}` : 'never used'}
-              </span>
-              {k.revoked_at ? (
-                <span className="ml-auto text-[12px] text-bad">Revoked</span>
-              ) : (
-                <button
-                  type="button"
-                  className={`${btn} ml-auto`}
-                  aria-label={`Revoke ${k.name}`}
-                  onClick={async () => {
-                    await cmd(ws, 'apikey.revoke', { id: k.id })
-                    reload()
-                  }}
-                >
-                  Revoke
-                </button>
-              )}
-            </li>
-          ))}
-      </ul>
+      {keys?.length === 0 ? (
+        <div className="rounded-lg border border-line">
+          <EmptyState icon={KeySquare} title="No API keys yet">
+            Keys let scripts and other software use C Note as you. Agent keys are on the Agents page.
+          </EmptyState>
+        </div>
+      ) : (
+        <div className="overflow-hidden rounded-lg border border-line">
+          <table className="w-full text-left text-[13px]">
+            <thead className="border-b border-line bg-side text-[12px] text-muted">
+              <tr>
+                <th scope="col" className="px-4 py-2 font-medium">
+                  Name
+                </th>
+                <th scope="col" className="px-4 py-2 font-medium">
+                  Key
+                </th>
+                <th scope="col" className="px-4 py-2 font-medium">
+                  Last used
+                </th>
+                <th scope="col" className="w-28 px-4 py-2">
+                  <span className="sr-only">Actions</span>
+                </th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-line">
+              {keys?.map((k) => (
+                <tr key={k.id} className={k.revoked_at ? 'text-muted' : ''}>
+                  <td className="px-4 py-2.5 font-medium">{k.name}</td>
+                  <td className="px-4 py-2.5">
+                    <code className="rounded bg-hover px-1.5 py-0.5 text-[12px]">cn_{k.prefix}_…</code>
+                  </td>
+                  <td className="px-4 py-2.5 text-muted">{k.last_used_at ? ago(k.last_used_at) : 'Never'}</td>
+                  <td className="px-4 py-2.5 text-right">
+                    {k.revoked_at ? (
+                      <Pill tone="bad">Revoked</Pill>
+                    ) : (
+                      <button
+                        type="button"
+                        className={`${btn} text-bad`}
+                        aria-label={`Revoke ${k.name}`}
+                        onClick={async () => {
+                          await cmd(ws, 'apikey.revoke', { id: k.id })
+                          reload()
+                        }}
+                      >
+                        Revoke
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   )
 }
