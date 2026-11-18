@@ -114,8 +114,8 @@ func TestCheckTemplateRefusesUnknownAndMalformed(t *testing.T) {
 }
 
 func TestEveryDefaultPassesItsOwnCheck(t *testing.T) {
-	if len(Events()) != 7 {
-		t.Fatal("seven events")
+	if len(Events()) != 9 { // 7 customer messages + the due-soon and due-today payment reminders
+		t.Fatalf("want 9 events, got %d", len(Events()))
 	}
 	for _, ev := range Events() {
 		if err := checkTemplate(ev, ev.DefaultSubject, ev.DefaultBody); err != nil {
