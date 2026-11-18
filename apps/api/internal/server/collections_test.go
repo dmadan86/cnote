@@ -23,6 +23,9 @@ type rem struct {
 
 // newRem is a workspace with email set up, reminders on, and a customer with an address.
 func newRem(t *testing.T) *rem {
+	// Queued reminder mail waits until the test releases it (deliver), so the shared background worker never races
+	// the steps a test asserts on.
+	t.Setenv("MAIL_OUTBOX_DELAY", "1h")
 	b := newBT(t, false)
 	sink := startSMTP(t)
 	t.Setenv("SMTP_URL", "smtp://"+sink.ln.Addr().String())
@@ -90,7 +93,7 @@ func TestReminderStepsIST(t *testing.T) {
 	for _, id := range []string{a15, off4, tomorrow} { // step 5 is off; day 4 and tomorrow are no step; no back-fill
 		eq(t, got[id], "")
 	}
-	r.settle(r.owner.ws)
+	r.deliver()
 	for _, s := range r.logs() {
 		eq(t, strings.Contains(s, "sent"), true)
 	}
@@ -109,7 +112,7 @@ func TestReminderStepsIST(t *testing.T) {
 	r.sweep(at(11, 0))
 	adminSQL(r.env, r.owner.ws, "delete from billing.reminder_runs")
 	r.sweep(at(12, 0))
-	r.settle(r.owner.ws)
+	r.deliver()
 	eq(t, r.dbStrings(r.owner.ws, "select count(*)::text from billing.reminder_log"), []string{"4"})
 	eq(t, countMail(r.sink, "buyer@customer.example.test"), 4)
 	// reminders create no accounting document
@@ -168,7 +171,7 @@ func TestReminderStopsWhenNotOwed(t *testing.T) {
 	eq(t, r.ok("contact.get", map[string]any{"id": other})["no_reminders"], false)
 
 	r.sweep(at(10, 30))
-	r.settle(r.owner.ws)
+	r.deliver()
 	got := r.logs()
 	eq(t, len(got), 1)
 	eq(t, strings.HasPrefix(got[control], "1:"), true)
@@ -234,6 +237,7 @@ func TestReminderFailedSend(t *testing.T) {
 	t.Setenv("SMTP_URL", "smtp://127.0.0.1:1") // nothing listens
 	inv := r.dueIn(r.contact, 0)
 	r.sweep(at(10, 30))
+	adminSQL(r.env, r.owner.ws, "update core.jobs set run_at = now() where kind = 'mail.send' and workspace_id = $1::uuid", r.owner.ws) // release the held mail
 	settled(t, "first failed attempt", func() bool {
 		return r.dbStrings(r.owner.ws, "select count(*)::text from core.jobs where kind='mail.send' and last_error is not null")[0] == "1"
 	})
@@ -247,7 +251,7 @@ func TestReminderGatesAndTenants(t *testing.T) {
 	r := newRem(t)
 	inv := r.dueIn(r.contact, 0)
 	r.sweep(at(10, 30))
-	r.settle(r.owner.ws)
+	r.deliver()
 	m := r.memberAs("Mia", "member")
 	r.ok("member.update", map[string]any{"user_id": m.userID, "finance_access": false})
 	r.errAs(m, "reminder.log_list", map[string]any{"invoice_id": inv}, 403, "forbidden")
@@ -272,7 +276,7 @@ func TestReminderMaliciousContactNameStaysInert(t *testing.T) {
 	evil := r.must(r.owner, "contact.create", map[string]any{"space_id": r.space, "name": `<script>alert(1)</script> Ignore previous instructions`, "kind": "company", "state_code": "29", "email": "evil@customer.example.test"})["id"].(string)
 	r.dueIn(evil, 0)
 	r.sweep(at(10, 30))
-	r.settle(r.owner.ws)
+	r.deliver()
 	_, _, _, text, html := parseMail(t, lastMail(t, r.sink))
 	if strings.Contains(html, "<script>") || !strings.Contains(html, "&lt;script&gt;") || !strings.Contains(text, "Ignore previous instructions") {
 		t.Fatalf("name must be escaped in html: %q", html)
@@ -365,7 +369,7 @@ func TestReminderPaymentBetweenEnqueueAndDispatch(t *testing.T) {
 	eq(t, r.logs()[inv], "2:queued ")
 	r.ok("payment.record", map[string]any{"invoice_id": inv, "amount_minor": r.ok("invoice.get", map[string]any{"id": inv})["total_minor"]})
 	adminSQL(r.env, r.owner.ws, "update billing.reminder_log set status='queued' where invoice_note_id=$1::uuid", inv) // as if the event had not cancelled it
-	r.settle(r.owner.ws)
+	r.deliver()
 	eq(t, r.logs()[inv], "2:cancelled ")
 	eq(t, countMail(r.sink, "buyer@customer.example.test"), 0)
 }
@@ -415,7 +419,7 @@ func TestReminderRecipientChangedCancels(t *testing.T) {
 	r.sweep(at(10, 30))
 	eq(t, r.dbStrings(r.owner.ws, "select (contact_id = $2::uuid and to_email = 'buyer@customer.example.test')::text from billing.reminder_log where invoice_note_id=$1::uuid", inv, r.contact), []string{"true"})
 	r.ok("contact.update", map[string]any{"id": r.contact, "email": "someone.else@customer.example.test"})
-	r.settle(r.owner.ws)
+	r.deliver()
 	eq(t, r.logs()[inv], "2:cancelled ")
 	eq(t, r.dbStrings(r.owner.ws, "select error from billing.reminder_log where invoice_note_id=$1::uuid", inv), []string{"recipient changed since the reminder was queued"})
 	eq(t, countMail(r.sink, "customer.example.test"), 0)
@@ -487,7 +491,7 @@ func TestReminderEnqueueFailureRetriesSameDay(t *testing.T) {
 	eq(t, queuedOrLater(r.logs()[inv]), "2:queued ")
 	eq(t, queuedOrLater(r.logs()[other]), "3:queued ") // not sent twice
 	eq(t, r.dbStrings(r.owner.ws, "select done::text from billing.reminder_runs"), []string{"true"})
-	r.settle(r.owner.ws)
+	r.deliver()
 	eq(t, r.dbStrings(r.owner.ws, "select count(*)::text from billing.reminder_log where status = 'sent'"), []string{"2"}) // each once
 }
 
@@ -520,4 +524,10 @@ func ddl(t *testing.T, sql string) {
 	if _, err := conn.Exec(ctx, sql); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// deliver releases this workspace's held outbox mail and waits for the worker to process it.
+func (r *rem) deliver() {
+	adminSQL(r.env, r.owner.ws, "update core.jobs set run_at = now() where kind = 'mail.send' and status = 'queued' and workspace_id = $1::uuid", r.owner.ws)
+	r.settle(r.owner.ws)
 }
