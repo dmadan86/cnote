@@ -56,7 +56,16 @@ func (w *Worker) OnEvent(prefix string, h EventHandler) {
 	w.events = append(w.events, eventHandler{prefix, h})
 }
 func (w *Worker) OnJob(kind string, h JobHandler) { w.jobs[kind] = h }
-func (w *Worker) AddSweep(s Sweep)                { w.sweeps = append(w.sweeps, s) }
+
+// OnLong registers a handler that runs outside the job transaction (a model loop must not hold one open) on its own
+// lane of n goroutines. shortcut: for now it runs like OnJob and n is ignored; the lanes come with the agent runtime (A5).
+func (w *Worker) OnLong(kind string, n int, h func(ctx context.Context, j jobs.Job) error) {
+	w.jobs[kind] = func(c *command.Ctx, payload json.RawMessage) error {
+		ws := c.WorkspaceID()
+		return h(c.Context, jobs.Job{WorkspaceID: &ws, Kind: kind, Payload: payload})
+	}
+}
+func (w *Worker) AddSweep(s Sweep) { w.sweeps = append(w.sweeps, s) }
 
 // Kinds are the job kinds this worker claims. Anything else stays queued for another worker (Rust).
 func (w *Worker) Kinds() []string {

@@ -41,6 +41,7 @@ type Completion struct {
 type Provider interface {
 	Name() string
 	Complete(ctx context.Context, purpose string, msgs []Message, maxTokens uint32) (Completion, error)
+	Step(ctx context.Context, r StepRequest) (StepResult, error)
 	EmbeddingModel() string
 	Embed(ctx context.Context, texts []string) ([][]float32, error)
 }
@@ -153,7 +154,7 @@ func postJSON(ctx context.Context, url string, headers [][2]string, body any) (m
 	}
 	if res.StatusCode < 200 || res.StatusCode > 299 {
 		// Upstream bodies stay out of responses; callers only learn the status.
-		return nil, fmt.Errorf("model API returned %s", statusLine(res.StatusCode))
+		return nil, &APIError{Status: res.StatusCode}
 	}
 	var v map[string]any
 	d := json.NewDecoder(bytes.NewReader(text))

@@ -48,32 +48,40 @@ func rustEntries() []entry {
 	return baseList
 }
 
-// catalog is every command agents can discover, sorted by name like Registry::list in Rust: Rust's commands plus the
+// Entry is what agents are told about one command.
+type Entry = entry
+
+// Catalog is every command agents can discover, sorted by name like Registry::list in Rust: Rust's commands plus the
 // Go-only ones (commands with MCP metadata that Rust does not have).
+func Catalog(reg *command.Registry) []Entry {
+	out := slices.Clone(rustEntries())
+	known := map[string]bool{}
+	for _, e := range out {
+		known[e.Name] = true
+	}
+	for _, c := range reg.List() {
+		if c.Description == "" || known[c.Name] {
+			continue
+		}
+		schema, err := command.Norm(c.Schema)
+		if err != nil {
+			continue
+		}
+		out = append(out, entry{Name: c.Name, Description: c.Description, Group: string(c.Group), Confirm: c.Confirm, Schema: schema})
+	}
+	slices.SortFunc(out, func(a, b entry) int { return strings.Compare(a.Name, b.Name) })
+	return out
+}
+
 func (s *Server) catalog() []entry {
-	s.once.Do(func() {
-		out := slices.Clone(rustEntries())
-		known := map[string]bool{}
-		for _, e := range out {
-			known[e.Name] = true
-		}
-		for _, c := range s.Registry.List() {
-			if c.Description == "" || known[c.Name] {
-				continue
-			}
-			schema, err := command.Norm(c.Schema)
-			if err != nil {
-				continue
-			}
-			out = append(out, entry{Name: c.Name, Description: c.Description, Group: string(c.Group), Confirm: c.Confirm, Schema: schema})
-		}
-		slices.SortFunc(out, func(a, b entry) int { return strings.Compare(a.Name, b.Name) })
-		s.cat = out
-	})
+	s.once.Do(func() { s.cat = Catalog(s.Registry) })
 	return s.cat
 }
 
-func toolName(command string) string { return strings.ReplaceAll(command, ".", "_") }
+// ToolName is the MCP tool name of a command ("invoice.issue" becomes "invoice_issue").
+func ToolName(command string) string { return strings.ReplaceAll(command, ".", "_") }
+
+func toolName(command string) string { return ToolName(command) }
 
 // resolve accepts "invoice.issue" or "invoice_issue".
 func (s *Server) resolve(name string) (entry, bool) {
