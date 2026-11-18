@@ -1,9 +1,6 @@
 import { expect, test } from '@playwright/test'
 import { createSpace, signup, uniq } from './helpers'
 
-const SHOT =
-  '/private/tmp/claude-502/-Users-in45889244-madan-cnote/3facb745-6c61-42f9-b40b-30cfb9a2e904/scratchpad/ag-'
-
 test('Settings → Agents: install, toggle, run now, and the lead responder reacts to an inquiry', async ({
   page,
   browser,
@@ -18,7 +15,6 @@ test('Settings → Agents: install, toggle, run now, and the lead responder reac
   await page.goto(`${base}/settings?tab=Agents`)
   const cards = page.getByRole('listitem').filter({ has: page.getByRole('button', { name: 'Install' }) })
   await expect(cards).toHaveCount(4)
-  await page.screenshot({ path: `${SHOT}gallery.png` })
 
   // Daily briefing: pick a channel.
   await cards.filter({ hasText: 'Daily briefing' }).getByRole('button', { name: 'Install' }).click()
@@ -43,7 +39,6 @@ test('Settings → Agents: install, toggle, run now, and the lead responder reac
       timeout: 30_000,
     },
   )
-  await page.screenshot({ path: `${SHOT}detail.png`, fullPage: true })
 
   // Lead responder reacts to a public inquiry.
   await page.goto(`${base}/settings?tab=Agents`)
@@ -83,13 +78,11 @@ test('Settings → Agents: install, toggle, run now, and the lead responder reac
   }).toPass({ timeout: 30_000 })
   await lr2.getByRole('link', { name: 'Open' }).click()
   await expect(page.getByRole('table')).toContainText(/Event/, { timeout: 30_000 })
-  await page.screenshot({ path: `${SHOT}responder.png`, fullPage: true })
 
   // A held draft, if the run produced one, is approved on its card.
   await page.goto(`${base}/approvals`)
   const approve = page.getByRole('button', { name: /^Approve/ }).first()
   if (await approve.isVisible({ timeout: 3000 }).catch(() => false)) {
-    await page.screenshot({ path: `${SHOT}approval.png` })
     await approve.click()
   }
 })

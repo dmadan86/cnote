@@ -317,7 +317,7 @@ func TestChatEmitsAgentMentionedOnlyForAgentsInTheChannel(t *testing.T) {
 func TestContactEmailIsHeldForAgents(t *testing.T) {
 	b := newBT(t, false)
 	b.env.must(b.owner, "workspace.update", map[string]any{"settings": map[string]any{"agent_tool_groups": []string{"read", "manage_crm", "send_messages"}}})
-	adminSQL(b.env, b.owner.ws, `update crm.contacts set email = 'buyer@example.test' where note_id = $1::uuid`, b.contact)
+	adminSQL(b.env, b.owner.ws, `update crm.contacts set email = $2 where note_id = $1::uuid`, b.contact, "buyer-"+b.owner.ws[:8]+"@example.test")
 	k := b.env.must(b.owner, "agent.create", map[string]any{"name": "Mailer", "scopes": []string{"read", "manage_crm", "send_messages"}})
 	agent := who{ws: b.owner.ws, bearer: k["api_key"].(string)}
 	in := map[string]any{"contact_id": b.contact, "subject": "Re: your enquiry", "body": "Hello, here is our reply."}

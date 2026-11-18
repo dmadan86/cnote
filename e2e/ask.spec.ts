@@ -19,9 +19,6 @@ test('Ask: install, ask with a tool, see progress, answer and Sources; Esc close
   await panel.getByText('Sources', { exact: true }).click()
   await expect(panel.locator('summary', { hasText: /home[._]summary/ })).toBeVisible()
   await page.setViewportSize({ width: 1440, height: 900 })
-  await page.screenshot({
-    path: '/private/tmp/claude-502/-Users-in45889244-madan-cnote/3facb745-6c61-42f9-b40b-30cfb9a2e904/scratchpad/ag-ask.png',
-  })
 
   await page.keyboard.press('Escape')
   await expect(panel).toHaveCount(0)

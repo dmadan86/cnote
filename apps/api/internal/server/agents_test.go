@@ -208,7 +208,8 @@ func TestAgentSupportDraftIsRejectedWhenAPersonReplies(t *testing.T) {
 	sink := startSMTP(t)
 	t.Setenv("SMTP_URL", "smtp://"+sink.ln.Addr().String())
 	t.Setenv("EMAIL_FROM", "Acme <hello@acme.example.test>")
-	adminSQL(b.env, b.owner.ws, `update crm.contacts set email = 'buyer@example.test' where note_id = $1::uuid`, b.contact)
+	buyer := "buyer-" + b.owner.ws[:8] + "@example.test" // the shared worker may deliver other tests' mail to this sink
+	adminSQL(b.env, b.owner.ws, `update crm.contacts set email = $2 where note_id = $1::uuid`, b.contact, buyer)
 	model := newScriptedModel(t, func(r modelReq) []map[string]any {
 		if r.Turn == 0 {
 			n := ctxNoteRe.FindStringSubmatch(r.First)
@@ -238,8 +239,15 @@ func TestAgentSupportDraftIsRejectedWhenAPersonReplies(t *testing.T) {
 	b.ok("ticket.reply", map[string]any{"id": tk, "body": "I am looking into it."}) // a person answers first
 	settled(t, "the draft to be rejected", func() bool { return status() == "rejected" })
 	b.errIs("confirmation.decide", map[string]any{"id": cid[0], "approve": true}, 404, "not_found")
+	waitMail(t, sink, "I am looking into it.")
 	sink.mu.Lock()
-	n, mail := len(sink.msgs), strings.Join(sink.msgs, "\n")
+	var mine []string
+	for _, m := range sink.msgs {
+		if strings.Contains(m, buyer) {
+			mine = append(mine, m)
+		}
+	}
+	n, mail := len(mine), strings.Join(mine, "\n")
 	sink.mu.Unlock()
 	if n != 1 || strings.Contains(mail, "restart the printer") {
 		t.Fatalf("only the person's reply may be sent, got %d: %s", n, mail)
@@ -336,7 +344,7 @@ func TestMailOutboxRolledBackTxQueuesNothing(t *testing.T) {
 // waitMail waits for the worker to deliver a mail containing substr (mail.send is an outbox job) and returns it.
 func waitMail(t *testing.T, s *smtpSink, substr string) string {
 	t.Helper()
-	for i := 0; i < 100; i++ {
+	for i := 0; i < 300; i++ { // 30 s: the shared worker may be retrying other tests' mail first
 		s.mu.Lock()
 		for _, m := range s.msgs {
 			if strings.Contains(m, substr) {
