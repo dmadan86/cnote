@@ -20,9 +20,6 @@ type AmountFunc func(c *Ctx, input json.RawMessage) (noteID string, amount int64
 func (r *Registry) approvalGate(c *Ctx, cmd Command, input json.RawMessage) ([]byte, bool, error) {
 	p := c.Principal
 	machine := p.Kind == KindAgent || p.Kind == KindAPIKey
-	if machine && p.UserID == nil {
-		return nil, false, nil // no person to ask in the name of; Confirm or the role gate still applies
-	}
 	// A person who owns the workspace skips the gate; their agent is capped at admin, so it does not.
 	if !machine && (p.Kind != KindUser || p.UserID == nil || p.Role >= Owner) {
 		return nil, false, nil
@@ -46,6 +43,9 @@ func (r *Registry) approvalGate(c *Ctx, cmd Command, input json.RawMessage) ([]b
 	}
 	if amount < min {
 		return nil, false, nil
+	}
+	if machine && p.UserID == nil { // fail closed: no person to open the approval in the name of
+		return nil, false, ErrForbidden("this amount needs a person's approval; ask a workspace member to make the request in C Note")
 	}
 	steps, err := snapshotSteps(c, ruleSteps, amount, *p.UserID)
 	if err != nil {

@@ -73,7 +73,7 @@ export function AgentDetail({
                   </button>
                   <button
                     type="button"
-                    className={btn}
+                    className={`${btn} whitespace-nowrap`}
                     disabled={!a.enabled}
                     onClick={() => act(() => cmd(ws, 'agent.run', { agent_id: id }), 'Started a run.')}
                   >

@@ -44,7 +44,7 @@ function Bold({ text }: { text: string }) {
 function Answer({ text }: { text: string }) {
   const blocks = text.trim().split(/\n{2,}/)
   return (
-    <div className="space-y-2 text-[13.5px] leading-relaxed">
+    <div className="space-y-2 break-words text-[13.5px] leading-relaxed">
       {blocks.map((b, i) => {
         const lines = b.split('\n')
         const bullet = lines.every((l) => /^\s*[-*]\s+/.test(l))
@@ -181,7 +181,9 @@ export function AskPanel({
   }, [open, ws, activeId])
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: scroll on new content only
-  useEffect(() => end.current?.scrollIntoView({ block: 'end' }), [runs, steps])
+  useEffect(() => {
+    end.current?.scrollIntoView({ block: 'end' })
+  }, [runs, steps])
 
   const ask = useCallback(
     async (question: string) => {

@@ -179,7 +179,7 @@ func listing(sql string) command.Handler {
 }
 
 var memberList = listing("select m.user_id::text, u.email, u.name, m.role from core.memberships m join core.users u on u.id=m.user_id where m.deactivated_at is null order by u.name")
-var agentList = listing(`select a.id::text, a.name, a.kind, a.owner_user_id::text, a.scopes, a.created_at, a.description, a.template, a.enabled,
+var agentList = listing(`select a.id::text, a.name, a.kind, a.owner_user_id::text, a.scopes, a.created_at, a.description, a.template, a.enabled, a.events, a.every_minutes, a.next_run_at,
 	(a.template is not null or a.instructions is not null) as runtime,
 	(select jsonb_build_object('id', r.id::text, 'status', r.status, 'created_at', r.created_at)
 	   from core.agent_runs r where r.agent_id = a.id order by r.created_at desc limit 1) as last_run,

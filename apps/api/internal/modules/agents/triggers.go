@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -48,6 +49,9 @@ func OnEvent(c *command.Ctx, e jobs.Event) error {
 		return command.DB(err)
 	}
 	ctx := map[string]any{"event_id": e.ID, "event_kind": e.Kind}
+	if e.NoteID != nil { // the model has no other way to learn which ticket or deal the event is about
+		ctx["note_id"] = *e.NoteID
+	}
 	if len(e.Payload) > 0 && len(e.Payload) <= maxContextPayload {
 		ctx["payload"] = e.Payload
 	}
@@ -251,6 +255,9 @@ func deliverRun(c *command.Ctx, r DoneRun) error {
 		text = string(rs[:4000])
 	}
 	in["body"] = text
-	_, err := c.Call("chat.send", in)
+	// Posting is the runtime's own act, not a model tool: the read-only briefing agent still needs the notes scope for it.
+	dc := *c
+	dc.Principal.Scopes = append(slices.Clone(c.Principal.Scopes), string(command.GroupWriteNotes))
+	_, err := dc.Call("chat.send", in)
 	return err
 }
