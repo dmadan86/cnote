@@ -12,6 +12,8 @@ import {
   Loader2,
   Mail,
   MessageSquare,
+  Newspaper,
+  Package,
   Redo2,
   Replace,
   Send,
@@ -31,8 +33,13 @@ import {
   blockDefs,
   blockLabel,
   blockType,
+  type CatalogView,
+  catalogApi,
+  catalogChanges,
+  catalogueView,
   dataOfPage,
   type EditOp,
+  previewSnapshot,
   type Site,
   type SiteData,
   type SiteDomainMeta,
@@ -42,6 +49,7 @@ import {
   type Turn,
   viewOfPage,
 } from '@/lib/sites'
+import { BlogPanel } from './blog-panel'
 import { HelpCard, hasSupport, type Support } from './help'
 import { VersionHistory } from './history'
 import { PageSwitcher } from './pages'
@@ -52,6 +60,8 @@ import { ACCEPT, UPLOAD_HINT, uploadImage } from './upload'
 
 // Puck is client-only and heavy: loaded when the Edit tab first opens.
 const EditTab = dynamic(() => import('./edit-panel').then((m) => m.EditTab), { ssr: false })
+const ItemPicker = dynamic(() => import('./item-picker').then((m) => m.ItemPicker), { ssr: false })
+const PostEditor = dynamic(() => import('./post-editor').then((m) => m.PostEditor), { ssr: false })
 const CHIPS = ['Add our phone number', 'Make the top section blue', 'Change the heading', 'Remove a section']
 const VERBS: Record<string, string> = {
   update_block_props: 'Updating',
@@ -60,6 +70,16 @@ const VERBS: Record<string, string> = {
   move_block: 'Moving',
 }
 const WITH_IMAGE = ['Use as our logo', 'Put it in the top section', 'Add to gallery']
+const rupeeTime = (iso: string) =>
+  new Date(iso).toLocaleString('en-IN', {
+    day: 'numeric',
+    month: 'short',
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZone: 'Asia/Kolkata',
+  })
+/** The post a finished chat turn wrote as a draft, if any (A2's blog tools: a successful step whose tool names a post). */
+const draftStep = (t: Turn) => t.steps?.find((x) => x.ok && x.tool === 'post_write')
 const isActive = (t: Turn) => t.status === 'queued' || t.status === 'running'
 const day = (iso: string) =>
   new Date(iso).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', timeZone: 'Asia/Kolkata' })
@@ -131,6 +151,15 @@ export function Builder({
   const [err, setErr] = useState<Error>()
   const [busy, setBusy] = useState(false)
   const [confirm, setConfirm] = useState<Turn | null>(null)
+  // Phase 3a: catalogue picker and price banner, blog mode and the open post.
+  const [catalog, setCatalog] = useState<CatalogView | null>(null)
+  const [pickerOpen, setPickerOpen] = useState(false)
+  const [syncOpen, setSyncOpen] = useState(false)
+  const [syncBusy, setSyncBusy] = useState(false)
+  const [syncErr, setSyncErr] = useState<Error>()
+  const [blog, setBlog] = useState(false)
+  const [openPost, setOpenPost] = useState<{ id: string; key: string; ai?: boolean } | null>(null)
+  const [blogTick, setBlogTick] = useState(0)
   const end = useRef<HTMLDivElement>(null)
   const input = useRef<HTMLTextAreaElement>(null)
 
@@ -148,6 +177,8 @@ export function Builder({
         domains_available: (r as SiteDomainMeta).domains_available,
       })
       setTurns([...r.turns].sort((a, b) => a.created_at.localeCompare(b.created_at)))
+      // The catalogue is optional: a site without items, or a server without it, just has no banner.
+      catalogApi.get(ws, siteId).then(setCatalog, () => setCatalog(null))
     } catch (e) {
       setErr(e as Error)
     }
@@ -505,6 +536,10 @@ export function Builder({
         {status === 'changes' ? 'Publish changes' : 'Publish'}
       </button>
     )
+  // The preview iframe draws the Catalogue block from this snapshot (what catalog_get returns, priced as visitors see it).
+  const catalogProps = catalog
+    ? { catalog: catalogueView(previewSnapshot(catalog.items, catalog.price_mode)) }
+    : {}
   return (
     <div className="flex h-full flex-col">
       <header className="flex h-14 shrink-0 items-center gap-3 border-b border-line px-3">
@@ -524,6 +559,19 @@ export function Builder({
           apply={apply}
           disabled={busy || !!active || !!preview}
         />
+        <button
+          type="button"
+          aria-pressed={blog}
+          title="Blog posts"
+          className={`${btn} ${blog ? 'bg-hover' : ''}`}
+          onClick={() => {
+            setBlog((b) => !b)
+            setOpenPost(null)
+            setTab('edit')
+          }}
+        >
+          <Newspaper size={14} aria-hidden="true" /> Blog
+        </button>
         {status === 'draft' && <Pill>Draft</Pill>}
         {status === 'published' && <Pill tone="ok">Published</Pill>}
         {status === 'changes' && (
@@ -599,6 +647,37 @@ export function Builder({
           mistake.
         </p>
       )}
+      {catalog && catalog.items.length > 0 && !!site.published_version_id && (
+        <p
+          role="status"
+          className="flex flex-wrap items-center gap-2 border-b border-line px-3 py-1.5 text-[12px]"
+        >
+          {catalog.changed > 0 ? (
+            <>
+              <span className="text-warn">
+                {catalog.changed} {catalog.changed === 1 ? 'price' : 'prices'} changed since you published
+              </span>
+              <button
+                type="button"
+                className={btn}
+                disabled={!canAdmin}
+                title={canAdmin ? undefined : 'Ask an admin to update prices'}
+                onClick={() => {
+                  setSyncErr(undefined)
+                  setSyncOpen(true)
+                }}
+              >
+                Update prices
+              </button>
+            </>
+          ) : (
+            <span className="text-muted">Your website's prices are up to date.</span>
+          )}
+          {catalog.synced_at && (
+            <span className="text-muted">Prices as of {rupeeTime(catalog.synced_at)}</span>
+          )}
+        </p>
+      )}
       <div className="flex min-h-0 flex-1 flex-col md:flex-row">
         <section className="order-1 flex min-h-0 flex-1 flex-col bg-hover p-0 md:order-2 md:p-4">
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden border-line bg-canvas md:rounded-lg md:border">
@@ -652,17 +731,40 @@ export function Builder({
                 </button>
               </form>
             )}
-            <div className="min-h-0 flex-1 overflow-hidden bg-hover">
-              <PreviewFrame
-                data={dataOfPage(preview ? preview.data : data, page)}
-                selected={selected}
-                onSelect={preview ? undefined : setSelected}
-                mobile={mobile}
-                className="h-full"
-                assetBase={`/api/w/${ws}/sites/${siteId}/img`}
-                pro={!!site.pro}
-              />
-            </div>
+            {blog && openPost ? (
+              <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-canvas">
+                <PostEditor
+                  key={openPost.key}
+                  ws={ws}
+                  site={site}
+                  postId={openPost.id}
+                  images={meta.images ?? []}
+                  ai={openPost.ai}
+                  onImage={(img) =>
+                    setMeta((m) => ({
+                      ...m,
+                      images: [...(m.images ?? []).filter((i) => i.id !== img.id), img],
+                    }))
+                  }
+                  onChanged={() => setBlogTick((n) => n + 1)}
+                  onOpen={(id) => setOpenPost((o) => (o ? { ...o, id } : o))}
+                  onClose={() => setOpenPost(null)}
+                />
+              </div>
+            ) : (
+              <div className="min-h-0 flex-1 overflow-hidden bg-hover">
+                <PreviewFrame
+                  data={dataOfPage(preview ? preview.data : data, page)}
+                  selected={selected}
+                  onSelect={preview ? undefined : setSelected}
+                  mobile={mobile}
+                  className="h-full"
+                  assetBase={`/api/w/${ws}/sites/${siteId}/img`}
+                  pro={!!site.pro}
+                  {...catalogProps}
+                />
+              </div>
+            )}
             <div aria-hidden="true" className={`h-0.5 shrink-0 ${active ? 'animate-pulse bg-accent' : ''}`} />
           </div>
         </section>
@@ -705,8 +807,41 @@ export function Builder({
               </button>
             ))}
           </div>
-          {tab === 'edit' && (
+          {tab === 'edit' && blog && (
             <div className="flex min-h-0 flex-1 flex-col max-md:max-h-[55vh]">
+              <BlogPanel
+                ws={ws}
+                siteId={siteId}
+                data={data}
+                openId={openPost?.id ?? null}
+                tick={blogTick}
+                onOpen={(id) => setOpenPost(id ? { id, key: `${id}:${Date.now()}` } : null)}
+                onWrite={() => {
+                  setTab('chat')
+                  setText('Write a post about ')
+                  input.current?.focus()
+                }}
+              />
+            </div>
+          )}
+          {tab === 'edit' && !blog && (
+            <div className="flex min-h-0 flex-1 flex-col max-md:max-h-[55vh]">
+              <div className="flex items-center gap-2 border-b border-line px-3 py-1.5 text-[12px]">
+                <Package size={14} aria-hidden="true" className="text-muted" />
+                <span className="flex-1 text-muted">
+                  {catalog?.items.length
+                    ? `${catalog.items.length} items on your website`
+                    : 'Products on your website'}
+                </span>
+                <button
+                  type="button"
+                  className={btn}
+                  disabled={!!active || !!preview}
+                  onClick={() => setPickerOpen(true)}
+                >
+                  Choose items
+                </button>
+              </div>
               <EditTab
                 key={`${page}:${epoch}:${preview?.version.id ?? ''}`}
                 ws={ws}
@@ -784,6 +919,32 @@ export function Builder({
                     <p className="whitespace-pre-wrap pr-8 text-[13px]">{t.reply}</p>
                   )}
                   {t.status === 'done' && t.version_id && card(t)}
+                  {t.status === 'done' &&
+                    (() => {
+                      const d = draftStep(t)
+                      if (!d) return null
+                      const pid = typeof d.input?.post_id === 'string' ? d.input.post_id : ''
+                      return (
+                        <div className="flex items-center gap-2 rounded-lg border border-line p-2.5">
+                          <Newspaper size={15} aria-hidden="true" />
+                          <p className="min-w-0 flex-1 text-[13px]">
+                            A draft post is ready. Read it before you publish.
+                          </p>
+                          <button
+                            type="button"
+                            className={btn}
+                            onClick={() => {
+                              setBlog(true)
+                              setTab('edit')
+                              setBlogTick((n) => n + 1)
+                              setOpenPost(pid ? { id: pid, key: `${pid}:ai`, ai: true } : null)
+                            }}
+                          >
+                            Review draft
+                          </button>
+                        </div>
+                      )
+                    })()}
                 </div>
               ))}
               {locked && (
@@ -861,6 +1022,31 @@ export function Builder({
               {attach.length > 0 && <p className="text-[12px] text-muted">{UPLOAD_HINT}</p>}
               {!locked && (
                 <ul className="-mx-3 flex gap-2 overflow-x-auto px-3 pb-1">
+                  {!attach.length && (
+                    <>
+                      <li className="shrink-0">
+                        <button
+                          type="button"
+                          className="rounded-full border border-line px-2.5 py-1 text-[12px] hover:bg-hover"
+                          onClick={() => setPickerOpen(true)}
+                        >
+                          Show my products on the site
+                        </button>
+                      </li>
+                      <li className="shrink-0">
+                        <button
+                          type="button"
+                          className="rounded-full border border-line px-2.5 py-1 text-[12px] hover:bg-hover"
+                          onClick={() => {
+                            setText('Write a post about ')
+                            input.current?.focus()
+                          }}
+                        >
+                          Write a post about…
+                        </button>
+                      </li>
+                    </>
+                  )}
                   {(attach.length ? WITH_IMAGE : CHIPS).map((c) => (
                     <li key={c} className="shrink-0">
                       <button
@@ -1087,7 +1273,73 @@ export function Builder({
         onClose={() => setPubOpen(false)}
         onSite={setSite}
         onReload={load}
+        shareDesc={data.root?.props?.description ?? ''}
       />
+      <ItemPicker
+        ws={ws}
+        site={site}
+        data={data}
+        images={meta.images ?? []}
+        open={pickerOpen}
+        onClose={() => setPickerOpen(false)}
+        onSaved={setCatalog}
+        onImage={(img) =>
+          setMeta((m) => ({ ...m, images: [...(m.images ?? []).filter((i) => i.id !== img.id), img] }))
+        }
+      />
+      <Modal open={syncOpen} onClose={() => setSyncOpen(false)} title="Update prices on your website?">
+        {catalog && (
+          <div className="space-y-3 text-[13px]">
+            {(() => {
+              const list = catalogChanges(catalog)
+              return list.length ? (
+                <ul className="max-h-60 list-disc space-y-1 overflow-y-auto pl-5">
+                  {list.map((c) => (
+                    <li key={c}>{c}</li>
+                  ))}
+                </ul>
+              ) : (
+                <p>
+                  {catalog.changed} {catalog.changed === 1 ? 'item has' : 'items have'} a new price, name or
+                  unit in Items.
+                </p>
+              )
+            })()}
+            {catalog.synced_at && (
+              <p className="text-muted">
+                Your website now shows prices as of {rupeeTime(catalog.synced_at)}.
+              </p>
+            )}
+            <ErrorText error={syncErr} />
+            <div className="flex justify-end gap-2">
+              <button type="button" className={btn} onClick={() => setSyncOpen(false)}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                className={btnPrimary}
+                disabled={syncBusy}
+                onClick={async () => {
+                  setSyncBusy(true)
+                  setSyncErr(undefined)
+                  try {
+                    await catalogApi.sync(ws, siteId)
+                    setSyncOpen(false)
+                    setToast({ ok: true, text: 'Prices are live within a minute' })
+                    load()
+                  } catch (e) {
+                    setSyncErr(e as Error)
+                  } finally {
+                    setSyncBusy(false)
+                  }
+                }}
+              >
+                {syncBusy && <Loader2 size={14} className="animate-spin" aria-hidden="true" />} Update prices
+              </button>
+            </div>
+          </div>
+        )}
+      </Modal>
       <Modal open={!!confirm} onClose={() => setConfirm(null)} title="Restore this version?">
         {confirm && (
           <div className="space-y-4">

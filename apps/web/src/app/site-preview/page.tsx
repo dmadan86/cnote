@@ -1,14 +1,24 @@
 'use client'
 import { useEffect, useRef, useState } from 'react'
 import { Renderer } from '@/components/sites/renderer'
-import type { SiteData } from '@/lib/sites'
+import type { CatalogueView, SiteData } from '@/lib/sites'
+
+/** The draft catalogue from the parent: the shape is checked, every value is rendered as text. */
+function asCatalog(v: unknown): CatalogueView | undefined {
+  const c = v as CatalogueView | undefined
+  if (!c || !Array.isArray(c.items) || !['incl', 'plus', 'hide'].includes(c.mode)) return undefined
+  const items = c.items.filter(
+    (i) => i && typeof i.id === 'string' && typeof i.name === 'string' && typeof i.price === 'string',
+  )
+  return { mode: c.mode, items }
+}
 
 /** Rendered inside the builder's iframe, outside the workspace shell. Fetches nothing: the parent posts the data. */
 export default function SitePreview() {
   const [data, setData] = useState<SiteData>()
   const [selected, setSelected] = useState<string | null>(null)
   const [pulse, setPulse] = useState<string | null>(null)
-  const [ctx, setCtx] = useState<{ assetBase?: string; pro?: boolean }>({})
+  const [ctx, setCtx] = useState<{ assetBase?: string; pro?: boolean; catalog?: CatalogueView }>({})
   const prev = useRef<Map<string, string>>(new Map())
   // The parent is the only thing that may drive this page; a standalone visit renders nothing.
   const embedded = typeof window !== 'undefined' && window.parent !== window
@@ -39,6 +49,7 @@ export default function SitePreview() {
       setCtx({
         assetBase: typeof ab === 'string' && /^\/api\/[\w/-]+$/.test(ab) ? ab : undefined,
         pro: typeof e.data.pro === 'boolean' ? e.data.pro : undefined,
+        catalog: asCatalog(e.data.catalog),
       })
       setSelected(typeof e.data.selected === 'string' ? e.data.selected : null)
       if (changed) {
@@ -71,6 +82,7 @@ export default function SitePreview() {
       pulseId={pulse}
       assetBase={ctx.assetBase}
       pro={ctx.pro}
+      catalog={ctx.catalog}
     />
   )
 }

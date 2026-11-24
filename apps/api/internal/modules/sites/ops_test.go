@@ -218,3 +218,32 @@ func TestImageIDsWalkPages(t *testing.T) {
 		t.Fatal("pages not walked")
 	}
 }
+
+func TestCatalogueBlockThroughTools(t *testing.T) {
+	data := fixture(t)
+	next, err := Apply(data, "add_block", json.RawMessage(`{"type":"Catalogue","props":{"title":"Our products","variant":"list"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := ""
+	for _, b := range allBlocks(next) {
+		if b.Type == "Catalogue" {
+			id = b.Props["id"].(string)
+		}
+	}
+	if id == "" {
+		t.Fatal("no Catalogue block")
+	}
+	if _, err = Apply(next, "update_block_props", json.RawMessage(`{"id":"`+id+`","props":{"enquire":"whatsapp","intro":"Pick one"}}`)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = Apply(next, "update_block_props", json.RawMessage(`{"id":"`+id+`","props":{"items":[{"name":"X","price":500}]}}`)); err == nil {
+		t.Fatal("the model must not be able to write item names or prices")
+	}
+	if _, err = Apply(next, "add_block", json.RawMessage(`{"type":"Catalogue","props":{}}`)); err == nil {
+		t.Fatal("one Catalogue block per page")
+	}
+	if out, err := Apply(next, "remove_block", json.RawMessage(`{"id":"`+id+`"}`)); err != nil || len(allBlocks(out)) != len(allBlocks(data)) {
+		t.Fatal(err)
+	}
+}

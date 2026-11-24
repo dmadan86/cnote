@@ -97,6 +97,8 @@ type turnOut struct {
 	VersionID     *string         `json:"version_id"`
 	Steps         json.RawMessage `json:"steps"`
 	CreatedAt     time.Time       `json:"created_at"`
+	Kind          string          `json:"kind"`
+	PostID        *string         `json:"post_id"`
 }
 
 func mk(name string, g command.Group, role command.Role, person bool, desc string, schema json.RawMessage, h command.Handler) command.Command {
@@ -132,7 +134,7 @@ func Commands() []command.Command {
 		mk("site.get", R, M, false, "Open a website: the site, its draft (or one version's) page data and the recent chat turns, oldest first.",
 			obj([]string{"id"}, props{"id": id, "version_id": str("a version of this site; default the draft")}), get),
 		mk("site.chat", W, M, true, "Ask the AI to change the page. Starts a turn that runs in the background; poll site.turn_get.",
-			obj([]string{"id", "expected_version_id", "message"}, props{"id": id, "expected_version_id": ver, "message": str("what to change, up to 2000 characters"), "block_id": str("the selected block"), "page": str("the open page's address; omit for Home"), "image_ids": props{"type": "array", "items": props{"type": "string"}, "description": "up to 4 photos just uploaded to this site"}}), chat),
+			obj([]string{"id", "expected_version_id", "message"}, props{"id": id, "expected_version_id": ver, "message": str("what to change, up to 2000 characters"), "block_id": str("the selected block"), "page": str("the open page's address; omit for Home"), "post": str("a blog post id to edit, or \"new\" to draft a new post; the turn then works on that post only"), "image_ids": props{"type": "array", "items": props{"type": "string"}, "description": "up to 4 photos just uploaded to this site"}}), chat),
 		mk("site.turn_get", R, M, false, "One chat turn; data is the new page once it is done and changed the page.", obj([]string{"id"}, props{"id": str("turn id")}), turnGet),
 		mk("site.turn_cancel", W, M, false, "Stop a chat turn that is queued or running.", obj([]string{"id"}, props{"id": str("turn id")}), turnCancel),
 		mk("site.edit", W, M, false, "Edit the site without the AI as a new version. ops are {tool, input}: update_block_props, add_block (page?), remove_block, move_block, set_theme, duplicate_block {id}, add_page {title, slug?, template?}, remove_page {page}, set_page {page?, title?, description?, slug?}, set_content {page, content} (the editor). source is edit (toolbar, default) or editor.",
@@ -338,11 +340,11 @@ func create(c *command.Ctx, raw json.RawMessage) (any, error) {
 	return out, err
 }
 
-const turnSelect = `select t.id::text, t.message, t.block_id, t.status, t.reply, t.error, v.summary, t.base_version_id::text, t.version_id::text, t.steps, t.created_at
+const turnSelect = `select t.id::text, t.message, t.block_id, t.status, t.reply, t.error, v.summary, t.base_version_id::text, t.version_id::text, t.steps, t.created_at, t.kind, t.post_id::text
 	from sites.site_turns t left join sites.site_versions v on v.workspace_id = t.workspace_id and v.site_id = t.site_id and v.id = t.version_id `
 
 func scanTurn(r pgx.CollectableRow) (t turnOut, err error) {
-	err = r.Scan(&t.ID, &t.Message, &t.BlockID, &t.Status, &t.Reply, &t.Error, &t.Summary, &t.BaseVersionID, &t.VersionID, &t.Steps, &t.CreatedAt)
+	err = r.Scan(&t.ID, &t.Message, &t.BlockID, &t.Status, &t.Reply, &t.Error, &t.Summary, &t.BaseVersionID, &t.VersionID, &t.Steps, &t.CreatedAt, &t.Kind, &t.PostID)
 	return
 }
 
@@ -407,6 +409,7 @@ func chat(c *command.Ctx, raw json.RawMessage) (any, error) {
 		BlockID           *string  `json:"block_id"`
 		ImageIDs          []string `json:"image_ids"`
 		Page              string   `json:"page"`
+		Post              string   `json:"post"`
 	}
 	if err := decode(raw, &in); err != nil {
 		return nil, err
@@ -460,6 +463,25 @@ func chat(c *command.Ctx, raw json.RawMessage) (any, error) {
 	}
 	for i := range in.ImageIDs {
 		in.ImageIDs[i] = strings.ToLower(in.ImageIDs[i])
+	}
+	if in.Post != "" { // a blog turn: the post must be this site's own
+		postID := ""
+		if in.Post != "new" {
+			var ok bool
+			if !uuidRe.MatchString(in.Post) {
+				return nil, command.ErrInvalid("that post is not on this website")
+			}
+			if err := c.Tx.QueryRow(c.Context, "select exists(select 1 from sites.posts where workspace_id = $1::uuid and site_id = $2::uuid and id = $3::uuid)",
+				c.WorkspaceID(), site.ID, in.Post).Scan(&ok); err != nil {
+				return nil, command.DB(err)
+			}
+			if !ok {
+				return nil, command.ErrInvalid("that post is not on this website")
+			}
+			postID = strings.ToLower(in.Post)
+		}
+		turn, err := queuePostTurn(c, site.ID, site.DraftVersionID, msg, postID)
+		return props{"turn_id": turn}, err
 	}
 	turn, err := queueTurn(c, site.ID, site.DraftVersionID, msg, in.BlockID, "routine", in.ImageIDs)
 	if err == nil && in.Page != "" {

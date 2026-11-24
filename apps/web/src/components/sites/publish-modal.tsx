@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from 'react'
 import { btn, btnPrimary, ErrorText, inputCls, Modal } from '@/components/ui'
 import type { CmdFailure } from '@/lib/api'
 import { qrMatrix, qrPath } from '@/lib/qr'
-import { type Site, type SiteMeta, siteApi, validSub } from '@/lib/sites'
+import { pageOgId, type Site, type SiteMeta, siteApi, validSub } from '@/lib/sites'
 
 type View = 'choose' | 'verify' | 'publishing' | 'live' | 'unavailable'
 type Avail = { s: 'idle' | 'checking' | 'ok' } | { s: 'bad'; reason: string; suggest: string[] }
@@ -38,6 +38,60 @@ export async function downloadQr(url: string, name: string) {
   a.download = `${name}-qr.png`
   a.click()
   setTimeout(() => URL.revokeObjectURL(a.href), 1000)
+}
+
+/** How a link looks when shared: a WhatsApp bubble first, Facebook and X second. `image` is the stored share picture. */
+export function ShareCard({
+  image,
+  title,
+  description,
+  host,
+}: {
+  image?: string
+  title: string
+  description: string
+  host: string
+}) {
+  const [tab, setTab] = useState<'wa' | 'fb'>('wa')
+  const card = (
+    <div className="overflow-hidden rounded-md border border-line bg-canvas">
+      {image ? (
+        // biome-ignore lint/performance/noImgElement: a site image served by the API
+        <img src={image} alt="" className="aspect-[1200/630] w-full object-cover" />
+      ) : (
+        <div className="flex aspect-[1200/630] w-full items-center justify-center bg-hover px-3 text-center text-[12px] text-muted">
+          The picture is made for you when you publish.
+        </div>
+      )}
+      <div className="space-y-0.5 p-2">
+        <p className="line-clamp-1 text-[13px] font-semibold">{title || 'Your website'}</p>
+        <p className="line-clamp-2 text-[12px] text-muted">{description}</p>
+        <p className="truncate text-[11px] text-muted">{host}</p>
+      </div>
+    </div>
+  )
+  return (
+    <div className="space-y-2" data-testid="share-card">
+      <div role="tablist" aria-label="Where it is shared" className="flex gap-1">
+        {(['wa', 'fb'] as const).map((t) => (
+          <button
+            key={t}
+            type="button"
+            role="tab"
+            aria-selected={tab === t}
+            onClick={() => setTab(t)}
+            className={`rounded-md px-2.5 py-1 text-[12px] font-medium ${tab === t ? 'bg-hover' : 'text-muted hover:bg-hover'}`}
+          >
+            {t === 'wa' ? 'WhatsApp' : 'Facebook & X'}
+          </button>
+        ))}
+      </div>
+      <div className={`rounded-lg p-3 ${tab === 'wa' ? 'bg-ok-bg' : 'bg-hover'}`}>
+        <div className={tab === 'wa' ? 'ml-auto max-w-[280px]' : 'mx-auto max-w-[360px]'}>{card}</div>
+      </div>
+      <p className="text-[12px] text-muted">Apps keep the old picture for a while after you change it.</p>
+    </div>
+  )
 }
 
 export const waShare = (url: string) => `https://wa.me/?text=${encodeURIComponent(url)}`
@@ -74,11 +128,14 @@ export function PublishModal({
   onClose,
   onSite,
   onReload,
+  shareDesc = '',
 }: {
   ws: string
   site: Site
   meta: SiteMeta
   domain?: string
+  /** The Home page's description, shown on the share card. */
+  shareDesc?: string
   open: boolean
   onClose: () => void
   onSite: (s: Site) => void
@@ -98,6 +155,8 @@ export function PublishModal({
   const scheme = /^localhost(:|$)/.test(domain ?? '') ? 'http' : 'https'
   const unavailable = !domain || meta.can_publish?.configured === false
   const unverified = meta.can_publish?.verified === false
+  const og = pageOgId(site, '')
+  const shareImage = og ? `/api/w/${ws}/sites/${site.id}/img/${og}` : undefined
 
   // Each time the modal opens, start from the right view.
   // biome-ignore lint/correctness/useExhaustiveDependencies: only the open edge matters
@@ -354,6 +413,12 @@ export function PublishModal({
               {url}
             </span>
           </p>
+          <ShareCard
+            image={shareImage}
+            title={site.name}
+            description={shareDesc}
+            host={url.replace(/^https?:\/\//, '')}
+          />
           <div className="flex flex-wrap gap-2">
             <CopyButton text={url} />
             <a className={btn} href={waShare(url)} target="_blank" rel="noopener noreferrer">

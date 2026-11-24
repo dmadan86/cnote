@@ -77,8 +77,6 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.siteHit(w, r)
 	case r.Method == http.MethodGet && regexp.MustCompile(`^/api/w/[^/]+/sites/[^/]+/export$`).MatchString(r.URL.Path):
 		s.siteExport(w, r)
-	case r.Method == http.MethodPost && r.URL.Path == "/internal/sites/og/render":
-		s.siteBlogStub(w, r)
 	case strings.HasPrefix(r.URL.Path, "/api/sites/"):
 		s.sitesPublic(w, r)
 	case isDraftImage(r):

@@ -1,7 +1,10 @@
 'use client'
 import { Check } from 'lucide-react'
-import { useId, useState } from 'react'
+import { useEffect, useId, useState } from 'react'
 import { siteBtn, siteField } from './blocks'
+
+/** The approved consent wording the server stores with a submission; the server keeps the text, never this client. */
+const CONSENT_ID = 'enquiry-v1'
 
 /**
  * The live contact form on a published page (design 7, 17.6). Posts same-origin to the API; no CORS, no cookie.
@@ -14,6 +17,7 @@ export function ContactFormLive({
   whatsapp,
   submitLabel,
   paused,
+  items,
 }: {
   siteId: string
   business: string
@@ -21,8 +25,16 @@ export function ContactFormLive({
   whatsapp?: string
   submitLabel?: string
   paused?: boolean
+  /** Catalogue item id -> name, from the server; the form only shows the name for an id it knows (design 2). */
+  items?: Record<string, string>
 }) {
   const id = useId()
+  // `?item=` is read only on the client; an id that is not in the server's map is ignored.
+  const [item, setItem] = useState('')
+  useEffect(() => {
+    const v = new URLSearchParams(location.search).get('item')?.toLowerCase() ?? ''
+    if (v && items && Object.hasOwn(items, v)) setItem(v)
+  }, [items])
   const [state, setState] = useState<'idle' | 'sending' | 'done'>('idle')
   const [err, setErr] = useState('')
   const [fieldErr, setFieldErr] = useState<Record<string, string>>({})
@@ -78,6 +90,8 @@ export function ContactFormLive({
           message: v('message'),
           consent: f.get('consent') === 'on',
           consent_text: consentText,
+          consent_id: CONSENT_ID,
+          ...(item ? { item_id: item } : {}),
           company_website: v('company_website'),
         }),
       })
@@ -125,6 +139,11 @@ export function ContactFormLive({
 
   return (
     <form className="space-y-3" onSubmit={submit} noValidate>
+      {item && items && (
+        <p className="rounded-[var(--site-radius)] bg-[var(--site-tint)] px-3 py-2 text-[14px]">
+          About: <strong>{items[item]}</strong>
+        </p>
+      )}
       {row('name', 'Your name', inp('name', { required: true, maxLength: 100, autoComplete: 'name' }))}
       {row(
         'phone',

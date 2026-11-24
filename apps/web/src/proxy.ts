@@ -1,6 +1,6 @@
 import { type NextRequest, NextResponse } from 'next/server'
 import catalog from '@/components/sites/catalog.json'
-import { route } from '@/lib/sites'
+import { blogRewrite, route } from '@/lib/sites'
 
 // Host routing for published sites (design 17.2). SITES_DOMAIN is read per request, never frozen at build.
 // Never read X-Forwarded-Host: only the Host the server itself received counts.
@@ -38,14 +38,18 @@ function appHosts() {
 
 export function proxy(req: NextRequest) {
   const domain = process.env.SITES_DOMAIN
-  const r = route(
+  // The blog's paths (design 17.4) are decided here: route() gets Home's path, so every host, port and RSC rule
+  // still applies, and the rewrite is then pointed at the blog path.
+  const blog = req.method === 'GET' || req.method === 'HEAD' ? blogRewrite(req.nextUrl.pathname) : null
+  let r = route(
     req.headers.get('host'),
-    req.nextUrl.pathname,
+    blog ? '/' : req.nextUrl.pathname,
     req.method,
     domain,
     req.headers.has('rsc') || req.nextUrl.searchParams.has('_rsc'),
     process.env.SITES_CUSTOM_DOMAINS === '1' ? { appHosts: appHosts() } : undefined,
   )
+  if (blog && r.kind === 'site' && r.rewrite) r = { ...r, rewrite: `/published/${r.host}${blog}` }
   if (r.kind === 'next') return NextResponse.next()
   const https = !/^localhost(:|$)/i.test(domain ?? '')
   const sec = headersFor(https, r.kind === 'site' && r.custom)

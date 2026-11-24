@@ -418,7 +418,7 @@ func lookupDomain(ctx context.Context, q interface {
 	var data []byte
 	var sub string
 	err := q.QueryRow(ctx, "select "+publicCols+", subdomain, canonical_host from sites.domain_lookup($1)", h).
-		Scan(&p.WorkspaceID, &p.SiteID, &p.VersionID, &p.Name, &data, &p.Pro, &p.PublishedAt, &p.PublishedBy, &p.FormPaused, &p.LeadSpaceID, &sub, &p.CanonicalHost)
+		Scan(&p.WorkspaceID, &p.SiteID, &p.VersionID, &p.Name, &data, &p.Pro, &p.PublishedAt, &p.PublishedBy, &p.FormPaused, &p.LeadSpaceID, &p.Catalog, &p.OGImages, &sub, &p.CanonicalHost)
 	p.Data = data
 	if errors.Is(err, pgx.ErrNoRows) {
 		return p, command.ErrNotFound("site")

@@ -1,7 +1,16 @@
 import { ImageIcon, MessageCircle } from 'lucide-react'
 import type { ComponentType, ReactNode } from 'react'
-import { embedLinks, imageId, mapsHref, safeHref, telHref, waHref } from '@/lib/sites'
+import {
+  type CatalogueView as CatalogueData,
+  embedLinks,
+  imageId,
+  mapsHref,
+  safeHref,
+  telHref,
+  waHref,
+} from '@/lib/sites'
 import type catalog from './catalog.json'
+import { CatalogueView } from './catalogue-sheet'
 import { EmbedFrame } from './embed'
 
 /**
@@ -647,8 +656,37 @@ export function Embed(p: P) {
   )
 }
 
-export function Catalogue(_p: P) {
-  return null
+/**
+ * The catalogue block (design 2). `catalog` is the published snapshot (the builder passes its own items); with no
+ * items the published page renders nothing and the builder shows a dashed placeholder. `phone`, `askPath` and
+ * `formId` come from the page: the WhatsApp number and where the ContactForm lives.
+ */
+export function Catalogue(p: P) {
+  const cat = p.catalog as CatalogueData | undefined
+  if (!cat?.items.length)
+    return p.editing ? (
+      <section className={sec}>
+        <div className="rounded-[var(--site-radius)] border border-dashed border-[var(--site-border)] p-10 text-center text-[var(--site-muted)]">
+          Your products will appear here
+        </div>
+      </section>
+    ) : null
+  return (
+    <section className={sec}>
+      {str(p.title) && <h2 className={`${h2} mb-3`}>{str(p.title)}</h2>}
+      {str(p.intro) && <p className="mb-8 max-w-[640px] text-[var(--site-muted)]">{str(p.intro)}</p>}
+      <CatalogueView
+        items={cat.items}
+        mode={cat.mode}
+        variant={str(p.variant)}
+        enquire={str(p.enquire)}
+        assetBase={p.assetBase}
+        phone={str(p.phone) || undefined}
+        askPath={str(p.askPath) || undefined}
+        formId={str(p.formId) || undefined}
+      />
+    </section>
+  )
 }
 
 /** A block added to the catalog without a component fails tsc (BlockType is the catalog's keys). */
