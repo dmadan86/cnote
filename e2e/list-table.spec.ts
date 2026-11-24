@@ -103,7 +103,10 @@ test('contacts table: columns, sort, density, views and reset, all by keyboard w
   await page.getByRole('button', { name: 'All', exact: true }).click()
 
   // the name still opens the contact
-  await page.getByRole('table').getByRole('link', { name: `Mid ${tag}` }).click()
+  await page
+    .getByRole('table')
+    .getByRole('link', { name: `Mid ${tag}` })
+    .click()
   await expect(page).toHaveURL(/\/(crm\/contacts|n)\/[0-9a-f-]+$/)
   await page.goto(`${base}/crm`)
 
