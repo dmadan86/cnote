@@ -20,7 +20,7 @@ Build the images from `Dockerfile` (`--target api` is the default, `--target col
 - `collab` (live editing, document rendering) — port `$COLLAB_PORT` (4300); set `COLLAB_URL` on the API to reach it,
   and the same `COLLAB_INTERNAL_SECRET` on both (note.restore renders documents through it)
 
-Environment: `DATABASE_URL`, `DATABASE_ADMIN_URL` (migrate job only), `COOKIE_SECURE=true`,
+Environment: `DATABASE_URL`, `DATABASE_ADMIN_URL` (migration job and API runtime for platform controls), `COOKIE_SECURE=true`,
 `CNOTE_MASTER_KEY` (base64 32 bytes, encrypts BYO-LLM keys), optional `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
 `OPENAI_BASE_URL`, `AI_MODEL`, `COLLAB_ALLOWED_ORIGINS` (the web origin), `GSP_MODE=sandbox` until a GSP is contracted.
 Do not set `AI_ALLOW_PRIVATE_ENDPOINTS` on multi-tenant deployments.

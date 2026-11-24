@@ -22,6 +22,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/cnote/api/internal/command"
+	"github.com/cnote/api/internal/db"
 	"github.com/cnote/api/internal/modules/leads"
 	"github.com/cnote/api/internal/modules/sites"
 )
@@ -114,6 +115,15 @@ func (s *Server) writeImage(w http.ResponseWriter, r *http.Request, out []byte, 
 }
 
 func (s *Server) sitePublicImage(w http.ResponseWriter, r *http.Request, site, image string) {
+	n, err := db.Bump(r.Context(), s.Pool, "siteimage:ip:"+sites.IPKey(sites.ClientIP(r, sites.TrustedProxies())), false)
+	if err != nil {
+		s.siteFail(w, command.DB(err))
+		return
+	}
+	if n > 600 {
+		s.siteFail(w, command.NewError(command.RateLimited, "Too many image requests. Try again later."))
+		return
+	}
 	ws, err := sites.PublicImage(r.Context(), s.Pool, site, image)
 	if err != nil {
 		notFound(w)

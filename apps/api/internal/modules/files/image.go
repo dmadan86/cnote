@@ -216,21 +216,24 @@ func imagePut(c *command.Ctx, raw json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if base64.StdEncoding.DecodedLen(len(v.Data)) > maxImageBytes+3 {
-		return nil, command.ErrInvalid("the photo is larger than 1 MB")
-	}
-	data, err := base64.StdEncoding.DecodeString(v.Data)
-	if err != nil {
-		return nil, command.ErrInvalid("data_base64 is not valid base64")
-	}
 	if c.Principal.UserID != nil {
-		n, err := db.Bump(c.Context, c.Tx, "img:"+*c.Principal.UserID, false)
+		if c.Pool == nil {
+			return nil, fmt.Errorf("image upload requires a database pool")
+		}
+		n, err := db.Bump(c.Context, c.Pool, "img:"+*c.Principal.UserID, false)
 		if err != nil {
 			return nil, command.DB(err)
 		}
 		if n > userImagesHour {
 			return nil, command.NewError(command.RateLimited, "Too many photos this hour. Try again later.")
 		}
+	}
+	if base64.StdEncoding.DecodedLen(len(v.Data)) > maxImageBytes+3 {
+		return nil, command.ErrInvalid("the photo is larger than 1 MB")
+	}
+	data, err := base64.StdEncoding.DecodeString(v.Data)
+	if err != nil {
+		return nil, command.ErrInvalid("data_base64 is not valid base64")
 	}
 	clean, ct, err := ProcessImage(c.Context, data)
 	if err != nil {

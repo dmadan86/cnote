@@ -166,7 +166,7 @@ func (e *runExec) tx(ctx context.Context, fn func(c *command.Ctx) error) error {
 		if err != nil {
 			return err
 		}
-		c := &command.Ctx{Context: ctx, Tx: sc.Tx, Principal: p}
+		c := &command.Ctx{Context: ctx, Tx: sc.Tx, Pool: sc.Pool, Principal: p}
 		e.reg.Bind(c)
 		if err := e.fence(c); err != nil {
 			return err
@@ -231,7 +231,7 @@ func (e *runExec) start(ctx context.Context) (done bool, err error) {
 			e.runID).Scan(&e.attempt); err != nil {
 			return command.DB(err)
 		}
-		c := &command.Ctx{Context: ctx, Tx: sc.Tx, Principal: p}
+		c := &command.Ctx{Context: ctx, Tx: sc.Tx, Pool: sc.Pool, Principal: p}
 		e.reg.Bind(c)
 		if fresh {
 			if _, err := c.Emit("agent.run.started", r.noteID, map[string]any{"run_id": e.runID, "agent_id": r.agentID, "trigger": r.trigger}); err != nil {
@@ -725,11 +725,11 @@ func (e *runExec) finish(ctx context.Context, status, output, errMsg string) err
 		ap, perr := command.AgentPrincipal(sc, e.run.agentID, e.run.onBehalf)
 		c := sc
 		if perr == nil {
-			c = &command.Ctx{Context: bg, Tx: sc.Tx, Principal: ap}
+			c = &command.Ctx{Context: bg, Tx: sc.Tx, Pool: sc.Pool, Principal: ap}
 			e.reg.Bind(c)
 		} else {
 			ag, ob := e.run.agentID, e.run.onBehalf // events are still attributed to the agent
-			c = &command.Ctx{Context: bg, Tx: sc.Tx, Principal: command.Principal{Kind: command.KindAgent, AgentID: &ag, UserID: &ob, WorkspaceID: e.ws, Role: command.Member}}
+			c = &command.Ctx{Context: bg, Tx: sc.Tx, Pool: sc.Pool, Principal: command.Principal{Kind: command.KindAgent, AgentID: &ag, UserID: &ob, WorkspaceID: e.ws, Role: command.Member}}
 			e.reg.Bind(c)
 		}
 		var o, m *string

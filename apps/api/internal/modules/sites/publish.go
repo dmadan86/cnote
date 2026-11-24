@@ -408,7 +408,16 @@ func platformSet(c *command.Ctx, raw json.RawMessage) (any, error) {
 		Subdomain           *string
 		Pro, TakenDown      bool
 	}
-	err := c.Tx.QueryRow(c.Context, "select workspace_id::text, site_id::text, subdomain, pro, taken_down from sites.platform_set($1::uuid, nullif($2,''), nullif($3,''), $4, $5, $6)",
+	adminURL := strings.TrimSpace(os.Getenv("DATABASE_ADMIN_URL"))
+	if adminURL == "" {
+		return nil, command.ErrInvalid("platform controls are not configured")
+	}
+	admin, err := pgx.Connect(c.Context, adminURL)
+	if err != nil {
+		return nil, command.DB(err)
+	}
+	defer admin.Close(c.Context)
+	err = admin.QueryRow(c.Context, "select workspace_id::text, site_id::text, subdomain, pro, taken_down from sites.platform_set($1::uuid, nullif($2,''), nullif($3,''), $4, $5, $6)",
 		c.Principal.UserID, in.Subdomain, in.WorkspaceSlug, in.Action, strings.TrimSpace(in.Reason), newSub).Scan(&out.WorkspaceID, &out.SiteID, &out.Subdomain, &out.Pro, &out.TakenDown)
 	var pg *pgconn.PgError
 	switch {

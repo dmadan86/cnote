@@ -354,6 +354,7 @@ func TestSitePlatformActions(t *testing.T) {
 		"delete from sites.site_platform",
 		"insert into sites.platform_actions (actor_user_id, actor_email, workspace_id, site_id, action, reason) values ('" + p.owner.userID + "', 'x', '" + p.owner.ws + "', '" + p.site + "', 'pro_on', 'abc')",
 		"select count(*) from sites.platform_actions",
+		"select * from sites.platform_set('" + p.owner.userID + "'::uuid, '" + sub + "', null, 'pro_on', 'abc', null)",
 	} {
 		tx, err := dbTenant(p.env, p.owner.ws)
 		if err != nil {
@@ -484,7 +485,9 @@ func TestSiteContactForm(t *testing.T) {
 	eq(t, p.get(p.owner, p.site)["leads_7d"], float64(1))
 
 	// the same enquiry again within ten minutes is a quiet success
-	if st, _ := p.form("10.0.0.2", goodForm("Do you do crowns?")); st != 200 {
+	dup := goodForm("Do you do crowns?")
+	dup["phone"] = "+919876543211"
+	if st, _ := p.form("10.0.0.2", dup); st != 200 {
 		t.Fatalf("dup: %d", st)
 	}
 	eq(t, p.sql("select count(*)::text from crm.deals where source = 'website'"), "1")
@@ -624,4 +627,75 @@ func TestSiteInternalCommandsHidden(t *testing.T) {
 	// site images never show up through the page-file commands
 	img := adminOK(t, p.upload(p.owner, pngBytes(t, 4, 4)))["image"].(map[string]any)["id"].(string)
 	eq(t, p.call(p.owner, "file.download", map[string]any{"id": img}).status, 404)
+}
+
+func TestSiteInvalidUploadConsumesLimit(t *testing.T) {
+	p := newPubEnv(t)
+	for i := 0; i < 30; i++ {
+		if r := p.upload(p.mia, "invalid!"); r.status != 400 {
+			t.Fatalf("attempt %d: %d", i, r.status)
+		}
+	}
+	if r := p.upload(p.mia, pngBytes(t, 4, 4)); r.status != 429 {
+		t.Fatalf("limit: %d", r.status)
+	}
+}
+
+func TestSitePublicImageRateLimitBeforeLookup(t *testing.T) {
+	p := newPubEnv(t)
+	ip := "198.51.100.89"
+	for i := 0; i < 600; i++ {
+		if _, err := db.Bump(context.Background(), p.pool, "siteimage:ip:"+sites.IPKey(ip), false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	st, _, _ := p.hit("GET", "/api/sites/img/"+p.site+"/"+p.site, nil, map[string]string{"X-Forwarded-For": ip})
+	if st != 429 {
+		t.Fatalf("got %d", st)
+	}
+}
+
+func TestSiteTakedownWaitsBeforeRecheck(t *testing.T) {
+	p := newPubEnv(t)
+	sub := uniq()
+	p.publishOK(sub)
+	ctx := context.Background()
+	pub, err := sites.LookupID(ctx, p.pool, p.site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	admin := adminPool(t)
+	tx, err := admin.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	_, err = tx.Exec(ctx, "select * from sites.platform_set($1::uuid, $2, null, 'takedown', 'abuse report', null)", p.owner.userID, sub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		done <- sites.Submit(ctx, p.pool, command.NewRegistry(modules.Commands()...), pub, sites.Submission{Name: "Late", Phone: "+919876543211", Message: "race"})
+	}()
+	select {
+	case err := <-done:
+		t.Fatalf("submit did not wait: %v", err)
+	case <-time.After(200 * time.Millisecond):
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err == nil {
+		t.Fatal("submission accepted after takedown")
+	}
+}
+
+func TestSitePlatformControlsRequireAdminURL(t *testing.T) {
+	p := newPubEnv(t)
+	t.Setenv("DATABASE_ADMIN_URL", "")
+	r := p.platform(p.owner, map[string]any{"subdomain": "example-site", "action": "pro_on", "reason": "valid reason"})
+	if r.status != 400 || !strings.Contains(string(r.body), "platform controls are not configured") {
+		t.Fatalf("unexpected response: %+v", r)
+	}
 }

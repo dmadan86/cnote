@@ -125,7 +125,7 @@ BEGIN
 END $$;
 
 REVOKE ALL ON FUNCTION sites.platform_set(uuid, text, text, text, text, text) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION sites.platform_set(uuid, text, text, text, text, text) TO cnote_app;
+REVOKE ALL ON FUNCTION sites.platform_set(uuid, text, text, text, text, text) FROM cnote_app;
 GRANT EXECUTE ON FUNCTION sites.host_lookup(text), sites.public_by_id(uuid), sites.public_image(uuid, uuid), sites.subdomain_taken(text, uuid) TO cnote_app;
 
 -- ---- the contact form: one row per accepted submission (duplicate suppression, the 7-day lead count) ----
@@ -133,7 +133,7 @@ CREATE TABLE sites.form_log (
   id bigserial PRIMARY KEY,
   workspace_id uuid NOT NULL,
   site_id uuid NOT NULL,
-  fingerprint text NOT NULL,                           -- sha256 of email, phone and message
+  fingerprint text NOT NULL,                           -- sha256 of email and message, or phone and message when email is empty
   deal_id uuid,
   created_at timestamptz NOT NULL DEFAULT now(),
   FOREIGN KEY (workspace_id, site_id) REFERENCES sites.sites (workspace_id, id) ON DELETE CASCADE

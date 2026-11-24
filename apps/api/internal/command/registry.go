@@ -36,6 +36,7 @@ var defaultAgentGroups = []string{"read", "write_notes", "write_items", "manage_
 type Ctx struct {
 	Context   context.Context
 	Tx        pgx.Tx
+	Pool      *pgxpool.Pool
 	Principal Principal
 	reg       *Registry
 }
@@ -117,7 +118,7 @@ func (r *Registry) Execute(ctx context.Context, pool *pgxpool.Pool, name string,
 		return nil, DB(err)
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
-	c := &Ctx{Context: ctx, Tx: tx, Principal: p, reg: r}
+	c := &Ctx{Context: ctx, Tx: tx, Pool: pool, Principal: p, reg: r}
 	out, err := r.run(c, name, input, o)
 	if err != nil {
 		if p.IsMachine() {
@@ -349,7 +350,7 @@ func (r *Registry) auditDenial(ctx context.Context, pool *pgxpool.Pool, p Princi
 		actorID, name, caller).Scan(&same, &all) != nil || same > 0 || all >= 20 {
 		return
 	}
-	c := &Ctx{Context: ctx, Tx: tx, Principal: p, reg: r}
+	c := &Ctx{Context: ctx, Tx: tx, Pool: pool, Principal: p, reg: r}
 	if _, err := c.Emit("command.denied", nil, map[string]any{"command": name, "reason": ce.Message, "caller": caller}); err == nil {
 		_ = tx.Commit(ctx)
 	}

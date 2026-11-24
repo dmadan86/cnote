@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/cnote/api/internal/command"
 	"github.com/cnote/api/internal/db"
@@ -85,7 +86,7 @@ func (a *Auth) RequestEmailCode(ctx context.Context, userID string) error {
 	_, err = mailer.Send(sctx, mailer.Mail{To: email, Subject: "Your C Note verification code",
 		Text: "Your C Note verification code is " + code + ".\n\nIt works for 10 minutes. If you did not ask for it, ignore this email.\n"})
 	if err != nil {
-		_, _ = a.Pool.Exec(ctx, "delete from core.email_codes where user_id = $1::uuid", userID)
+		deleteFailedCode(ctx, a.Pool, userID, hash)
 		return fmt.Errorf("verification email: %w", err)
 	}
 	return nil
@@ -126,4 +127,10 @@ func (a *Auth) ConfirmEmailCode(ctx context.Context, userID, code string) error 
 // markVerified records an address the identity provider vouched for.
 func (a *Auth) markVerified(ctx context.Context, userID, email string) {
 	_, _ = a.Pool.Exec(ctx, "update core.users set email_verified_at = coalesce(email_verified_at, now()) where id = $1::uuid and lower(email) = lower($2)", userID, email)
+}
+
+func deleteFailedCode(ctx context.Context, q interface {
+	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+}, userID, hash string) {
+	_, _ = q.Exec(ctx, "delete from core.email_codes where user_id = $1::uuid and code_hash = $2", userID, hash)
 }

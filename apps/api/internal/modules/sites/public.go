@@ -211,7 +211,7 @@ type Submission struct{ Name, Phone, Email, Message, ConsentText string }
 var errNoSpace = command.NewError(command.Conflict, "This website cannot take messages right now. Please call or email instead.")
 
 // Submit stores a lead for a published site. It re-reads the site under a row lock, so a takedown, unpublish or pause
-// that happened after the caller's lookup wins. The same email, phone and message within ten minutes is a quiet success.
+// that happened after the caller's lookup wins. The same email and message (or phone and message when email is empty) within ten minutes is a quiet success.
 func Submit(ctx context.Context, pool *pgxpool.Pool, reg *command.Registry, p Public, in Submission) error {
 	sys := command.Principal{Kind: command.KindSystem, WorkspaceID: p.WorkspaceID, UserID: &p.PublishedBy, Role: command.Admin}
 	noSpace := false
@@ -219,17 +219,25 @@ func Submit(ctx context.Context, pool *pgxpool.Pool, reg *command.Registry, p Pu
 		var data []byte
 		var paused, down bool
 		var lead *string
-		err := c.Tx.QueryRow(ctx, `select v.data, s.form_paused, s.lead_space_id::text, coalesce(pl.taken_down_at is not null, false)
+		var locked string
+		err := c.Tx.QueryRow(ctx, `select id::text from sites.sites where workspace_id = $1::uuid and id = $2::uuid for update`, p.WorkspaceID, p.SiteID).Scan(&locked)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return command.ErrNotFound("site")
+		}
+		if err != nil {
+			return command.DB(err)
+		}
+		err = c.Tx.QueryRow(ctx, `select v.data, s.form_paused, s.lead_space_id::text, coalesce(pl.taken_down_at is not null, false)
 			from sites.sites s join sites.site_versions v on v.workspace_id = s.workspace_id and v.site_id = s.id and v.id = s.published_version_id
 			left join sites.site_platform pl on pl.site_id = s.id
-			where s.workspace_id = $1::uuid and s.id = $2::uuid for update of s`, p.WorkspaceID, p.SiteID).Scan(&data, &paused, &lead, &down)
+			where s.workspace_id = $1::uuid and s.id = $2::uuid`, p.WorkspaceID, p.SiteID).Scan(&data, &paused, &lead, &down)
 		if errors.Is(err, pgx.ErrNoRows) || (err == nil && (down || paused || !HasBlock(data, "ContactForm"))) {
 			return command.ErrNotFound("site")
 		}
 		if err != nil {
 			return command.DB(err)
 		}
-		sum := sha256.Sum256([]byte(strings.ToLower(in.Email) + "\x00" + digits(in.Phone) + "\x00" + in.Message))
+		sum := submissionFingerprint(in)
 		print := hex.EncodeToString(sum[:])
 		var dup bool
 		if err := c.Tx.QueryRow(ctx, `select exists (select 1 from sites.form_log where site_id = $1::uuid and fingerprint = $2 and created_at > now() - $3 * interval '1 second')`,
@@ -283,6 +291,14 @@ func Submit(ctx context.Context, pool *pgxpool.Pool, reg *command.Registry, p Pu
 		return errNoSpace
 	}
 	return err
+}
+
+func submissionFingerprint(in Submission) [32]byte {
+	identity := strings.ToLower(strings.TrimSpace(in.Email))
+	if identity == "" {
+		identity = digits(in.Phone)
+	}
+	return sha256.Sum256([]byte(identity + "\x00" + in.Message))
 }
 
 // adminIDs are the active owners and admins (at most 20); they read every space, so each can read the lead.

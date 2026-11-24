@@ -131,7 +131,7 @@ func (e *turnExec) start(ctx context.Context) (data json.RawMessage, in TurnInpu
 			return command.DB(err)
 		}
 		e.principal = command.Principal{Kind: command.KindSystem, UserID: &user, WorkspaceID: e.ws, Role: command.ParseRole(role)}
-		c := &command.Ctx{Context: ctx, Tx: sc.Tx, Principal: e.principal}
+		c := &command.Ctx{Context: ctx, Tx: sc.Tx, Pool: sc.Pool, Principal: e.principal}
 		e.reg.Bind(c)
 		var d []byte
 		if err := sc.Tx.QueryRow(ctx, "select data from sites.site_versions where workspace_id = $1::uuid and site_id = $2::uuid and id = $3::uuid", e.ws, e.siteID, e.base).Scan(&d); err != nil {

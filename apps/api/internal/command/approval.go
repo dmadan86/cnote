@@ -212,7 +212,7 @@ func (c *Ctx) ApprovedCtx(requester, name string, agent *string, kind string) (*
 		c.Principal.WorkspaceID, requester).Scan(&role); err != nil {
 		return nil, ErrConflict("the requester is no longer a member")
 	}
-	sub := &Ctx{Context: c.Context, Tx: c.Tx, reg: c.reg,
+	sub := &Ctx{Context: c.Context, Tx: c.Tx, Pool: c.Pool, reg: c.reg,
 		Principal: Principal{Kind: KindUser, UserID: &requester, WorkspaceID: c.Principal.WorkspaceID, Role: ParseRole(role)}}
 	switch {
 	case kind == string(KindAgent) && agent == nil:

@@ -67,3 +67,19 @@ func TestCheckEnv(t *testing.T) {
 		}
 	}
 }
+
+func TestSubmissionFingerprint(t *testing.T) {
+	a := Submission{Email: " User@Example.com ", Phone: "123", Message: "hello"}
+	b := Submission{Email: "user@example.com", Phone: "456", Message: "hello"}
+	if submissionFingerprint(a) != submissionFingerprint(b) {
+		t.Fatal("phone changed email fingerprint")
+	}
+	a.Email, b.Email = "", ""
+	if submissionFingerprint(a) == submissionFingerprint(b) {
+		t.Fatal("phone fallback ignored")
+	}
+	b.Phone = "1-2-3"
+	if submissionFingerprint(a) != submissionFingerprint(b) {
+		t.Fatal("phone not normalized")
+	}
+}
