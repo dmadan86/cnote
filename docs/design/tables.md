@@ -643,7 +643,7 @@ This section overrides anything above that disagrees with it. Builders read it f
 - Under tenant RLS, `cnote_app` cannot use any index on `data` for a filter, because `->>`, casts, `@>` and
   `ILIKE` are not `LEAKPROOF`. **Phase 1a creates no index on `data`** and no `LEAKPROOF` objects, so the
   migration needs no superuser. Indexes: PK `(workspace_id, table_id, id)`, the partial default-order index
-  `(workspace_id, table_id, created_at, id) WHERE deleted_at IS NULL`, both link indexes; `fillfactor = 80`.
+  `(workspace_id, table_id, created_at, id) WHERE deleted_at IS NULL`, both link indexes, `record_history(workspace_id, record_id, at)`, and a unique `fields(table_id, lower(name))` among live fields; `fillfactor = 80`.
 - Measured without a data index on 100,000 records beside a 500,000-record neighbour: every filter, filtered
   count, group-by and first-page sort is at most 112 ms p95. The **target is 300 ms p95 warm** for any grid
   query on a table at the cap; the spike meets it.

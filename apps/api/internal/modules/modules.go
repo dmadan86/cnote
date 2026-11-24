@@ -43,6 +43,7 @@ import (
 	"github.com/cnote/api/internal/modules/security"
 	"github.com/cnote/api/internal/modules/sharing"
 	"github.com/cnote/api/internal/modules/sites"
+	"github.com/cnote/api/internal/modules/tables"
 	"github.com/cnote/api/internal/modules/timelog"
 	"github.com/cnote/api/internal/modules/uiconfig"
 )
@@ -87,6 +88,7 @@ func Commands() []command.Command {
 	cmds = append(cmds, agents.Commands()...)
 	cmds = append(cmds, reminders.Commands()...)
 	cmds = append(cmds, sites.Commands()...)
+	cmds = append(cmds, tables.Commands()...)
 	cmds = append(cmds, uiconfig.Commands()...)
 	return withMeta(markFinance(approvals.Wire(cmds)))
 }
