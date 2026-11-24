@@ -8,12 +8,43 @@ export type SiteBlock = { type: string; props: Record<string, unknown> }
 export type SiteData = {
   root: { props: { title?: string; description?: string; theme?: Theme } }
   content: SiteBlock[]
+  pages?: SitePage[]
 }
+export type SitePage = { slug: string; title: string; description?: string; content: SiteBlock[] }
+export type SiteVersion = {
+  id: string
+  seq: number
+  source: 'template' | 'chat' | 'edit' | 'editor' | 'restore'
+  summary: string
+  created_by: { id: string; name: string }
+  created_at: string
+  is_draft: boolean
+  is_published: boolean
+}
+export type SiteDomain = {
+  hostname: string
+  status: 'pending' | 'verified' | 'lost'
+  txt_token: string
+  verified_at?: string | null
+}
+export type SiteDomainCheck = {
+  domain: SiteDomain
+  records: { type: string; name: string; value: string; found: string[]; ok: boolean }[]
+  verified: boolean
+}
+export type SiteStats = {
+  days: { day: string; visits: number; views: number }[]
+  pages: { slug: string; views: number }[]
+  referrers: { domain: string; views: number }[]
+  enquiries: number
+}
+export type SetContentOp = { tool: 'set_content'; input: { page: string; content: SiteBlock[] } }
 export type Site = {
   id: string
   name: string
   template: string
   draft_version_id: string
+  rev: number
   parent_version_id: string | null
   created_at: string
   updated_at: string
@@ -55,6 +86,61 @@ export type EditOp = { tool: string; input: Record<string, unknown> }
 
 /** Every write carries expected_version_id, the draft the person is looking at; a stale one answers `conflict`. */
 export const siteApi = {
+  addPage: (
+    ws: string,
+    id: string,
+    expected_version_id: string,
+    title: string,
+    slug?: string,
+    template?: string,
+  ) =>
+    cmd<{ site: Site; data: SiteData }>(ws, 'site.edit', {
+      id,
+      expected_version_id,
+      ops: [{ tool: 'add_page', input: { title, slug, template } }],
+    }),
+  removePage: (ws: string, id: string, expected_version_id: string, page: string) =>
+    cmd<{ site: Site; data: SiteData }>(ws, 'site.edit', {
+      id,
+      expected_version_id,
+      ops: [{ tool: 'remove_page', input: { page } }],
+    }),
+  setPage: (
+    ws: string,
+    id: string,
+    expected_version_id: string,
+    input: { page?: string; title?: string; description?: string; slug?: string },
+  ) =>
+    cmd<{ site: Site; data: SiteData }>(ws, 'site.edit', {
+      id,
+      expected_version_id,
+      ops: [{ tool: 'set_page', input }],
+    }),
+  setContent: (
+    ws: string,
+    id: string,
+    expected_version_id: string,
+    expected_rev: number,
+    page: string,
+    content: SiteBlock[],
+  ) =>
+    cmd<{ site: Site; data: SiteData }>(ws, 'site.edit', {
+      id,
+      expected_version_id,
+      expected_rev,
+      source: 'editor',
+      ops: [{ tool: 'set_content', input: { page, content } }],
+    }),
+  versions: (ws: string, id: string, before_seq?: number, limit?: number) =>
+    cmd<SiteVersion[]>(ws, 'site.versions', { id, before_seq, limit }),
+  domainAdd: (ws: string, id: string, domain: string) =>
+    cmd<SiteDomainCheck>(ws, 'site.domain_set', { id, domain }),
+  domainCheck: (ws: string, id: string) => cmd<SiteDomainCheck>(ws, 'site.domain_check', { id }),
+  domainRemove: (ws: string, id: string, domain: string) =>
+    cmd<{ site: Site }>(ws, 'site.domain_remove', { id, domain }),
+  stats: (ws: string, id: string) => cmd<SiteStats>(ws, 'site.stats', { id }),
+  exportUrl: (ws: string, id: string) =>
+    `/api/w/${encodeURIComponent(ws)}/sites/${encodeURIComponent(id)}/export`,
   templates: (ws: string) => cmd<Template[]>(ws, 'site.templates'),
   list: (ws: string) => cmd<Site[]>(ws, 'site.list'),
   create: (ws: string, template: string) =>
@@ -68,7 +154,16 @@ export const siteApi = {
     message: string,
     block_id?: string,
     image_ids?: string[],
-  ) => cmd<{ turn_id: string }>(ws, 'site.chat', { id, expected_version_id, message, block_id, image_ids }),
+    page?: string,
+  ) =>
+    cmd<{ turn_id: string }>(ws, 'site.chat', {
+      id,
+      expected_version_id,
+      message,
+      block_id,
+      image_ids,
+      page,
+    }),
   turn: (ws: string, id: string) => cmd<{ turn: Turn; data?: SiteData }>(ws, 'site.turn_get', { id }),
   cancel: (ws: string, id: string) => cmd<{ status: string }>(ws, 'site.turn_cancel', { id }),
   edit: (ws: string, id: string, expected_version_id: string, ops: EditOp[]) =>
@@ -116,6 +211,7 @@ export function safeHref(v: unknown): string | undefined {
   if (/^tel:[\d+\- ]+$/.test(v)) return v
   if (/\s/.test(v)) return undefined
   if (/^#[A-Za-z]+-[0-9a-f]{8}$/.test(v)) return v
+  if (/^\/([a-z0-9]+(-[a-z0-9]+)*)?(#[A-Za-z]+-[0-9a-f]{8})?$/.test(v)) return v // a page of this site
   if (/^mailto:[^@,;?]+@[^@,;?]+$/.test(v)) return v
   return /^https?:/i.test(v) && web(v) ? v : undefined
 }
@@ -215,6 +311,8 @@ export type PublicSite = {
   pro: boolean
   published_at: string
   url: string
+  /** The one host this site is served from (a verified custom domain, else the subdomain). Absent on older servers. */
+  canonical_host?: string
   form_paused?: boolean
 }
 const SUB = /^[a-z0-9]+(-[a-z0-9]+)*$/
@@ -223,15 +321,19 @@ export const validSub = (v: string) => v.length >= 3 && v.length <= 40 && SUB.te
 /**
  * Server only. The API call is the assumed shape of `site.public_get {host}` (internal command, server token):
  * POST {API_URL}/api/sites/public_get with header x-sites-token, body {host}; 404 for unknown, unpublished or taken down.
+ * `host` is a site host without port: `<sub>.<SITES_DOMAIN host>` or a verified custom domain (design 17.5).
  */
-export async function publicGet(sub: string): Promise<PublicSite | null> {
+export async function publicGet(host: string): Promise<PublicSite | null> {
   const domain = process.env.SITES_DOMAIN
-  if (!domain || !validSub(sub)) return null
+  if (!domain || !DNS_HOST.test(host)) return null
+  const [dHost, dPort] = domain.toLowerCase().split(':')
+  // Site subdomains keep the port of SITES_DOMAIN, as Phase 1 sent them.
+  const sent = host.endsWith(`.${dHost}`) ? `${host}${dPort ? `:${dPort}` : ''}` : host
   const api = process.env.API_URL ?? 'http://localhost:4000'
   const r = await fetch(`${api}/api/sites/public_get`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-sites-token': process.env.SITES_SERVER_TOKEN ?? '' },
-    body: JSON.stringify({ host: `${sub}.${domain}` }),
+    body: JSON.stringify({ host: sent }),
     cache: 'no-store',
   }).catch(() => null)
   if (!r?.ok) return null
@@ -250,46 +352,195 @@ export function reportHref(url: string) {
   return base
 }
 
-// ---- Host routing: the proxy's decision as a pure function (design 17.2) ----
+// ---- Host routing: the proxy's decision as a pure function (design 17.2, 17.5, 17.10) ----
 
 export type Route =
   | { kind: 'next' } // not a site host and nothing to hide: carry on
   | { kind: 'notfound' }
-  | { kind: 'site'; sub: string; rewrite: string | null } // rewrite null = pass to the API (images, form)
+  // host: the site host without port (a subdomain host or a custom domain); rewrite null = pass to the API (images, form, beacon)
+  | { kind: 'site'; host: string; custom: boolean; rewrite: string | null }
 
 const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
 const IMG = new RegExp(`^/api/sites/img/${UUID}/${UUID}$`)
 const FORM = new RegExp(`^/api/sites/form/${UUID}$`)
+const HIT = new RegExp(`^/api/sites/hit/${UUID}$`)
+/** A page address: the same rule as Go (design 17.10). Reserved names never match a page, so they 404. */
+export const PAGE_SLUG = /^[a-z0-9]+(-[a-z0-9]+)*$/
+export const RESERVED_SLUGS = [
+  'api',
+  'internal',
+  '_next',
+  'robots.txt',
+  'sitemap.xml',
+  'favicon.ico',
+  'assets',
+  'img',
+  'published',
+]
+export const validSlug = (v: string) =>
+  v.length >= 1 && v.length <= 40 && PAGE_SLUG.test(v) && !RESERVED_SLUGS.includes(v)
+/** A syntactically valid public DNS name with an alphabetic top label: never an IP literal or a single label. */
+export const DNS_HOST = /^(?=.{4,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/
 
-/** `domain` is SITES_DOMAIN (`host[:port]`); `rsc` says the request asked for an RSC/data payload. */
+/**
+ * `domain` is SITES_DOMAIN (`host[:port]`); `rsc` says the request asked for an RSC/data payload.
+ * `custom` switches custom-domain hosts on (SITES_CUSTOM_DOMAINS=1) and lists the app's own hosts, which always
+ * reach the app (PUBLIC_BASE_URL host, APP_HOSTS). Without it a host outside SITES_DOMAIN is the app, as in Phase 1.
+ */
 export function route(
   hostHeader: string | null,
   pathname: string,
   method: string,
   domain: string | undefined,
   rsc = false,
+  custom?: { appHosts: string[] },
 ): Route {
   const d = domain?.trim().toLowerCase().replace(/\.$/, '') ?? ''
   const hide = pathname === '/published' || pathname.startsWith('/published/')
-  if (!d) return hide ? { kind: 'notfound' } : { kind: 'next' }
+  const pass: Route = hide ? { kind: 'notfound' } : { kind: 'next' }
+  if (!d) return pass
   const [dHost, dPort = ''] = d.split(':')
   const m = /^([^:]*)(?::(\d+))?$/.exec((hostHeader ?? '').trim().toLowerCase())
-  if (!m) return hide ? { kind: 'notfound' } : { kind: 'next' }
+  if (!m) return pass
   const host = m[1].replace(/\.$/, '')
   const port = m[2] ?? ''
-  if (host !== dHost && !host.endsWith(`.${dHost}`)) return hide ? { kind: 'notfound' } : { kind: 'next' }
-  // From here the request is for the sites domain: only one label, the allowed port and four paths get through.
-  // The bare sites domain is never a site; in local dev (localhost) it is also the app's own host.
-  if (host === dHost)
-    return dHost === 'localhost' ? (hide ? { kind: 'notfound' } : { kind: 'next' }) : { kind: 'notfound' }
+  const own = host === dHost || host.endsWith(`.${dHost}`)
+  const isCustom = !own && !!custom && DNS_HOST.test(host) && !custom.appHosts.includes(host)
+  if (!own && !isCustom) return pass
+  // From here the request is for a site host: one label under the sites domain or a custom domain, the allowed
+  // port and a handful of paths get through. The bare sites domain is never a site; in local dev (localhost) it
+  // is also the app's own host.
+  if (host === dHost) return dHost === 'localhost' ? pass : { kind: 'notfound' }
   if (port !== dPort) return { kind: 'notfound' }
-  const sub = host.slice(0, -dHost.length - 1)
-  if (!validSub(sub) || rsc) return { kind: 'notfound' }
+  if (own && !validSub(host.slice(0, -dHost.length - 1))) return { kind: 'notfound' }
+  if (rsc) return { kind: 'notfound' }
+  const site = (rewrite: string | null): Route => ({ kind: 'site', host, custom: isCustom, rewrite })
   const read = method === 'GET' || method === 'HEAD'
-  if (read && pathname === '/') return { kind: 'site', sub, rewrite: `/published/${sub}` }
+  if (read && pathname === '/') return site(`/published/${host}`)
   if (read && (pathname === '/robots.txt' || pathname === '/sitemap.xml'))
-    return { kind: 'site', sub, rewrite: `/published/${sub}${pathname}` }
-  if (read && IMG.test(pathname)) return { kind: 'site', sub, rewrite: null }
-  if (method === 'POST' && FORM.test(pathname)) return { kind: 'site', sub, rewrite: null }
+    return site(`/published/${host}${pathname}`)
+  if (read && validSlug(pathname.slice(1))) return site(`/published/${host}${pathname}`)
+  if (read && IMG.test(pathname)) return site(null)
+  if (method === 'POST' && (FORM.test(pathname) || HIT.test(pathname))) return site(null)
   return { kind: 'notfound' }
+}
+
+// ---- Editor, history and embeds (package B1) ----
+
+/** Embed ids are validated like Go does (design 17.7): only a clean id yields a URL, else nothing renders. */
+export function embedLinks(provider: string, id: string): { page: string; frame: string } | undefined {
+  const q = encodeURIComponent(id)
+  switch (provider) {
+    case 'youtube':
+      return /^[\w-]{6,20}$/.test(id)
+        ? {
+            page: `https://www.youtube.com/watch?v=${id}`,
+            frame: `https://www.youtube-nocookie.com/embed/${id}`,
+          }
+        : undefined
+    case 'google_maps':
+      return id && id.length <= 200 && !CTRL.test(id)
+        ? {
+            page: `https://www.google.com/maps?q=${q}`,
+            frame: `https://www.google.com/maps?q=${q}&output=embed`,
+          }
+        : undefined
+    case 'google_forms':
+      return /^[\w-]{10,200}$/.test(id)
+        ? {
+            page: `https://docs.google.com/forms/d/e/${id}/viewform`,
+            frame: `https://docs.google.com/forms/d/e/${id}/viewform?embedded=true`,
+          }
+        : undefined
+    case 'calendly':
+      return /^[\w.-]+(\/[\w.-]+){0,2}$/.test(id)
+        ? { page: `https://calendly.com/${id}`, frame: `https://calendly.com/${id}` }
+        : undefined
+  }
+}
+
+/** A past version's document, read-only (site.get with version_id). */
+export const getVersion = (ws: string, id: string, version_id: string) =>
+  cmd<{ site: Site; data: SiteData }>(ws, 'site.get', { id, version_id })
+/** Restore makes a new draft version on top; nothing is replaced (design 17.7 of Phase 2 section 7). */
+export const restoreAsNew = (ws: string, id: string, expected_version_id: string, version_id: string) =>
+  cmd<{ site: Site; data: SiteData }>(ws, 'site.restore', {
+    id,
+    expected_version_id,
+    version_id,
+    as_new: true,
+  })
+
+// ---- Pages, domains and stats helpers (package B2) ----
+
+/** Extra fields site.get returns for custom domains (design 17.1, 17.3): the hostnames of this site and the feature gate. */
+export type SiteDomainMeta = { domains?: SiteDomain[]; domains_available?: boolean }
+/** Home plus every other page, in menu order; Home has the empty slug. */
+export const pageList = (data: SiteData) => [
+  { slug: '', title: 'Home' },
+  ...(data.pages ?? []).map((p) => ({ slug: p.slug, title: p.title })),
+]
+const isShared = (b: SiteBlock) => (blockDefs[b.type] as { shared?: boolean } | undefined)?.shared === true
+/**
+ * The blocks one page shows (design section 2): Home is `content`; any other page is the Header, its own blocks,
+ * then the other shared blocks (Footer, WhatsAppButton) in Home order. Null for an unknown slug.
+ */
+export function viewOfPage(data: SiteData, slug: string): SiteBlock[] | null {
+  if (!slug) return data.content ?? []
+  const p = data.pages?.find((x) => x.slug === slug)
+  if (!p) return null
+  const shared = (data.content ?? []).filter(isShared)
+  return [
+    ...shared.filter((b) => b.type === 'Header'),
+    ...p.content,
+    ...shared.filter((b) => b.type !== 'Header'),
+  ]
+}
+/** The document as the renderer wants it for one page: its blocks and its own title and description. */
+export function dataOfPage(data: SiteData, slug: string): SiteData {
+  const blocks = viewOfPage(data, slug)
+  const p = data.pages?.find((x) => x.slug === slug)
+  if (!blocks || !p) return data
+  return {
+    ...data,
+    content: blocks,
+    root: { props: { ...data.root.props, title: p.title, description: p.description } },
+  }
+}
+/** A page address from its name: lowercase words joined by hyphens, never a reserved one. */
+export function slugify(title: string) {
+  const s = title
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 40)
+    .replace(/-+$/, '')
+  return validSlug(s) ? s : ''
+}
+/** The page templates of the add-page dialog; `legal` ones carry the "not legal advice" label. */
+export const PAGE_TEMPLATES = [
+  { key: 'about', name: 'About us', title: 'About us', legal: false },
+  { key: 'services', name: 'Services', title: 'Services', legal: false },
+  { key: 'contact', name: 'Contact', title: 'Contact', legal: false },
+  { key: 'privacy', name: 'Privacy policy', title: 'Privacy policy', legal: true },
+  { key: 'terms', name: 'Terms', title: 'Terms', legal: true },
+  { key: '', name: 'Blank page', title: '', legal: false },
+] as const
+/** The host this site is served from, without a port; falls back to the host of `url`. */
+export function canonicalHost(site: Pick<PublicSite, 'url' | 'canonical_host'>) {
+  const h = site.canonical_host || new URL(site.url).host
+  return h.replace(/:\d+$/, '').toLowerCase()
+}
+/** One hostname's DNS check (design 17.1). `domain` names the hostname; each is verified on its own. */
+export const checkHostname = (ws: string, id: string, domain: string) =>
+  cmd<SiteDomainCheck>(ws, 'site.domain_check', { id, domain })
+/** The visitor's referrer host, only when it is another site; never a path or query. */
+export function externalReferrerHost(referrer: string, own: string) {
+  try {
+    const h = new URL(referrer).host
+    return h && h !== own ? h.slice(0, 100) : ''
+  } catch {
+    return ''
+  }
 }

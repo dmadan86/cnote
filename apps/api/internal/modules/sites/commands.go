@@ -5,7 +5,6 @@ package sites
 import (
 	"encoding/json"
 	"errors"
-	"reflect"
 	"regexp"
 	"strings"
 	"time"
@@ -35,6 +34,7 @@ type siteOut struct {
 	Name            string    `json:"name"`
 	Template        string    `json:"template"`
 	DraftVersionID  string    `json:"draft_version_id"`
+	Rev             int       `json:"rev"`
 	ParentVersionID *string   `json:"parent_version_id"`
 	CreatedAt       time.Time `json:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at"`
@@ -55,13 +55,13 @@ type siteOut struct {
 }
 
 // siteFields and siteFrom are the columns every site read shares; dest lists the scan targets in that order.
-const siteFields = `s.id::text, s.name, s.template, s.draft_version_id::text, v.parent_id::text, s.created_at, s.updated_at,
+const siteFields = `s.id::text, s.name, s.template, s.draft_version_id::text, v.rev, v.parent_id::text, s.created_at, s.updated_at,
 	s.subdomain, s.published_version_id::text, s.published_at, s.form_count, s.form_paused, coalesce(p.pro, false), p.taken_down_at is not null, p.taken_down_reason`
 const siteFrom = ` from sites.sites s join sites.site_versions v on v.workspace_id = s.workspace_id and v.site_id = s.id and v.id = s.draft_version_id
 	left join sites.site_platform p on p.site_id = s.id `
 
 func (s *siteOut) dest(extra ...any) []any {
-	return append([]any{&s.ID, &s.Name, &s.Template, &s.DraftVersionID, &s.ParentVersionID, &s.CreatedAt, &s.UpdatedAt,
+	return append([]any{&s.ID, &s.Name, &s.Template, &s.DraftVersionID, &s.Rev, &s.ParentVersionID, &s.CreatedAt, &s.UpdatedAt,
 		&s.Subdomain, &s.PublishedVersionID, &s.PublishedAt, &s.FormCount, &s.FormPaused, &s.Pro, &s.down, &s.reason}, extra...)
 }
 
@@ -124,7 +124,7 @@ func obj(req []string, p props) json.RawMessage {
 func Commands() []command.Command {
 	R, W, M := command.GroupRead, command.GroupWriteItems, command.Member
 	id, ver := str("site id"), str("the draft version the person is looking at; a stale one is a conflict")
-	return append([]command.Command{
+	commands := append([]command.Command{
 		mk("site.templates", R, M, false, "List the website templates, each filled from the company profile. too_long names profile fields left empty because they do not fit the site.", obj(nil, props{}), templates),
 		mk("site.list", R, M, false, "List the workspace's websites (at most one in this version).", obj(nil, props{}), list),
 		mk("site.create", W, command.Admin, false, "Create the workspace's website from a template (admins only; one per workspace). brief queues a first AI edit.",
@@ -132,14 +132,23 @@ func Commands() []command.Command {
 		mk("site.get", R, M, false, "Open a website: the site, its draft (or one version's) page data and the recent chat turns, oldest first.",
 			obj([]string{"id"}, props{"id": id, "version_id": str("a version of this site; default the draft")}), get),
 		mk("site.chat", W, M, true, "Ask the AI to change the page. Starts a turn that runs in the background; poll site.turn_get.",
-			obj([]string{"id", "expected_version_id", "message"}, props{"id": id, "expected_version_id": ver, "message": str("what to change, up to 2000 characters"), "block_id": str("the selected block"), "image_ids": props{"type": "array", "items": props{"type": "string"}, "description": "up to 4 photos just uploaded to this site"}}), chat),
+			obj([]string{"id", "expected_version_id", "message"}, props{"id": id, "expected_version_id": ver, "message": str("what to change, up to 2000 characters"), "block_id": str("the selected block"), "page": str("the open page's address; omit for Home"), "image_ids": props{"type": "array", "items": props{"type": "string"}, "description": "up to 4 photos just uploaded to this site"}}), chat),
 		mk("site.turn_get", R, M, false, "One chat turn; data is the new page once it is done and changed the page.", obj([]string{"id"}, props{"id": str("turn id")}), turnGet),
 		mk("site.turn_cancel", W, M, false, "Stop a chat turn that is queued or running.", obj([]string{"id"}, props{"id": str("turn id")}), turnCancel),
-		mk("site.edit", W, M, false, "Edit the page without the AI (move, duplicate or delete blocks) as a new version. ops are {tool, input}: update_block_props, add_block, remove_block, move_block, set_theme, duplicate_block {id}.",
-			obj([]string{"id", "expected_version_id", "ops"}, props{"id": id, "expected_version_id": ver, "ops": props{"type": "array", "items": props{"type": "object"}}}), edit),
-		mk("site.restore", W, M, false, "Make an older version of this site the draft (undo, redo, restore to here). Moves the draft pointer; nothing is deleted.",
-			obj([]string{"id", "expected_version_id", "version_id"}, props{"id": id, "expected_version_id": ver, "version_id": str("the version to make the draft")}), restore),
+		mk("site.edit", W, M, false, "Edit the site without the AI as a new version. ops are {tool, input}: update_block_props, add_block (page?), remove_block, move_block, set_theme, duplicate_block {id}, add_page {title, slug?, template?}, remove_page {page}, set_page {page?, title?, description?, slug?}, set_content {page, content} (the editor). source is edit (toolbar, default) or editor.",
+			obj([]string{"id", "expected_version_id", "ops"}, props{"id": id, "expected_version_id": ver, "expected_rev": props{"type": "integer"}, "source": props{"type": "string", "enum": []string{"edit", "editor"}}, "ops": props{"type": "array", "items": props{"type": "object"}}}), edit),
+		mk("site.restore", W, M, false, "Make an older version of this site the draft. By default moves the draft pointer (undo, redo); with as_new adds a new version on top with that content.",
+			obj([]string{"id", "expected_version_id", "version_id"}, props{"id": id, "expected_version_id": ver, "version_id": str("the version to make the draft"), "as_new": props{"type": "boolean"}}), restore),
 	}, publishCommands(id, ver)...)
+	for i := range commands {
+		if commands[i].Name == "site.publish" {
+			commands[i].Handler = guardPublish(commands[i].Handler)
+		}
+	}
+	for _, group := range [][]command.Command{PagesCommands(), EditorCommands(), DomainsCommands(), StatsCommands(), ExportCommands()} {
+		commands = append(commands, group...)
+	}
+	return commands
 }
 
 func uid(what, s string) error {
@@ -207,6 +216,9 @@ func addVersion(c *command.Ctx, siteID string, parent, turnID *string, source, s
 		return "", err
 	}
 	if err := checkImages(c, siteID, data); err != nil {
+		return "", err
+	}
+	if err := checkVersionPages(c, siteID, parent, data); err != nil {
 		return "", err
 	}
 	var id string
@@ -394,6 +406,7 @@ func chat(c *command.Ctx, raw json.RawMessage) (any, error) {
 		Message           string   `json:"message"`
 		BlockID           *string  `json:"block_id"`
 		ImageIDs          []string `json:"image_ids"`
+		Page              string   `json:"page"`
 	}
 	if err := decode(raw, &in); err != nil {
 		return nil, err
@@ -411,6 +424,12 @@ func chat(c *command.Ctx, raw json.RawMessage) (any, error) {
 	}
 	if in.ExpectedVersionID != site.DraftVersionID {
 		return nil, command.ErrConflict(conflictMsg)
+	}
+	if in.Page != "" {
+		var d map[string]any
+		if json.Unmarshal(data, &d) != nil || findPage(d, in.Page) == nil {
+			return nil, command.ErrInvalid("that page is not on the site")
+		}
 	}
 	if in.BlockID != nil && !hasBlock(data, *in.BlockID) {
 		return nil, command.ErrInvalid("that block is not on the page")
@@ -443,6 +462,10 @@ func chat(c *command.Ctx, raw json.RawMessage) (any, error) {
 		in.ImageIDs[i] = strings.ToLower(in.ImageIDs[i])
 	}
 	turn, err := queueTurn(c, site.ID, site.DraftVersionID, msg, in.BlockID, "routine", in.ImageIDs)
+	if err == nil && in.Page != "" {
+		_, err = c.Tx.Exec(c.Context, "update sites.site_turns set page = $3 where workspace_id = $1::uuid and id = $2::uuid", c.WorkspaceID(), turn, in.Page)
+		err = command.DB(err)
+	}
 	return props{"turn_id": turn}, err
 }
 
@@ -454,16 +477,8 @@ func firstNonEmpty(a, b string) string {
 }
 
 func hasBlock(data json.RawMessage, id string) bool {
-	var d struct {
-		Content []struct {
-			Props struct {
-				ID string `json:"id"`
-			} `json:"props"`
-		} `json:"content"`
-	}
-	_ = json.Unmarshal(data, &d)
-	for _, b := range d.Content {
-		if b.Props.ID == id {
+	for _, b := range allBlocks(data) {
+		if b.Props["id"] == id {
 			return true
 		}
 	}
@@ -519,134 +534,4 @@ func turnCancel(c *command.Ctx, raw json.RawMessage) (any, error) {
 		}
 	}
 	return props{"status": status}, command.DB(err)
-}
-
-// ---------- edit and restore ----------
-
-var editVerb = map[string]string{"update_block_props": "Updated", "add_block": "Added", "remove_block": "Deleted", "move_block": "Moved", "duplicate_block": "Duplicated", "set_theme": "Changed the theme", "set_page": "Changed the page title and description"}
-
-func edit(c *command.Ctx, raw json.RawMessage) (any, error) {
-	var in struct {
-		ID                string
-		ExpectedVersionID string `json:"expected_version_id"`
-		Ops               []struct {
-			Tool  string
-			Input json.RawMessage
-		}
-	}
-	if err := decode(raw, &in); err != nil {
-		return nil, err
-	}
-	expected := in.ExpectedVersionID
-	if len(in.Ops) == 0 || len(in.Ops) > maxEditOps {
-		return nil, command.ErrInvalid("send between 1 and 20 operations")
-	}
-	site, data, err := loadSite(c, in.ID, true)
-	if err != nil {
-		return nil, err
-	}
-	if err := checkDraft(c, site, expected); err != nil {
-		return nil, err
-	}
-	working := data
-	var summaries []string
-	for _, op := range in.Ops {
-		tool, input := op.Tool, op.Input
-		if tool == "duplicate_block" {
-			if tool, input, err = duplicateOp(working, input); err != nil {
-				return nil, command.ErrInvalid(err.Error())
-			}
-		}
-		next, err := Apply(working, tool, input)
-		if err != nil {
-			return nil, command.ErrInvalid(op.Tool + ": " + err.Error())
-		}
-		working = next
-		var a struct{ ID, Type string }
-		_ = json.Unmarshal(op.Input, &a)
-		label := firstNonEmpty(a.Type, strings.SplitN(a.ID, "-", 2)[0])
-		summaries = append(summaries, strings.TrimSpace(editVerb[op.Tool]+" "+label))
-	}
-	if sameJSON(data, working) {
-		return props{"site": site, "data": data}, nil
-	}
-	if _, err := addVersion(c, site.ID, &site.DraftVersionID, nil, "edit", strings.Join(summaries, ", "), working); err != nil {
-		return nil, err
-	}
-	site, working, err = loadSite(c, site.ID, false)
-	return props{"site": site, "data": working}, err
-}
-
-// checkDraft refuses a stale view of the draft and any change while a chat turn is in flight.
-func checkDraft(c *command.Ctx, site siteOut, expected string) error {
-	if expected != site.DraftVersionID {
-		return command.ErrConflict(conflictMsg)
-	}
-	if busy, err := activeTurn(c, site.ID); err != nil {
-		return err
-	} else if busy {
-		return command.ErrConflict(busyMsg)
-	}
-	return nil
-}
-
-// duplicateOp turns duplicate_block {id} into an add_block just after the original, with a fresh id.
-func duplicateOp(data, input json.RawMessage) (string, json.RawMessage, error) {
-	var in struct{ ID string }
-	var d struct {
-		Content []struct {
-			Type  string         `json:"type"`
-			Props map[string]any `json:"props"`
-		} `json:"content"`
-	}
-	if json.Unmarshal(input, &in) != nil || json.Unmarshal(data, &d) != nil {
-		return "", nil, errors.New("invalid input")
-	}
-	for i, b := range d.Content {
-		if b.Props["id"] == in.ID {
-			p := props{}
-			for k, v := range b.Props {
-				if k != "id" {
-					p[k] = v
-				}
-			}
-			out, _ := json.Marshal(props{"type": b.Type, "props": p, "index": i + 1})
-			return "add_block", out, nil
-		}
-	}
-	return "", nil, errors.New("unknown block id")
-}
-
-func sameJSON(a, b json.RawMessage) bool {
-	var x, y any
-	return json.Unmarshal(a, &x) == nil && json.Unmarshal(b, &y) == nil && reflect.DeepEqual(x, y)
-}
-
-func restore(c *command.Ctx, raw json.RawMessage) (any, error) {
-	var in struct {
-		ID                string
-		ExpectedVersionID string `json:"expected_version_id"`
-		VersionID         string `json:"version_id"`
-	}
-	if err := decode(raw, &in); err != nil {
-		return nil, err
-	}
-	site, data, err := loadSite(c, in.ID, true)
-	if err != nil {
-		return nil, err
-	}
-	if err := checkDraft(c, site, in.ExpectedVersionID); err != nil {
-		return nil, err
-	}
-	if in.VersionID == site.DraftVersionID {
-		return props{"site": site, "data": data}, nil
-	}
-	if data, err = versionData(c, site.ID, in.VersionID); err != nil {
-		return nil, err
-	}
-	if err := moveDraft(c, site.ID, &site.DraftVersionID, in.VersionID); err != nil {
-		return nil, err
-	}
-	site, _, err = loadSite(c, site.ID, false)
-	return props{"site": site, "data": data}, err
 }

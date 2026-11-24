@@ -2,8 +2,18 @@
 import { X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { btn, btnPrimary, ErrorText, Modal, Pill } from '@/components/ui'
-import { type EditOp, type Site, type SiteData, type SiteMeta, siteApi, siteSummary } from '@/lib/sites'
+import {
+  type EditOp,
+  type Site,
+  type SiteData,
+  type SiteDomain,
+  type SiteMeta,
+  siteApi,
+  siteSummary,
+} from '@/lib/sites'
+import { DomainSheet } from './domain-sheet'
 import { CopyButton } from './publish-modal'
+import { StatsCard } from './stats-card'
 
 const Counter = ({ n, max }: { n: number; max: number }) => (
   <span className={`text-[12px] ${n > max ? 'text-warn' : 'text-muted'}`}>
@@ -18,34 +28,47 @@ export function SettingsPanel({
   data,
   meta,
   canAdmin,
+  page,
+  domains,
+  domainsAvailable,
   onClose,
   onEdit,
   onSite,
+  onReload,
 }: {
   ws: string
   site: Site
   data: SiteData
   meta: SiteMeta
   canAdmin: boolean
+  /** The open page's slug ('' = Home): "How you appear on Google" is per page. Mount with key={page}. */
+  page: string
+  domains: SiteDomain[]
+  /** The server's custom-domain switch; the domain section is hidden without it. */
+  domainsAvailable: boolean
   onClose: () => void
   onEdit: (ops: EditOp[]) => Promise<void> | void
   onSite: (s: Site) => void
+  onReload: () => void
 }) {
   const sum = siteSummary(data)
-  const [title, setTitle] = useState(data.root.props.title ?? '')
-  const [desc, setDesc] = useState(data.root.props.description ?? '')
+  const cur = page ? data.pages?.find((p) => p.slug === page) : undefined
+  const saved = cur ?? data.root.props
+  const [title, setTitle] = useState(saved.title ?? '')
+  const [desc, setDesc] = useState(saved.description ?? '')
+  const [domainOpen, setDomainOpen] = useState(false)
   const [confirm, setConfirm] = useState(false)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<Error>()
   const first = useRef<HTMLButtonElement>(null)
   useEffect(() => first.current?.focus(), [])
   useEffect(() => {
-    const esc = (e: KeyboardEvent) => e.key === 'Escape' && !confirm && onClose()
+    const esc = (e: KeyboardEvent) => e.key === 'Escape' && !confirm && !domainOpen && onClose()
     document.addEventListener('keydown', esc)
     return () => document.removeEventListener('keydown', esc)
-  }, [confirm, onClose])
+  }, [confirm, domainOpen, onClose])
 
-  const dirty = title !== (data.root.props.title ?? '') || desc !== (data.root.props.description ?? '')
+  const dirty = title !== (saved.title ?? '') || desc !== (saved.description ?? '')
   const live = !!site.published_version_id
   const run = async (fn: () => Promise<unknown>) => {
     setBusy(true)
@@ -59,6 +82,7 @@ export function SettingsPanel({
     }
   }
   const host = site.url ? site.url.replace(/^https?:\/\//, '') : 'yourname.example'
+  const shown = page ? `${host}/${page}` : host
   const left = meta.ai_edits ? Math.max(0, meta.ai_edits.limit - meta.ai_edits.used) : undefined
 
   return (
@@ -94,7 +118,7 @@ export function SettingsPanel({
 
         <section className="space-y-3">
           <h3 className="text-[11px] font-semibold uppercase tracking-wide text-muted">
-            How you appear on Google
+            How you appear on Google{cur ? `: ${cur.title}` : ''}
           </h3>
           <div className="space-y-1">
             <div className="flex justify-between">
@@ -127,7 +151,7 @@ export function SettingsPanel({
             />
           </div>
           <figure className="rounded-md border border-line p-3">
-            <p className="truncate text-[12px] text-muted">{host}</p>
+            <p className="truncate text-[12px] text-muted">{shown}</p>
             <p className="truncate text-[16px] text-accent">{title || sum.name || 'Your website'}</p>
             <p className="line-clamp-2 text-[13px]">{desc || sum.description || 'No description yet.'}</p>
             <figcaption className="mt-1 text-[11px] text-muted">Google may show this differently.</figcaption>
@@ -139,7 +163,12 @@ export function SettingsPanel({
               disabled={!dirty || busy || desc.length > 160}
               onClick={() =>
                 run(async () =>
-                  onEdit([{ tool: 'set_page', input: { title: title.trim(), description: desc.trim() } }]),
+                  onEdit([
+                    {
+                      tool: 'set_page',
+                      input: { ...(page ? { page } : {}), title: title.trim(), description: desc.trim() },
+                    },
+                  ]),
                 )
               }
             >
@@ -171,6 +200,15 @@ export function SettingsPanel({
           </section>
         )}
 
+        {live && (
+          <section className="space-y-2">
+            <h3 className="text-[11px] font-semibold uppercase tracking-wide text-muted">
+              Your website · last 30 days
+            </h3>
+            <StatsCard ws={ws} siteId={site.id} />
+          </section>
+        )}
+
         <section className="space-y-1">
           <h3 className="text-[11px] font-semibold uppercase tracking-wide text-muted">Plan</h3>
           <p>
@@ -183,6 +221,46 @@ export function SettingsPanel({
           </p>
         </section>
 
+        {(domainsAvailable || (live && canAdmin)) && (
+          <section className="space-y-2">
+            <h3 className="text-[11px] font-semibold uppercase tracking-wide text-muted">
+              Your website is yours
+            </h3>
+            {live && canAdmin && (
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <span className="flex-1 font-medium">Download your site's content</span>
+                  <a className={btn} href={siteApi.exportUrl(ws, site.id)} download>
+                    Download
+                  </a>
+                </div>
+                <p className="text-muted">
+                  A zip with the text, settings and design of every page (site.json) and the photos they use,
+                  as last published. Not included: enquiries (see Leads); a finished web page to host.
+                </p>
+              </div>
+            )}
+            {domainsAvailable && (
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <span className="flex-1 font-medium">Your own domain</span>
+                  <button type="button" className={btn} onClick={() => setDomainOpen(true)}>
+                    {domains.length ? 'Manage' : 'Use your own domain'}
+                  </button>
+                </div>
+                {domains.map((d) => (
+                  <p key={d.hostname} className="flex items-center gap-2">
+                    <span className="min-w-0 flex-1 truncate">{d.hostname}</span>
+                    <Pill tone={d.status === 'verified' ? 'ok' : d.status === 'lost' ? 'bad' : 'warn'}>
+                      {d.status === 'verified' ? 'Live' : d.status === 'lost' ? 'Lost' : 'Connecting'}
+                    </Pill>
+                  </p>
+                ))}
+              </div>
+            )}
+          </section>
+        )}
+
         {live && canAdmin && (
           <section className="space-y-2">
             <h3 className="text-[11px] font-semibold uppercase tracking-wide text-muted">Take offline</h3>
@@ -194,6 +272,17 @@ export function SettingsPanel({
         )}
         <ErrorText error={err} />
       </div>
+      {domainsAvailable && (
+        <DomainSheet
+          ws={ws}
+          site={site}
+          domains={domains}
+          canAdmin={canAdmin}
+          open={domainOpen}
+          onClose={() => setDomainOpen(false)}
+          onChanged={onReload}
+        />
+      )}
       <Modal open={confirm} onClose={() => setConfirm(false)} title="Take your website offline?">
         <div className="space-y-4 text-[13px]">
           <p>

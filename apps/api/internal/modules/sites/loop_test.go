@@ -112,3 +112,68 @@ func TestModelTestimonialsAndImages(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestPageViewAndOpenPage(t *testing.T) {
+	data := mustApply(t, fixture(t), "add_page", `{"title":"About"}`)
+	data = mustApply(t, data, "add_block", `{"type":"Text","page":"about","props":{"title":"Aboutus"}}`)
+	text := firstTurn(data, TurnInput{Page: "about", Message: "x"})
+	if !strings.Contains(text, "<shared>") || !strings.Contains(text, "Aboutus") || strings.Contains(text, "Hero-00000002") && !strings.Contains(text, "<shared>") {
+		t.Fatalf("bad view: %s", text)
+	}
+	// off Home the Hero is not shown, the Header is (shared)
+	view, pages, shared := pageView(data, "about")
+	if strings.Contains(view, "Hero-00000002") || !strings.Contains(shared, "Header-00000001") || !strings.Contains(pages, `"about"`) {
+		t.Fatalf("view=%s pages=%s shared=%s", view, pages, shared)
+	}
+	home, _, none := pageView(data, "")
+	if none != "" || !strings.Contains(home, "Hero-00000002") || strings.Contains(home, "Aboutus") {
+		t.Fatal("home view")
+	}
+	if got := string(withOpenPage("add_block", json.RawMessage(`{"type":"Text","props":{}}`), "about")); !strings.Contains(got, `"page":"about"`) {
+		t.Fatal(got)
+	}
+	if got := string(withOpenPage("add_block", json.RawMessage(`{"page":"x"}`), "about")); strings.Contains(got, "about") {
+		t.Fatal("overrode the model's page")
+	}
+}
+
+func TestRunTurnPagesAndToolFence(t *testing.T) {
+	data := mustApply(t, fixture(t), "add_page", `{"title":"About"}`)
+	run := func(in TurnInput, calls ...ToolCall) TurnResult {
+		n := 0
+		return RunTurn(context.Background(), func(context.Context, StepReq) (StepRes, error) {
+			n++
+			if n == 1 {
+				return StepRes{Calls: calls, Stop: "tools"}, nil
+			}
+			return StepRes{Text: "ok"}, nil
+		}, data, in)
+	}
+	res := run(TurnInput{Page: "about", Message: "add text"}, ToolCall{ID: "1", Name: "add_block", Input: json.RawMessage(`{"type":"Text","props":{"title":"Hi"}}`)})
+	if res.Err != "" || !res.Changed || len(contentOf(docOf(t, res.Data), "about")) != 1 {
+		t.Fatalf("add_block did not land on the open page: %+v", res)
+	}
+	// set_content is the editor's, not a model tool: it is refused, and the retry also fails
+	res = run(TurnInput{Message: "x"}, ToolCall{ID: "1", Name: "set_content", Input: json.RawMessage(`{"content":[]}`)})
+	if res.Changed || len(res.Steps) == 0 || res.Steps[0].OK {
+		t.Fatalf("set_content allowed: %+v", res)
+	}
+	if res := run(TurnInput{Page: "gone", Message: "x"}); res.Err == "" {
+		t.Fatal("unknown open page accepted")
+	}
+	res = run(TurnInput{Message: "add a page called Team"}, ToolCall{ID: "1", Name: "add_page", Input: json.RawMessage(`{"title":"Team"}`)})
+	if res.Err != "" || !res.Changed || findPage(docOf(t, res.Data), "team") == nil {
+		t.Fatalf("add_page: %+v", res)
+	}
+}
+
+func TestEmbedRefIsVerbatim(t *testing.T) {
+	base := fixture(t)
+	next := mustApply(t, base, "add_block", `{"type":"Embed","props":{"provider":"youtube","source":"https://youtu.be/dQw4w9WgXcQ"}}`)
+	if err := checkModelResult(base, next, TurnInput{Message: "Add this video https://youtu.be/dQw4w9WgXcQ"}); err != nil {
+		t.Fatal(err)
+	}
+	if checkModelResult(base, next, TurnInput{Message: "add a video about dentistry"}) == nil {
+		t.Fatal("invented embed accepted")
+	}
+}

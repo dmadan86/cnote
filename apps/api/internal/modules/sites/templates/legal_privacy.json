@@ -1,0 +1,102 @@
+{
+  "slug": "privacy",
+  "title": "Privacy Policy",
+  "blocks": [
+    {
+      "type": "Text",
+      "props": {
+        "id": "Text-privacy-0001",
+        "title": "Notice",
+        "body": "Template — not legal advice. Read it and have it checked before you publish."
+      }
+    },
+    {
+      "type": "Text",
+      "props": {
+        "id": "Text-privacy-0002",
+        "title": "Who We Are",
+        "body": "This website is operated by {{name}}, located at {{address}}. We are committed to protecting the personal information you share with us and handling it responsibly under applicable Indian law, including the Digital Personal Data Protection Act 2023."
+      }
+    },
+    {
+      "type": "Text",
+      "props": {
+        "id": "Text-privacy-0003",
+        "title": "What Information We Collect",
+        "body": "When you use the contact form on this website, we collect your name, phone number, email address, and the message you send. We collect this information solely to respond to your enquiry or booking request. We do not collect any other personal data through this website."
+      }
+    },
+    {
+      "type": "Text",
+      "props": {
+        "id": "Text-privacy-0004",
+        "title": "How We Use Your Information",
+        "body": "The information you submit through our contact form is used only to respond to your enquiry, provide appointment details, or follow up as needed. We do not use your data for marketing without your explicit consent, and we do not sell or share your information with third parties for commercial purposes."
+      }
+    },
+    {
+      "type": "Text",
+      "props": {
+        "id": "Text-privacy-0005",
+        "title": "How We Store Your Information",
+        "body": "Your data is stored securely on servers managed by C Note, the platform that powers this website. We retain contact form submissions for up to two years from the date of submission, after which they are deleted. Access to your data is restricted to authorised personnel only."
+      }
+    },
+    {
+      "type": "Text",
+      "props": {
+        "id": "Text-privacy-0006",
+        "title": "Analytics and Cookies",
+        "body": "This website counts page visits to understand how many people visit each page. This analytics system does not use cookies, does not store IP addresses, and does not collect any personal data. No tracking identifiers are assigned to visitors."
+      }
+    },
+    {
+      "type": "Text",
+      "props": {
+        "id": "Text-privacy-0007",
+        "title": "Embedded Third-Party Content",
+        "body": "Some pages on this website may include embedded content from YouTube, Google Maps, Google Forms, or Calendly. This content is loaded only when you choose to interact with it (click to load). Once loaded, the third-party provider may set their own cookies and collect data according to their own privacy policies. We recommend reviewing the privacy policies of YouTube (Google LLC), Google Maps (Google LLC), and Calendly Inc. before interacting with their embedded content. We have no control over data collected by these third parties."
+      }
+    },
+    {
+      "type": "Text",
+      "props": {
+        "id": "Text-privacy-0008",
+        "title": "Your Rights under the Digital Personal Data Protection Act 2023",
+        "body": "Under India's Digital Personal Data Protection Act 2023, you have the right to access the personal data we hold about you, the right to correct inaccurate or incomplete personal data, and the right to request erasure of your personal data where it is no longer needed for the purpose it was collected. To exercise any of these rights, please contact us at {{email}}. We will respond to your request within a reasonable time and in accordance with our obligations under the Act."
+      }
+    },
+    {
+      "type": "Text",
+      "props": {
+        "id": "Text-privacy-0009",
+        "title": "Grievance Officer",
+        "body": "In accordance with the Digital Personal Data Protection Act 2023, any grievance relating to the processing of your personal data may be directed to our Grievance Officer: {{name}}, {{address}}, {{email}}. We will acknowledge your grievance within 48 hours and resolve it within 30 days."
+      }
+    },
+    {
+      "type": "Text",
+      "props": {
+        "id": "Text-privacy-0010",
+        "title": "Governing Law",
+        "body": "This Privacy Policy is governed by the laws of India. Any disputes arising in connection with this policy shall be subject to the exclusive jurisdiction of the courts of India."
+      }
+    },
+    {
+      "type": "Text",
+      "props": {
+        "id": "Text-privacy-0011",
+        "title": "Contact Us",
+        "body": "If you have any questions about this Privacy Policy or how we handle your personal data, please contact us at {{email}} or call us at {{phone}}. You may also write to us at {{address}}. This website is available at {{url}}."
+      }
+    },
+    {
+      "type": "Text",
+      "props": {
+        "id": "Text-privacy-0012",
+        "title": "Last Updated",
+        "body": "This Privacy Policy was last updated on {{date}}."
+      }
+    }
+  ]
+}

@@ -37,6 +37,7 @@ type Public struct {
 	PublishedAt                                       time.Time
 	LeadSpaceID                                       *string
 	URL                                               string
+	CanonicalHost                                     *string // the live custom hostname, when the site has one (custom domains)
 }
 
 const publicCols = `workspace_id::text, site_id::text, version_id::text, name, data, pro, published_at, published_by::text, form_paused, lead_space_id::text`
@@ -84,10 +85,13 @@ func LookupHost(ctx context.Context, q interface {
 }, host string) (Public, error) {
 	sub := SubdomainOf(host)
 	if sub == "" {
-		return Public{}, command.ErrNotFound("site")
+		return lookupDomain(ctx, q, host)
 	}
 	p, err := scanPublic(q.QueryRow(ctx, "select "+publicCols+" from sites.host_lookup($1)", sub))
 	p.URL = SiteURL(sub)
+	if err == nil {
+		err = withCanonical(ctx, q, &p)
+	}
 	return p, err
 }
 

@@ -37,6 +37,9 @@ type Case struct {
 	// Each element is [message, reply]. Used by adversarial cases that plant
 	// injection payloads inside the chat history.
 	History [][2]string `json:"history,omitempty"`
+	// Page is the open page's slug (empty is Home); Fixture picks the starting document ("" or "pages").
+	Page    string `json:"page,omitempty"`
+	Fixture string `json:"fixture,omitempty"`
 }
 
 // Assertion is one entry in the "expect" array of a Case.
@@ -65,6 +68,15 @@ func (e *AssertionError) Error() string {
 type pageDoc struct {
 	Root    pageRoot    `json:"root"`
 	Content []pageBlock `json:"content"`
+	Pages   []pageEntry `json:"pages"`
+}
+
+// pageEntry is one extra page of the document.
+type pageEntry struct {
+	Slug        string      `json:"slug"`
+	Title       string      `json:"title"`
+	Description string      `json:"description"`
+	Content     []pageBlock `json:"content"`
 }
 
 type pageRoot struct {
@@ -220,6 +232,47 @@ func CheckCollateral(caseID string, before, after json.RawMessage, mayChange []s
 		}
 	}
 
+	// Adding or removing a page also edits the menu, so "pages" covers the shared Header and Footer links.
+	if allowed["pages"] {
+		allowed["Header"], allowed["Footer"] = true, true
+	}
+	for _, p := range aDoc.Pages {
+		for _, b := range p.Content {
+			if id, ok := b.Props["id"].(string); ok {
+				afterByID[id] = b
+			}
+		}
+	}
+	// Extra pages: may_change "pages" allows any change, "page:<slug>" only that page.
+	if !allowed["pages"] {
+		afterPages := map[string]pageEntry{}
+		for _, p := range aDoc.Pages {
+			afterPages[p.Slug] = p
+		}
+		beforePages := map[string]bool{}
+		for _, bp := range bDoc.Pages {
+			beforePages[bp.Slug] = true
+			if allowed["page:"+bp.Slug] {
+				continue
+			}
+			ap, ok := afterPages[bp.Slug]
+			if !ok {
+				diffs = append(diffs, fmt.Sprintf("%s: collateral: page %s disappeared", caseID, bp.Slug))
+				continue
+			}
+			bs, _ := json.Marshal(bp)
+			as, _ := json.Marshal(ap)
+			if string(bs) != string(as) {
+				diffs = append(diffs, fmt.Sprintf("%s: collateral: page %s changed outside may_change", caseID, bp.Slug))
+			}
+		}
+		for _, ap := range aDoc.Pages {
+			if !beforePages[ap.Slug] && !allowed["page:"+ap.Slug] {
+				diffs = append(diffs, fmt.Sprintf("%s: collateral: page %s was added", caseID, ap.Slug))
+			}
+		}
+	}
+
 	// For each before block that is not in mayChange, its props must be identical in after
 	for _, bb := range bDoc.Content {
 		if allowed[bb.Type] {
@@ -254,6 +307,18 @@ func resolvePath(doc pageDoc, path string) (any, bool) {
 	if path == "blocks" {
 		return doc.Content, true
 	}
+	if path == "pages" {
+		return doc.Pages, true
+	}
+	// <slug>/<path>: the same path inside one extra page (Home when the prefix is not a page)
+	if slug, rest, ok := strings.Cut(path, "/"); ok && !strings.Contains(slug, ".") {
+		for _, p := range doc.Pages {
+			if p.Slug == slug {
+				return resolvePath(pageDoc{Root: doc.Root, Content: p.Content}, rest)
+			}
+		}
+		return nil, false
+	}
 
 	parts := strings.SplitN(path, ".", 2)
 	if len(parts) == 0 {
@@ -269,6 +334,30 @@ func resolvePath(doc pageDoc, path string) (any, bool) {
 	// blocks.<idx>.type
 	if head == "blocks" && tail != "" {
 		return resolveBlocksIndexedPath(doc, tail)
+	}
+
+	// pages.<idx>.<slug|title|description>
+	if head == "pages" && tail != "" {
+		idxStr, field, _ := strings.Cut(tail, ".")
+		idx, err := strconv.Atoi(idxStr)
+		if err != nil || idx < 0 || idx >= len(doc.Pages) {
+			return nil, false
+		}
+		p := doc.Pages[idx]
+		switch field {
+		case "slug":
+			return p.Slug, true
+		case "title":
+			return p.Title, true
+		case "description":
+			if p.Description == "" {
+				return nil, false
+			}
+			return p.Description, true
+		case "content":
+			return p.Content, true
+		}
+		return nil, false
 	}
 
 	// root.title | root.description
@@ -372,6 +461,13 @@ func firstBlockOfType(doc pageDoc, blockType string) (pageBlock, bool) {
 			return b, true
 		}
 	}
+	for _, p := range doc.Pages {
+		for _, b := range p.Content {
+			if b.Type == blockType {
+				return b, true
+			}
+		}
+	}
 	return pageBlock{}, false
 }
 
@@ -381,6 +477,8 @@ func listLen(v any) int {
 	case []any:
 		return len(t)
 	case []pageBlock:
+		return len(t)
+	case []pageEntry:
 		return len(t)
 	}
 	return -1
@@ -394,12 +492,16 @@ var allowedLinkPrefixes = []string{
 	"tel:",
 	"mailto:",
 	"#",
+	"/", // an internal page link; "//" is refused below
 }
 
 // isAllowedLink returns true when href is empty (absent) or starts with an allowed prefix.
 func isAllowedLink(href string) bool {
 	if href == "" {
 		return true
+	}
+	if strings.HasPrefix(href, "//") {
+		return false
 	}
 	for _, pfx := range allowedLinkPrefixes {
 		if strings.HasPrefix(href, pfx) {
@@ -437,7 +539,11 @@ func CheckLinkSchemes(caseID string, after json.RawMessage) []string {
 		return []string{caseID + ": (parse) " + err.Error()}
 	}
 	var violations []string
-	for _, b := range doc.Content {
+	blocks := append([]pageBlock(nil), doc.Content...)
+	for _, p := range doc.Pages {
+		blocks = append(blocks, p.Content...)
+	}
+	for _, b := range blocks {
 		var hrefs []string
 		collectLinksFromProps(b.Props, &hrefs)
 		for _, href := range hrefs {

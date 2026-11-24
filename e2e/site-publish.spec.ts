@@ -8,7 +8,7 @@ import { signup, uniq } from './helpers'
 
 const port = new URL(process.env.BASE_URL ?? 'http://localhost:3000').port || '3000'
 
-test('Website: publish, visit, send an enquiry, take offline', async ({ page, browser, baseURL }) => {
+test('Website: publish, visit, send an enquiry, take offline', async ({ page, browser }) => {
   await signup(page)
   await page.setViewportSize({ width: 1440, height: 900 })
   const base = new URL(page.url()).pathname.match(/^\/w\/[0-9a-f-]+/)?.[0] as string

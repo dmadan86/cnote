@@ -8,5 +8,14 @@ export default defineConfig({
     baseURL: process.env.BASE_URL ?? 'http://localhost:3000',
     trace: 'retain-on-failure',
   },
-  projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
+  // *.cnote-e2e.test resolves to this machine, so a test can browse a "custom domain" (site-routing.spec.ts).
+  projects: [
+    {
+      name: 'chromium',
+      use: {
+        ...devices['Desktop Chrome'],
+        launchOptions: { args: ['--host-resolver-rules=MAP *.cnote-e2e.test 127.0.0.1'] },
+      },
+    },
+  ],
 })

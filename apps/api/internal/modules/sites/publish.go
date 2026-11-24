@@ -114,7 +114,7 @@ func getExtras(c *command.Ctx, site siteOut, out props) error {
 		return command.DB(err)
 	}
 	out["leads_7d"] = n
-	return nil
+	return domainsExtras(c, site, out)
 }
 
 // ---------- images ----------
@@ -453,5 +453,5 @@ func publicGet(c *command.Ctx, raw json.RawMessage) (any, error) {
 // PublicJSON is the answer to the web server's read of a published site.
 func PublicJSON(p Public) props {
 	return props{"site_id": p.SiteID, "version_id": p.VersionID, "name": p.Name, "data": p.Data, "pro": p.Pro, "published_at": p.PublishedAt,
-		"url": p.URL, "form_paused": p.FormPaused}
+		"url": p.URL, "form_paused": p.FormPaused, "canonical_host": p.CanonicalHost}
 }

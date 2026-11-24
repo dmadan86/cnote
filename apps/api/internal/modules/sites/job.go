@@ -100,11 +100,11 @@ func (e *turnExec) start(ctx context.Context) (data json.RawMessage, in TurnInpu
 	err = e.reg.WithTx(ctx, e.pool, sys, func(sc *command.Ctx) error {
 		var user, status, message string
 		var attached []string
-		var block *string
+		var block, page *string
 		var created time.Time
-		err := sc.Tx.QueryRow(ctx, `select site_id::text, created_by::text, message, block_id, tier, status, base_version_id::text, calls, tokens_in + tokens_out, created_at, image_ids::text[]
+		err := sc.Tx.QueryRow(ctx, `select site_id::text, created_by::text, message, block_id, tier, status, base_version_id::text, calls, tokens_in + tokens_out, created_at, image_ids::text[], page
 			from sites.site_turns where workspace_id = $1::uuid and id = $2::uuid for update`, e.ws, e.turnID).
-			Scan(&e.siteID, &user, &message, &block, &e.tier, &status, &e.base, &e.calls, &e.tokens, &created, &attached)
+			Scan(&e.siteID, &user, &message, &block, &e.tier, &status, &e.base, &e.calls, &e.tokens, &created, &attached, &page)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return errNotVisible
 		}
@@ -145,6 +145,9 @@ func (e *turnExec) start(ctx context.Context) (data json.RawMessage, in TurnInpu
 		in = TurnInput{Message: message, Tier: e.tier, Business: map[string]string{"name": b["name"], "phone": b["phone"], "email": b["email"], "address": b["address"]}}
 		if block != nil {
 			in.BlockID = *block
+		}
+		if page != nil {
+			in.Page = *page
 		}
 		imgs, err := c.Call("file.image_list", props{"site_id": e.siteID})
 		if err != nil {
@@ -371,7 +374,8 @@ func (e *turnExec) commit(ctx context.Context, res TurnResult) error {
 	})
 }
 
-var summaryVerb = map[string]string{"update_block_props": "Updated", "add_block": "Added", "remove_block": "Deleted", "move_block": "Moved", "set_theme": "Changed the theme"}
+var summaryVerb = map[string]string{"update_block_props": "Updated", "add_block": "Added", "remove_block": "Deleted", "move_block": "Moved", "set_theme": "Changed the theme",
+	"add_page": "Added page", "remove_page": "Deleted page", "set_page": "Updated page"}
 
 // summarize turns RunTurn's "update_block_props Hero, set_theme theme" into "Updated Hero, Changed the theme".
 func summarize(s string) string {

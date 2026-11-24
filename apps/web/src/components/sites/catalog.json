@@ -1,26 +1,35 @@
 {
   "theme": {
     "primary": {
-      "kind": "color"
+      "kind": "color",
+      "label": "Primary"
     },
     "background": {
-      "kind": "color"
+      "kind": "color",
+      "label": "Background"
     },
     "text": {
-      "kind": "color"
+      "kind": "color",
+      "label": "Text"
     },
     "font": {
       "kind": "enum",
-      "values": ["sans", "serif", "rounded"]
+      "values": ["sans", "serif", "rounded"],
+      "label": "Font",
+      "labels": ["Sans", "Serif", "Rounded"]
     },
     "radius": {
       "kind": "enum",
-      "values": ["none", "sm", "md", "lg"]
+      "values": ["none", "sm", "md", "lg"],
+      "label": "Radius",
+      "labels": ["None", "Sm", "Md", "Lg"]
     },
     "font_heading": {
       "kind": "enum",
       "values": ["sans", "serif", "rounded"],
-      "optional": true
+      "optional": true,
+      "label": "Font heading",
+      "labels": ["Sans", "Serif", "Rounded"]
     }
   },
   "blocks": {
@@ -31,32 +40,47 @@
         "brand": {
           "kind": "text",
           "max": 60,
-          "required": true
+          "required": true,
+          "label": "Brand"
         },
         "links": {
           "kind": "list",
-          "max": 5,
+          "max": 8,
           "props": {
             "label": {
               "kind": "text",
-              "max": 30
+              "max": 30,
+              "label": "Label"
             },
             "href": {
-              "kind": "link"
+              "kind": "link",
+              "label": "Href"
             }
-          }
+          },
+          "label": "Links"
         },
         "cta_label": {
           "kind": "text",
-          "max": 30
+          "max": 30,
+          "label": "Cta label"
         },
         "cta_href": {
-          "kind": "link"
+          "kind": "link",
+          "label": "Cta href"
         },
         "logo": {
-          "kind": "image"
+          "kind": "image",
+          "label": "Logo"
+        },
+        "variant": {
+          "kind": "enum",
+          "values": ["left", "centered"],
+          "optional": true,
+          "label": "Variant",
+          "labels": ["Left", "Centered"]
         }
-      }
+      },
+      "shared": true
     },
     "Hero": {
       "label": "Hero",
@@ -65,29 +89,44 @@
         "title": {
           "kind": "text",
           "max": 80,
-          "required": true
+          "required": true,
+          "label": "Title"
         },
         "subtitle": {
           "kind": "longtext",
-          "max": 200
+          "max": 200,
+          "label": "Subtitle"
         },
         "cta_label": {
           "kind": "text",
-          "max": 30
+          "max": 30,
+          "label": "Cta label"
         },
         "cta_href": {
-          "kind": "link"
+          "kind": "link",
+          "label": "Cta href"
         },
         "image": {
-          "kind": "image"
+          "kind": "image",
+          "label": "Image"
         },
         "align": {
           "kind": "enum",
-          "values": ["left", "center"]
+          "values": ["left", "center"],
+          "label": "Align",
+          "labels": ["Left", "Center"]
         },
         "image_alt": {
           "kind": "text",
-          "max": 120
+          "max": 120,
+          "label": "Image alt"
+        },
+        "variant": {
+          "kind": "enum",
+          "values": ["split", "cover", "centered"],
+          "optional": true,
+          "label": "Variant",
+          "labels": ["Split", "Cover", "Centered"]
         }
       }
     },
@@ -96,7 +135,8 @@
       "props": {
         "title": {
           "kind": "text",
-          "max": 80
+          "max": 80,
+          "label": "Title"
         },
         "items": {
           "kind": "list",
@@ -105,17 +145,28 @@
             "name": {
               "kind": "text",
               "max": 60,
-              "required": true
+              "required": true,
+              "label": "Name"
             },
             "description": {
               "kind": "longtext",
-              "max": 200
+              "max": 200,
+              "label": "Description"
             },
             "price": {
               "kind": "text",
-              "max": 30
+              "max": 30,
+              "label": "Price"
             }
-          }
+          },
+          "label": "Items"
+        },
+        "variant": {
+          "kind": "enum",
+          "values": ["cards", "list"],
+          "optional": true,
+          "label": "Variant",
+          "labels": ["Cards", "List"]
         }
       }
     },
@@ -125,25 +176,38 @@
       "props": {
         "title": {
           "kind": "text",
-          "max": 80
+          "max": 80,
+          "label": "Title"
         },
         "intro": {
           "kind": "longtext",
-          "max": 200
+          "max": 200,
+          "label": "Intro"
         },
         "phone": {
-          "kind": "phone"
+          "kind": "phone",
+          "label": "Phone"
         },
         "email": {
-          "kind": "email"
+          "kind": "email",
+          "label": "Email"
         },
         "address": {
           "kind": "longtext",
-          "max": 200
+          "max": 200,
+          "label": "Address"
         },
         "submit_label": {
           "kind": "text",
-          "max": 30
+          "max": 30,
+          "label": "Submit label"
+        },
+        "variant": {
+          "kind": "enum",
+          "values": ["side", "stacked"],
+          "optional": true,
+          "label": "Variant",
+          "labels": ["Side", "Stacked"]
         }
       }
     },
@@ -153,17 +217,21 @@
       "props": {
         "text": {
           "kind": "text",
-          "max": 120
+          "max": 120,
+          "label": "Text"
         },
         "phone": {
-          "kind": "phone"
+          "kind": "phone",
+          "label": "Phone"
         },
         "email": {
-          "kind": "email"
+          "kind": "email",
+          "label": "Email"
         },
         "address": {
           "kind": "longtext",
-          "max": 200
+          "max": 200,
+          "label": "Address"
         },
         "links": {
           "kind": "list",
@@ -171,33 +239,55 @@
           "props": {
             "label": {
               "kind": "text",
-              "max": 30
+              "max": 30,
+              "label": "Label"
             },
             "href": {
-              "kind": "link"
+              "kind": "link",
+              "label": "Href"
             }
-          }
+          },
+          "label": "Links"
+        },
+        "variant": {
+          "kind": "enum",
+          "values": ["simple", "columns"],
+          "optional": true,
+          "label": "Variant",
+          "labels": ["Simple", "Columns"]
         }
-      }
+      },
+      "shared": true
     },
     "About": {
       "label": "About",
       "props": {
         "title": {
           "kind": "text",
-          "max": 80
+          "max": 80,
+          "label": "Title"
         },
         "body": {
           "kind": "longtext",
           "max": 800,
-          "required": true
+          "required": true,
+          "label": "Body"
         },
         "image": {
-          "kind": "image"
+          "kind": "image",
+          "label": "Image"
         },
         "image_alt": {
           "kind": "text",
-          "max": 120
+          "max": 120,
+          "label": "Image alt"
+        },
+        "variant": {
+          "kind": "enum",
+          "values": ["image-right", "image-left", "stacked"],
+          "optional": true,
+          "label": "Variant",
+          "labels": ["Image right", "Image left", "Stacked"]
         }
       }
     },
@@ -207,7 +297,8 @@
       "props": {
         "title": {
           "kind": "text",
-          "max": 80
+          "max": 80,
+          "label": "Title"
         },
         "items": {
           "kind": "list",
@@ -215,13 +306,23 @@
           "props": {
             "image": {
               "kind": "image",
-              "required": true
+              "required": true,
+              "label": "Image"
             },
             "caption": {
               "kind": "text",
-              "max": 80
+              "max": 80,
+              "label": "Caption"
             }
-          }
+          },
+          "label": "Items"
+        },
+        "variant": {
+          "kind": "enum",
+          "values": ["grid", "strip"],
+          "optional": true,
+          "label": "Variant",
+          "labels": ["Grid", "Strip"]
         }
       }
     },
@@ -230,11 +331,13 @@
       "props": {
         "title": {
           "kind": "text",
-          "max": 80
+          "max": 80,
+          "label": "Title"
         },
         "note": {
           "kind": "text",
-          "max": 120
+          "max": 120,
+          "label": "Note"
         },
         "items": {
           "kind": "list",
@@ -243,18 +346,29 @@
             "name": {
               "kind": "text",
               "max": 60,
-              "required": true
+              "required": true,
+              "label": "Name"
             },
             "price": {
               "kind": "text",
               "max": 30,
-              "required": true
+              "required": true,
+              "label": "Price"
             },
             "description": {
               "kind": "longtext",
-              "max": 200
+              "max": 200,
+              "label": "Description"
             }
-          }
+          },
+          "label": "Items"
+        },
+        "variant": {
+          "kind": "enum",
+          "values": ["list", "cards"],
+          "optional": true,
+          "label": "Variant",
+          "labels": ["List", "Cards"]
         }
       }
     },
@@ -264,7 +378,8 @@
       "props": {
         "title": {
           "kind": "text",
-          "max": 80
+          "max": 80,
+          "label": "Title"
         },
         "items": {
           "kind": "list",
@@ -273,14 +388,24 @@
             "question": {
               "kind": "text",
               "max": 120,
-              "required": true
+              "required": true,
+              "label": "Question"
             },
             "answer": {
               "kind": "longtext",
               "max": 500,
-              "required": true
+              "required": true,
+              "label": "Answer"
             }
-          }
+          },
+          "label": "Items"
+        },
+        "variant": {
+          "kind": "enum",
+          "values": ["open", "accordion"],
+          "optional": true,
+          "label": "Variant",
+          "labels": ["Open", "Accordion"]
         }
       }
     },
@@ -290,18 +415,29 @@
         "title": {
           "kind": "text",
           "max": 80,
-          "required": true
+          "required": true,
+          "label": "Title"
         },
         "text": {
           "kind": "longtext",
-          "max": 200
+          "max": 200,
+          "label": "Text"
         },
         "cta_label": {
           "kind": "text",
-          "max": 30
+          "max": 30,
+          "label": "Cta label"
         },
         "cta_href": {
-          "kind": "link"
+          "kind": "link",
+          "label": "Cta href"
+        },
+        "variant": {
+          "kind": "enum",
+          "values": ["banner", "card"],
+          "optional": true,
+          "label": "Variant",
+          "labels": ["Banner", "Card"]
         }
       }
     },
@@ -311,14 +447,17 @@
       "props": {
         "title": {
           "kind": "text",
-          "max": 80
+          "max": 80,
+          "label": "Title"
         },
         "address": {
           "kind": "longtext",
-          "max": 200
+          "max": 200,
+          "label": "Address"
         },
         "map_url": {
-          "kind": "link"
+          "kind": "link",
+          "label": "Map url"
         },
         "hours": {
           "kind": "list",
@@ -327,14 +466,24 @@
             "days": {
               "kind": "text",
               "max": 30,
-              "required": true
+              "required": true,
+              "label": "Days"
             },
             "time": {
               "kind": "text",
               "max": 30,
-              "required": true
+              "required": true,
+              "label": "Time"
             }
-          }
+          },
+          "label": "Hours"
+        },
+        "variant": {
+          "kind": "enum",
+          "values": ["side", "stacked"],
+          "optional": true,
+          "label": "Variant",
+          "labels": ["Side", "Stacked"]
         }
       }
     },
@@ -343,17 +492,28 @@
       "max": 1,
       "props": {
         "phone": {
-          "kind": "phone"
+          "kind": "phone",
+          "label": "Phone"
         },
         "message": {
           "kind": "text",
-          "max": 120
+          "max": 120,
+          "label": "Message"
         },
         "label": {
           "kind": "text",
-          "max": 30
+          "max": 30,
+          "label": "Label"
+        },
+        "variant": {
+          "kind": "enum",
+          "values": ["default"],
+          "optional": true,
+          "label": "Variant",
+          "labels": ["Default"]
         }
-      }
+      },
+      "shared": true
     },
     "Testimonials": {
       "label": "Testimonials",
@@ -361,7 +521,8 @@
       "props": {
         "title": {
           "kind": "text",
-          "max": 80
+          "max": 80,
+          "label": "Title"
         },
         "items": {
           "kind": "list",
@@ -371,21 +532,125 @@
               "kind": "longtext",
               "max": 300,
               "required": true,
-              "verbatim": true
+              "verbatim": true,
+              "label": "Quote"
             },
             "name": {
               "kind": "text",
               "max": 60,
               "required": true,
-              "verbatim": true
+              "verbatim": true,
+              "label": "Name"
             },
             "role": {
               "kind": "text",
-              "max": 60
+              "max": 60,
+              "label": "Role"
             }
-          }
+          },
+          "label": "Items"
+        },
+        "variant": {
+          "kind": "enum",
+          "values": ["cards", "single"],
+          "optional": true,
+          "label": "Variant",
+          "labels": ["Cards", "Single"]
         }
       }
+    },
+    "Text": {
+      "label": "Text",
+      "props": {
+        "title": {
+          "kind": "text",
+          "max": 80,
+          "label": "Title"
+        },
+        "body": {
+          "kind": "longtext",
+          "max": 6000,
+          "label": "Body"
+        },
+        "variant": {
+          "kind": "enum",
+          "values": ["default"],
+          "optional": true,
+          "label": "Variant",
+          "labels": ["Default"]
+        }
+      }
+    },
+    "Embed": {
+      "label": "Embed",
+      "props": {
+        "provider": {
+          "kind": "enum",
+          "values": ["youtube", "google_maps", "google_forms", "calendly"],
+          "required": true,
+          "label": "Provider",
+          "labels": ["Youtube", "Google maps", "Google forms", "Calendly"]
+        },
+        "source": {
+          "kind": "text",
+          "max": 2000,
+          "verbatim": true,
+          "required": true,
+          "label": "Link or ID"
+        },
+        "title": {
+          "kind": "text",
+          "max": 80,
+          "label": "Title"
+        },
+        "variant": {
+          "kind": "enum",
+          "values": ["default"],
+          "optional": true,
+          "label": "Variant",
+          "labels": ["Default"]
+        }
+      }
+    }
+  },
+  "pages": {
+    "optional": true,
+    "max": 10,
+    "slug": {
+      "kind": "text",
+      "max": 40,
+      "required": true,
+      "pattern": "^[a-z0-9-]{1,40}$"
+    },
+    "title": {
+      "kind": "text",
+      "max": 80,
+      "required": true
+    },
+    "description": {
+      "kind": "longtext",
+      "max": 160
+    },
+    "content": {
+      "max": 30
+    }
+  },
+  "embeds": {
+    "youtube": {
+      "label": "YouTube",
+      "frame": "https://www.youtube-nocookie.com"
+    },
+    "google_maps": {
+      "label": "Google Maps",
+      "frame": "https://www.google.com"
+    },
+    "google_forms": {
+      "label": "Google Forms",
+      "frame": "https://docs.google.com"
+    },
+    "calendly": {
+      "label": "Calendly",
+      "frame": "https://calendly.com"
     }
   }
 }
