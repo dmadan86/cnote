@@ -66,3 +66,54 @@ Self-hosted, a wildcard certificate needs the DNS-01 challenge, so Caddy must be
 
 On Vercel add `*.<SITES_DOMAIN>` to the web project. Pages and images are cached for 60 seconds (`max-age=60`); unpublish,
 takedown, republish and rename take effect within a minute. Add `SITES_DOMAIN` to the Public Suffix List (operations task).
+
+### Custom domains (Website Pro)
+
+Off unless `SITES_CUSTOM_DOMAINS=1` (API and web). Custom domains need Caddy in front of the web app (the self-hosted path);
+they stay hidden on a Vercel-hosted web app. Environment:
+- `SITES_APEX_IP` (API, web) — the public address or addresses of the edge, comma-separated (IPv4 and IPv6). Owners point the
+  address without `www` at it. **It must not change**: owners' A records depend on it. Unset, only `www`-style names
+  (anything with a CNAME) can be connected.
+- `SITES_ASK_ADDR` (API, default `127.0.0.1:4199`) — the listener for Caddy's on-demand TLS question
+  (`GET /internal/tls-ask?domain=`). Keep it on loopback or a private network; never route it publicly.
+- `APP_HOSTS` (API, web) — the app's own hostnames beyond `PUBLIC_BASE_URL`; they and `SITES_DOMAIN` can never be claimed.
+- The API must run the worker (`WITH_WORKER=1`): the daily `sites.domains` sweep re-checks every verified hostname.
+- `SITES_TEST_DNS=<suffix>` is for automated tests only: names under the suffix pass both DNS checks. Ignored when
+  `PUBLIC_BASE_URL` is https.
+
+How a hostname goes live: the owner adds it (`www.example.in` and/or `example.in`; each is its own claim), publishes the
+TXT record `_cnote-verify.<hostname>` = `cnote-verify=<token>` (a fresh 128-bit token per claim) and the routing record
+(CNAME to `<name>.<SITES_DOMAIN>`, or an A/AAAA record to `SITES_APEX_IP` for the apex). It is routed and approved for
+TLS only while verified, routed, published, not taken down and Pro. Re-checked daily; two failed days in a row make it
+`lost`. Disconnecting, unpublishing, takedown and a Pro lapse stop routing and certificates at once. Limits: 5 hostnames
+per site per 30 days, 50 newly verified hostnames per hour platform-wide, 120 DNS checks per site per hour.
+
+One Caddy instance with persistent storage (certificates and ACME state live there; losing it re-issues everything and can
+hit Let's Encrypt limits):
+
+```
+{
+  on_demand_tls { ask http://api:4199/internal/tls-ask }
+}
+# :80 redirects to https; ACME HTTP-01 challenges are answered by Caddy before the redirect
+http:// {
+  redir https://{host}{uri} permanent
+}
+# the sites' own names: one wildcard certificate (DNS-01)
+*.{$SITES_DOMAIN} {
+  tls { dns cloudflare {env.CF_API_TOKEN} }
+  reverse_proxy web:3000
+}
+# every other name: a certificate on demand, only if the ask endpoint says yes
+https:// {
+  tls { on_demand }
+  reverse_proxy web:3000
+}
+```
+
+Both blocks send everything to the web app, which forwards `/api/sites/*` to the API as it does today; the web proxy
+answers 404 for a host it does not know. DNS to publish: `*.<SITES_DOMAIN>` as A (and AAAA) records to the edge, not a
+CNAME; the edge's IPv4 and IPv6 addresses in `SITES_APEX_IP`.
+
+Your domain stays yours. You keep it at your registrar; C Note never registers, transfers or locks it. Disconnect at any
+time: your website goes back to `<name>.<SITES_DOMAIN>` and you can point the domain anywhere.

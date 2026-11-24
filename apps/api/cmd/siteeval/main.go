@@ -26,6 +26,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -209,6 +210,7 @@ func runCase(
 		Message:  c.Prompt,
 		Tier:     "routine",
 		Images:   imgs,
+		Page:     c.Page,
 		Business: c.Business,
 		History:  c.History,
 	}
@@ -309,6 +311,15 @@ func main() {
 		}
 	}
 	fixture := json.RawMessage(fixtureRaw)
+	fixtures := map[string]json.RawMessage{"": fixture}
+	if raw, err := os.ReadFile(filepath.Join(filepath.Dir(*casesFlag), "fixture_pages.json")); err == nil {
+		fixtures["pages"] = raw
+	}
+	for _, c := range cases {
+		if _, ok := fixtures[c.Fixture]; !ok {
+			log.Fatalf("case %s: unknown fixture %q", c.ID, c.Fixture)
+		}
+	}
 
 	// Load prices
 	prices, err := loadPrices(*pricesFlag)
@@ -366,7 +377,7 @@ func main() {
 				defer wg.Done()
 				for j := range jobs {
 					ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-					rr := runCase(ctx, spec, j.c, fixture, prov)
+					rr := runCase(ctx, spec, j.c, fixtures[j.c.Fixture], prov)
 					cancel()
 					mu.Lock()
 					results = append(results, result{j.c, rr})

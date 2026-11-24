@@ -31,6 +31,10 @@ var globalByDesign = map[string]bool{
 	// written only by the SECURITY DEFINER function sites.platform_set: the app role has no INSERT (site_platform) or no access at all (platform_actions)
 	"sites.site_platform":    true,
 	"sites.platform_actions": true,
+	// written only by SECURITY DEFINER functions (sites.domain_claim; sites.hit): the app role has no INSERT on them
+	"sites.domain_additions": true,
+	"sites.site_stats":       true,
+	"sites.site_referrers":   true,
 }
 
 type tbl struct{ schema, name string }

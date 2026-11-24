@@ -4,6 +4,7 @@ import {
   ArrowLeft,
   ArrowUp,
   Check,
+  Clock,
   Copy,
   Globe,
   HelpCircle,
@@ -21,6 +22,7 @@ import {
   Undo2,
   X,
 } from 'lucide-react'
+import dynamic from 'next/dynamic'
 import Link from 'next/link'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { btn, btnPrimary, EmptyState, ErrorText, Modal, Pill } from '@/components/ui'
@@ -29,19 +31,27 @@ import {
   blockDefs,
   blockLabel,
   blockType,
+  dataOfPage,
   type EditOp,
   type Site,
   type SiteData,
+  type SiteDomainMeta,
   type SiteMeta,
+  type SiteVersion,
   siteApi,
   type Turn,
+  viewOfPage,
 } from '@/lib/sites'
 import { HelpCard, hasSupport, type Support } from './help'
+import { VersionHistory } from './history'
+import { PageSwitcher } from './pages'
 import { PublishModal } from './publish-modal'
 import { DeviceToggle, PreviewFrame } from './renderer'
 import { SettingsPanel } from './settings-panel'
 import { ACCEPT, UPLOAD_HINT, uploadImage } from './upload'
 
+// Puck is client-only and heavy: loaded when the Edit tab first opens.
+const EditTab = dynamic(() => import('./edit-panel').then((m) => m.EditTab), { ssr: false })
 const CHIPS = ['Add our phone number', 'Make the top section blue', 'Change the heading', 'Remove a section']
 const VERBS: Record<string, string> = {
   update_block_props: 'Updating',
@@ -89,7 +99,13 @@ export function Builder({
   domain?: string
   support: Support
 }) {
-  const [meta, setMeta] = useState<SiteMeta>({})
+  const [meta, setMeta] = useState<SiteMeta & SiteDomainMeta>({})
+  const [page, setPage] = useState('') // open page; '' is Home
+  const [tab, setTab] = useState<'chat' | 'edit'>('chat')
+  const [histOpen, setHistOpen] = useState(false)
+  const [preview, setPreview] = useState<{ version: SiteVersion; data: SiteData } | null>(null)
+  const [epoch, setEpoch] = useState(0) // bumps when the draft moves for any reason but the editor's own save
+  const editVer = useRef('')
   const [settings, setSettings] = useState(false)
   const [pubOpen, setPubOpen] = useState(false)
   const [publishing, setPublishing] = useState(false)
@@ -128,6 +144,8 @@ export function Builder({
         ai_edits: r.ai_edits,
         can_publish: r.can_publish,
         lead_space: r.lead_space,
+        domains: (r as SiteDomainMeta).domains,
+        domains_available: (r as SiteDomainMeta).domains_available,
       })
       setTurns([...r.turns].sort((a, b) => a.created_at.localeCompare(b.created_at)))
     } catch (e) {
@@ -156,6 +174,17 @@ export function Builder({
     return () => clearTimeout(t)
   }, [toast])
 
+  // A page that no longer exists (deleted, restored over) sends the person back to Home.
+  const pageGone = !!page && !!data && !data.pages?.some((p) => p.slug === page)
+  useEffect(() => {
+    if (pageGone) setPage('')
+  }, [pageGone])
+  const draftId = site?.draft_version_id
+  useEffect(() => {
+    if (draftId && draftId !== editVer.current) setEpoch((e) => e + 1)
+    if (draftId) editVer.current = draftId
+  }, [draftId])
+
   const active = turns.find(isActive)
   const activeId = active?.id
   // Poll the active turn every second; when it ends, reload the page and the thread.
@@ -181,13 +210,16 @@ export function Builder({
     end.current?.scrollIntoView?.({ block: 'end' })
   }, [turns, sheet])
 
-  const blocks = data?.content ?? []
-  const selBlock = blocks.find((b) => b.props?.id === selected)
+  // The blocks of the open page (Home, or Header + page + footer); `own` is what move_block's index counts.
+  const shown = data ? (viewOfPage(data, page) ?? data.content) : []
+  const own = data ? (page ? (data.pages?.find((p) => p.slug === page)?.content ?? []) : data.content) : []
+  const blocks = own
+  const selBlock = shown.find((b) => b.props?.id === selected)
   const selType = selBlock?.type
 
   const uploading = attach.some((a) => a.status === 'uploading')
   const send = async (message: string, blockId?: string) => {
-    if (!site || !message.trim() || active || uploading) return
+    if (!site || !message.trim() || active || uploading || preview) return
     setErr(undefined)
     const ids = attach.flatMap((a) => (a.id ? [a.id] : []))
     try {
@@ -198,6 +230,7 @@ export function Builder({
         message.trim(),
         blockId,
         ids.length ? ids : undefined,
+        page || undefined,
       )
       setText('')
       setAttach([])
@@ -260,7 +293,10 @@ export function Builder({
     }
   }
 
-  const apply = async (fn: () => Promise<{ site: Site; data: SiteData }>, keepRedo = false) => {
+  const apply = async (
+    fn: () => Promise<{ site: Site; data: SiteData }>,
+    keepRedo = false,
+  ): Promise<boolean> => {
     setBusy(true)
     setErr(undefined)
     try {
@@ -268,9 +304,11 @@ export function Builder({
       setSite(r.site)
       setData(r.data)
       if (!keepRedo) setRedo([])
-      if (selected && !r.data.content.some((b) => b.props?.id === selected)) setSelected(null)
+      if (selected && !viewOfPage(r.data, page)?.some((b) => b.props?.id === selected)) setSelected(null)
+      return true
     } catch (e) {
       setErr(e as Error)
+      return false
     } finally {
       setBusy(false)
     }
@@ -280,6 +318,7 @@ export function Builder({
     site && apply(() => siteApi.restore(ws, siteId, site.draft_version_id, vid), keepRedo)
 
   const idx = blocks.findIndex((b) => b.props?.id === selected)
+  const foreign = !!selected && idx < 0 // a shared block seen on another page: change it on Home
   const imgProp = selType ? imageKey(selType) : undefined
   const altProp =
     imgProp && blockDefs[selType as string]?.props?.[`${imgProp}_alt`] ? `${imgProp}_alt` : undefined
@@ -351,7 +390,12 @@ export function Builder({
             (blockDefs[selBlock.type]?.max ?? 99) <= blocks.filter((b) => b.type === selBlock.type).length,
             () => {
               const { id: _id, ...props } = selBlock.props
-              return edit([{ tool: 'add_block', input: { type: selBlock.type, props, index: idx + 1 } }])
+              return edit([
+                {
+                  tool: 'add_block',
+                  input: { type: selBlock.type, props, index: idx + 1, ...(page ? { page } : {}) },
+                },
+              ])
             },
           ],
           ['Delete', Trash2, false, () => edit([{ tool: 'remove_block', input: { id: selected } }])],
@@ -362,7 +406,7 @@ export function Builder({
           type="button"
           aria-label={`${label} ${blockLabel(selBlock.type)}`}
           title={label}
-          disabled={off || busy || !!active}
+          disabled={off || foreign || busy || !!active}
           onClick={run}
           className="rounded p-1.5 hover:bg-hover disabled:opacity-40"
         >
@@ -468,6 +512,18 @@ export function Builder({
           <ArrowLeft size={16} />
         </Link>
         <h1 className="min-w-0 flex-1 truncate text-[14px] font-semibold md:flex-none">{site.name}</h1>
+        <PageSwitcher
+          ws={ws}
+          site={site}
+          data={data}
+          page={page}
+          onPage={(slug) => {
+            setPage(slug)
+            setSelected(null)
+          }}
+          apply={apply}
+          disabled={busy || !!active || !!preview}
+        />
         {status === 'draft' && <Pill>Draft</Pill>}
         {status === 'published' && <Pill tone="ok">Published</Pill>}
         {status === 'changes' && (
@@ -514,6 +570,19 @@ export function Builder({
         </div>
         <button
           type="button"
+          aria-label="Version history"
+          title="Version history"
+          aria-pressed={histOpen}
+          className="rounded p-1.5 hover:bg-hover"
+          onClick={() => {
+            setHistOpen((o) => !o)
+            if (histOpen) setPreview(null)
+          }}
+        >
+          <Clock size={16} />
+        </button>
+        <button
+          type="button"
           aria-label="Website settings"
           title="Website settings"
           className="rounded p-1.5 hover:bg-hover"
@@ -547,7 +616,17 @@ export function Builder({
                 <DeviceToggle mobile={mobile} onChange={setMobile} />
               </span>
             </div>
-            {toolbar}
+            {(page === 'privacy' || page === 'terms') && (
+              <p className="border-b border-line bg-warn-bg px-3 py-1.5 text-[12px] text-warn">
+                Template — not legal advice. Read it and have it checked before you publish.
+              </p>
+            )}
+            {preview && (
+              <p role="status" className="border-b border-line bg-warn-bg px-3 py-1.5 text-[12px] text-warn">
+                Viewing an earlier version. Your live site is not changed.
+              </p>
+            )}
+            {!preview && toolbar}
             {altOpen && altProp && selected && (
               <form
                 className="flex items-end gap-2 border-b border-line bg-canvas px-3 py-2"
@@ -575,9 +654,9 @@ export function Builder({
             )}
             <div className="min-h-0 flex-1 overflow-hidden bg-hover">
               <PreviewFrame
-                data={data}
+                data={dataOfPage(preview ? preview.data : data, page)}
                 selected={selected}
-                onSelect={setSelected}
+                onSelect={preview ? undefined : setSelected}
                 mobile={mobile}
                 className="h-full"
                 assetBase={`/api/w/${ws}/sites/${siteId}/img`}
@@ -608,256 +687,299 @@ export function Builder({
               Drop image to add it
             </div>
           )}
-          {helpOn && (
-            <div className="flex items-center justify-end border-b border-line px-3 py-1">
+          <div
+            role="tablist"
+            aria-label="Chat or Edit"
+            className="flex gap-1 border-b border-line px-3 py-1.5"
+          >
+            {(['chat', 'edit'] as const).map((t) => (
               <button
+                key={t}
                 type="button"
-                aria-label="Talk to a person"
-                aria-pressed={help}
-                title="Talk to a person"
-                className="rounded p-1 text-muted hover:bg-hover"
-                onClick={() => setHelp((h) => !h)}
+                role="tab"
+                aria-selected={tab === t}
+                className={`rounded-md px-3 py-1 text-[13px] font-medium ${tab === t ? 'bg-hover' : 'text-muted hover:bg-hover'}`}
+                onClick={() => setTab(t)}
               >
-                <HelpCircle size={15} />
+                {t === 'chat' ? 'Chat' : 'Edit'}
               </button>
+            ))}
+          </div>
+          {tab === 'edit' && (
+            <div className="flex min-h-0 flex-1 flex-col max-md:max-h-[55vh]">
+              <EditTab
+                key={`${page}:${epoch}:${preview?.version.id ?? ''}`}
+                ws={ws}
+                siteId={siteId}
+                page={page}
+                versionId={site.draft_version_id}
+                data={preview ? preview.data : data}
+                images={meta.images ?? []}
+                readOnly={!!active || !!preview}
+                onSaved={(r) => {
+                  editVer.current = r.site.draft_version_id // our own save: no remount
+                  setSite(r.site)
+                  setData(r.data)
+                  setRedo([])
+                }}
+                onReload={load}
+              />
             </div>
           )}
-          <div
-            className={`min-h-0 flex-1 space-y-3 overflow-y-auto p-3 ${sheet ? 'max-md:max-h-[55vh]' : 'max-md:hidden'}`}
-          >
-            {turns.length === 0 && (
-              <EmptyState compact icon={MessageSquare} title="Your site is ready. Tell me what to change.">
-                Try one of the suggestions below.
-              </EmptyState>
-            )}
-            {turns.map((t) => (
-              <div key={t.id} className="space-y-2">
-                <div className="ml-8 whitespace-pre-wrap rounded-lg bg-hover px-3 py-2 text-[13px]">
-                  {t.message}
-                </div>
-                {isActive(t) && (
-                  <p className="flex items-center gap-2 text-[13px] text-muted" role="status">
-                    <Loader2 size={14} className="animate-spin" /> {progress(t)}
-                  </p>
-                )}
-                {t.status === 'cancelled' && <p className="text-[13px] text-muted">Stopped.</p>}
-                {t.status === 'failed' && (
-                  <div role="alert" className="space-y-1.5 rounded-lg bg-bad-bg p-2.5 text-[13px] text-bad">
-                    <p>Couldn't apply that. Your site wasn't changed.</p>
-                    {/\[(PHONE|EMAIL|GSTIN|PAN|AADHAAR)\]|redact/i.test(t.error ?? '') ? (
-                      <p>To change contact details, edit them in Settings, Company profile.</p>
-                    ) : (
-                      t.error && <p className="opacity-80">{t.error}</p>
-                    )}
-                    {t.id === lastId && (
-                      <button
-                        type="button"
-                        className={btn}
-                        onClick={() => send(t.message, t.block_id ?? undefined)}
-                      >
-                        Retry
-                      </button>
-                    )}
-                  </div>
-                )}
-                {t.status === 'done' && t.reply && (
-                  <p className="whitespace-pre-wrap pr-8 text-[13px]">{t.reply}</p>
-                )}
-                {t.status === 'done' && t.version_id && card(t)}
+          <div className={tab === 'chat' ? 'contents' : 'hidden'}>
+            {helpOn && (
+              <div className="flex items-center justify-end border-b border-line px-3 py-1">
+                <button
+                  type="button"
+                  aria-label="Talk to a person"
+                  aria-pressed={help}
+                  title="Talk to a person"
+                  className="rounded p-1 text-muted hover:bg-hover"
+                  onClick={() => setHelp((h) => !h)}
+                >
+                  <HelpCircle size={15} />
+                </button>
               </div>
-            ))}
-            {locked && (
-              <p role="status" className="whitespace-pre-wrap pr-8 text-[13px]">
-                {limitMsg ??
-                  `You've used all ${ai?.limit} AI edits for this month. Your website stays live and enquiries keep coming. You can still move, duplicate and delete sections, replace images and undo. Edits come back on ${resets}. More edits will come with a paid plan.`}
-              </p>
             )}
-            {helpOn && (help || lastTwoFailed) && <HelpCard support={support} site={site.url ?? site.name} />}
-            <div ref={end} />
-          </div>
-          {latest && !sheet && <div className="px-3 pt-2 md:hidden">{card(latest)}</div>}
-          <div className="space-y-2 p-3">
-            {left !== undefined && left > 0 && left <= 5 && !lowOff && (
-              <p
-                role="status"
-                className="flex items-center gap-2 rounded-md bg-warn-bg px-2.5 py-1.5 text-[12px] text-warn"
-              >
-                <span className="flex-1">
-                  {left} {left === 1 ? 'edit' : 'edits'} left this month. Resets {resets}.
-                </span>
-                <button type="button" aria-label="Dismiss" onClick={() => setLowOff(true)}>
-                  <X size={12} />
-                </button>
-              </p>
-            )}
-            {attach.length > 0 && (
-              <ul className="flex flex-wrap gap-2" aria-label="Attached photos">
-                {attach.map((a) => (
-                  <li
-                    key={a.key}
-                    className={`relative size-12 overflow-hidden rounded-md border ${a.status === 'error' ? 'border-bad' : 'border-line'}`}
-                    title={a.error}
-                  >
-                    {/* biome-ignore lint/performance/noImgElement: a local blob preview */}
-                    <img src={a.preview} alt="" className="size-full object-cover" />
-                    {a.status === 'uploading' && (
-                      <span
-                        role="status"
-                        aria-label="Uploading"
-                        className="absolute inset-0 flex items-center justify-center bg-canvas/70"
-                      >
-                        <Loader2 size={16} className="animate-spin" />
-                      </span>
-                    )}
-                    {a.status === 'error' && (
+            <div
+              className={`min-h-0 flex-1 space-y-3 overflow-y-auto p-3 ${sheet ? 'max-md:max-h-[55vh]' : 'max-md:hidden'}`}
+            >
+              {turns.length === 0 && (
+                <EmptyState compact icon={MessageSquare} title="Your site is ready. Tell me what to change.">
+                  Try one of the suggestions below.
+                </EmptyState>
+              )}
+              {turns.map((t) => (
+                <div key={t.id} className="space-y-2">
+                  <div className="ml-8 whitespace-pre-wrap rounded-lg bg-hover px-3 py-2 text-[13px]">
+                    {t.message}
+                  </div>
+                  {isActive(t) && (
+                    <p className="flex items-center gap-2 text-[13px] text-muted" role="status">
+                      <Loader2 size={14} className="animate-spin" /> {progress(t)}
+                    </p>
+                  )}
+                  {t.status === 'cancelled' && <p className="text-[13px] text-muted">Stopped.</p>}
+                  {t.status === 'failed' && (
+                    <div role="alert" className="space-y-1.5 rounded-lg bg-bad-bg p-2.5 text-[13px] text-bad">
+                      <p>Couldn't apply that. Your site wasn't changed.</p>
+                      {/\[(PHONE|EMAIL|GSTIN|PAN|AADHAAR)\]|redact/i.test(t.error ?? '') ? (
+                        <p>To change contact details, edit them in Settings, Company profile.</p>
+                      ) : (
+                        t.error && <p className="opacity-80">{t.error}</p>
+                      )}
+                      {t.id === lastId && (
+                        <button
+                          type="button"
+                          className={btn}
+                          onClick={() => send(t.message, t.block_id ?? undefined)}
+                        >
+                          Retry
+                        </button>
+                      )}
+                    </div>
+                  )}
+                  {t.status === 'done' && t.reply && (
+                    <p className="whitespace-pre-wrap pr-8 text-[13px]">{t.reply}</p>
+                  )}
+                  {t.status === 'done' && t.version_id && card(t)}
+                </div>
+              ))}
+              {locked && (
+                <p role="status" className="whitespace-pre-wrap pr-8 text-[13px]">
+                  {limitMsg ??
+                    `You've used all ${ai?.limit} AI edits for this month. Your website stays live and enquiries keep coming. You can still move, duplicate and delete sections, replace images and undo. Edits come back on ${resets}. More edits will come with a paid plan.`}
+                </p>
+              )}
+              {helpOn && (help || lastTwoFailed) && (
+                <HelpCard support={support} site={site.url ?? site.name} />
+              )}
+              <div ref={end} />
+            </div>
+            {latest && !sheet && <div className="px-3 pt-2 md:hidden">{card(latest)}</div>}
+            <div className="space-y-2 p-3">
+              {left !== undefined && left > 0 && left <= 5 && !lowOff && (
+                <p
+                  role="status"
+                  className="flex items-center gap-2 rounded-md bg-warn-bg px-2.5 py-1.5 text-[12px] text-warn"
+                >
+                  <span className="flex-1">
+                    {left} {left === 1 ? 'edit' : 'edits'} left this month. Resets {resets}.
+                  </span>
+                  <button type="button" aria-label="Dismiss" onClick={() => setLowOff(true)}>
+                    <X size={12} />
+                  </button>
+                </p>
+              )}
+              {attach.length > 0 && (
+                <ul className="flex flex-wrap gap-2" aria-label="Attached photos">
+                  {attach.map((a) => (
+                    <li
+                      key={a.key}
+                      className={`relative size-12 overflow-hidden rounded-md border ${a.status === 'error' ? 'border-bad' : 'border-line'}`}
+                      title={a.error}
+                    >
+                      {/* biome-ignore lint/performance/noImgElement: a local blob preview */}
+                      <img src={a.preview} alt="" className="size-full object-cover" />
+                      {a.status === 'uploading' && (
+                        <span
+                          role="status"
+                          aria-label="Uploading"
+                          className="absolute inset-0 flex items-center justify-center bg-canvas/70"
+                        >
+                          <Loader2 size={16} className="animate-spin" />
+                        </span>
+                      )}
+                      {a.status === 'error' && (
+                        <button
+                          type="button"
+                          aria-label="Couldn't upload. Try again"
+                          className="absolute inset-0 flex items-center justify-center bg-bad-bg text-[10px] font-medium text-bad"
+                          onClick={() => startUpload(a)}
+                        >
+                          Retry
+                        </button>
+                      )}
                       <button
                         type="button"
-                        aria-label="Couldn't upload. Try again"
-                        className="absolute inset-0 flex items-center justify-center bg-bad-bg text-[10px] font-medium text-bad"
-                        onClick={() => startUpload(a)}
+                        aria-label="Remove photo"
+                        className="absolute right-0 top-0 rounded-bl bg-canvas p-0.5"
+                        onClick={() => dropAttach(a.key)}
                       >
-                        Retry
+                        <X size={10} />
                       </button>
-                    )}
-                    <button
-                      type="button"
-                      aria-label="Remove photo"
-                      className="absolute right-0 top-0 rounded-bl bg-canvas p-0.5"
-                      onClick={() => dropAttach(a.key)}
-                    >
-                      <X size={10} />
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-            {attach.some((a) => a.status === 'error') && (
-              <p role="alert" className="text-[12px] text-bad">
-                Couldn't upload. {attach.find((a) => a.error)?.error}
-              </p>
-            )}
-            {attach.length > 0 && <p className="text-[12px] text-muted">{UPLOAD_HINT}</p>}
-            {!locked && (
-              <ul className="-mx-3 flex gap-2 overflow-x-auto px-3 pb-1">
-                {(attach.length ? WITH_IMAGE : CHIPS).map((c) => (
-                  <li key={c} className="shrink-0">
-                    <button
-                      type="button"
-                      className="rounded-full border border-line px-2.5 py-1 text-[12px] hover:bg-hover"
-                      onClick={() => {
-                        setText(c)
-                        input.current?.focus()
-                      }}
-                    >
-                      {c}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-            {(err as { code?: string } | undefined)?.code === 'conflict' ? (
-              <p role="alert" className="flex items-center gap-2 text-[13px] text-bad">
-                The site changed. Reload to see the latest.
-                <button
-                  type="button"
-                  className={btn}
-                  onClick={() => {
-                    setErr(undefined)
-                    load()
-                  }}
-                >
-                  Reload
-                </button>
-              </p>
-            ) : (
-              <ErrorText error={err} />
-            )}
-            <form
-              className="rounded-lg border border-line focus-within:border-accent"
-              onSubmit={(e) => {
-                e.preventDefault()
-                send(text, selected ?? undefined)
-              }}
-            >
-              {selected && selType && (
-                <div className="px-2 pt-2">
-                  <span className="inline-flex items-center gap-1 rounded-full bg-hover px-2 py-0.5 text-[12px]">
-                    Editing: {blockLabel(selType)}
-                    <button
-                      type="button"
-                      aria-label="Stop editing this section"
-                      onClick={() => setSelected(null)}
-                    >
-                      <X size={12} />
-                    </button>
-                  </span>
-                </div>
+                    </li>
+                  ))}
+                </ul>
               )}
-              <div className="flex items-end gap-1 p-1.5">
-                <button
-                  type="button"
-                  aria-label={sheet ? 'Hide conversation' : 'Show conversation'}
-                  aria-pressed={sheet}
-                  className="rounded p-1.5 hover:bg-hover md:hidden"
-                  onClick={() => setSheet((s) => !s)}
-                >
-                  <MessageSquare size={16} />
-                </button>
-                <button
-                  type="button"
-                  aria-label="Add a photo"
-                  title={UPLOAD_HINT}
-                  disabled={locked || attach.length >= 4}
-                  className="rounded p-1.5 hover:bg-hover disabled:opacity-40"
-                  onClick={() => attachInput.current?.click()}
-                >
-                  <ImagePlus size={16} />
-                </button>
-                <textarea
-                  ref={input}
-                  aria-label="Ask for a change"
-                  rows={2}
-                  value={text}
-                  disabled={locked}
-                  placeholder={locked ? `Edits are back on ${resets}` : 'Ask for a change…'}
-                  onChange={(e) => setText(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && !e.shiftKey) {
-                      e.preventDefault()
-                      send(text, selected ?? undefined)
-                    }
-                  }}
-                  className="min-w-0 flex-1 resize-none bg-transparent px-1.5 py-1 text-[14px] placeholder:text-muted focus:outline-none"
-                />
-                {active ? (
+              {attach.some((a) => a.status === 'error') && (
+                <p role="alert" className="text-[12px] text-bad">
+                  Couldn't upload. {attach.find((a) => a.error)?.error}
+                </p>
+              )}
+              {attach.length > 0 && <p className="text-[12px] text-muted">{UPLOAD_HINT}</p>}
+              {!locked && (
+                <ul className="-mx-3 flex gap-2 overflow-x-auto px-3 pb-1">
+                  {(attach.length ? WITH_IMAGE : CHIPS).map((c) => (
+                    <li key={c} className="shrink-0">
+                      <button
+                        type="button"
+                        className="rounded-full border border-line px-2.5 py-1 text-[12px] hover:bg-hover"
+                        onClick={() => {
+                          setText(c)
+                          input.current?.focus()
+                        }}
+                      >
+                        {c}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {(err as { code?: string } | undefined)?.code === 'conflict' ? (
+                <p role="alert" className="flex items-center gap-2 text-[13px] text-bad">
+                  The site changed. Reload to see the latest.
                   <button
                     type="button"
-                    aria-label="Stop"
-                    className="rounded-md bg-hover p-2"
-                    onClick={() => siteApi.cancel(ws, active.id).then(load, (e) => setErr(e))}
+                    className={btn}
+                    onClick={() => {
+                      setErr(undefined)
+                      load()
+                    }}
                   >
-                    <Square size={14} />
+                    Reload
                   </button>
-                ) : (
-                  <button
-                    type="submit"
-                    aria-label="Send"
-                    disabled={!text.trim() || locked || uploading}
-                    className="rounded-md bg-accent p-2 text-accent-fg disabled:opacity-50"
-                  >
-                    <Send size={14} />
-                  </button>
-                )}
-              </div>
-            </form>
-            {left !== undefined && (
-              <p
-                className="text-[12px] text-muted"
-                title="Each change I make uses 1 edit. Moving, deleting and Undo are free."
+                </p>
+              ) : (
+                <ErrorText error={err} />
+              )}
+              <form
+                className="rounded-lg border border-line focus-within:border-accent"
+                onSubmit={(e) => {
+                  e.preventDefault()
+                  send(text, selected ?? undefined)
+                }}
               >
-                {left} {left === 1 ? 'edit' : 'edits'} left this month
-              </p>
-            )}
+                {selected && selType && (
+                  <div className="px-2 pt-2">
+                    <span className="inline-flex items-center gap-1 rounded-full bg-hover px-2 py-0.5 text-[12px]">
+                      Editing: {blockLabel(selType)}
+                      <button
+                        type="button"
+                        aria-label="Stop editing this section"
+                        onClick={() => setSelected(null)}
+                      >
+                        <X size={12} />
+                      </button>
+                    </span>
+                  </div>
+                )}
+                <div className="flex items-end gap-1 p-1.5">
+                  <button
+                    type="button"
+                    aria-label={sheet ? 'Hide conversation' : 'Show conversation'}
+                    aria-pressed={sheet}
+                    className="rounded p-1.5 hover:bg-hover md:hidden"
+                    onClick={() => setSheet((s) => !s)}
+                  >
+                    <MessageSquare size={16} />
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="Add a photo"
+                    title={UPLOAD_HINT}
+                    disabled={locked || attach.length >= 4}
+                    className="rounded p-1.5 hover:bg-hover disabled:opacity-40"
+                    onClick={() => attachInput.current?.click()}
+                  >
+                    <ImagePlus size={16} />
+                  </button>
+                  <textarea
+                    ref={input}
+                    aria-label="Ask for a change"
+                    rows={2}
+                    value={text}
+                    disabled={locked}
+                    placeholder={locked ? `Edits are back on ${resets}` : 'Ask for a change…'}
+                    onChange={(e) => setText(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault()
+                        send(text, selected ?? undefined)
+                      }
+                    }}
+                    className="min-w-0 flex-1 resize-none bg-transparent px-1.5 py-1 text-[14px] placeholder:text-muted focus:outline-none"
+                  />
+                  {active ? (
+                    <button
+                      type="button"
+                      aria-label="Stop"
+                      className="rounded-md bg-hover p-2"
+                      onClick={() => siteApi.cancel(ws, active.id).then(load, (e) => setErr(e))}
+                    >
+                      <Square size={14} />
+                    </button>
+                  ) : (
+                    <button
+                      type="submit"
+                      aria-label="Send"
+                      disabled={!text.trim() || locked || uploading}
+                      className="rounded-md bg-accent p-2 text-accent-fg disabled:opacity-50"
+                    >
+                      <Send size={14} />
+                    </button>
+                  )}
+                </div>
+              </form>
+              {left !== undefined && (
+                <p
+                  className="text-[12px] text-muted"
+                  title="Each change I make uses 1 edit. Moving, deleting and Undo are free."
+                >
+                  {left} {left === 1 ? 'edit' : 'edits'} left this month
+                </p>
+              )}
+            </div>
           </div>
         </aside>
       </div>
@@ -906,9 +1028,41 @@ export function Builder({
           </button>
         </div>
       )}
+      {histOpen && (
+        <aside
+          aria-label="Version history"
+          className="fixed inset-y-0 right-0 z-40 w-[480px] max-w-full border-l border-line bg-canvas shadow-xl"
+        >
+          <VersionHistory
+            ws={ws}
+            siteId={siteId}
+            draftVersionId={site.draft_version_id}
+            onPreview={setPreview}
+            onRestored={(r) => {
+              setPreview(null)
+              setSite(r.site)
+              setData(r.data)
+              setRedo([])
+            }}
+            onReload={() => {
+              setPreview(null)
+              load()
+            }}
+            onClose={() => {
+              setPreview(null)
+              setHistOpen(false)
+            }}
+          />
+        </aside>
+      )}
       {settings && (
         <SettingsPanel
+          key={page}
           ws={ws}
+          page={page}
+          domains={meta.domains ?? []}
+          domainsAvailable={!!meta.domains_available}
+          onReload={load}
           site={site}
           data={data}
           meta={meta}

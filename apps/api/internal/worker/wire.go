@@ -63,6 +63,9 @@ func New(pool *pgxpool.Pool, reg *command.Registry) *Worker {
 	w.AddSweep(Sweep{"agents.schedule", time.Minute, func(ctx context.Context, w *Worker) error { return agents.Sweep(ctx, w.Pool) }})
 	w.AddSweep(Sweep{"sites.turns", time.Minute, func(ctx context.Context, w *Worker) error { return sites.Sweep(ctx, w.Pool) }})
 	w.AddSweep(Sweep{"sites.prune", day, func(ctx context.Context, w *Worker) error { return sites.PruneForm(ctx, w.Pool) }})
+	w.AddSweep(Sweep{"sites.prune_versions", day, func(ctx context.Context, w *Worker) error { return sites.PruneVersions(ctx, w.Pool) }})
+	w.AddSweep(Sweep{"sites.domains", day, func(ctx context.Context, w *Worker) error { return sites.DomainSweep(ctx, w.Pool) }})
+	w.AddSweep(Sweep{"sites.stats", day, func(ctx context.Context, w *Worker) error { return sites.StatsSweep(ctx, w.Pool) }})
 	w.AddSweep(Sweep{"reminders.send", 5 * time.Minute, func(ctx context.Context, w *Worker) error {
 		return reminders.Sweep(ctx, w.Pool, w.Registry, time.Now())
 	}})

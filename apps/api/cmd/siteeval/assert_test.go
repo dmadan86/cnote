@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -503,5 +504,31 @@ func TestAssertRootUnknownField(t *testing.T) {
 	})
 	if len(errs) != 0 {
 		t.Fatalf("expected no errors for unknown root field (absent), got %v", errs)
+	}
+}
+
+var pagesDoc = json.RawMessage(`{"root":{"props":{"title":"T","theme":{}}},"content":[{"type":"Header","props":{"id":"Header-00000001","links":[]}}],
+ "pages":[{"slug":"about","title":"About","description":"d","content":[{"type":"Text","props":{"id":"Text-00000002","title":"x"}}]}]}`)
+
+func TestAssertPages(t *testing.T) {
+	errs := EvalAssertions("t", pagesDoc, []Assertion{
+		{Path: "pages", Op: "count", Value: 1}, {Path: "pages.0.slug", Op: "equals", Value: "about"},
+		{Path: "about/Text.title", Op: "equals", Value: "x"}, {Path: "Text.title", Op: "equals", Value: "x"},
+	})
+	if len(errs) != 0 {
+		t.Fatal(errs)
+	}
+}
+
+func TestCollateralPages(t *testing.T) {
+	changed := json.RawMessage(strings.Replace(string(pagesDoc), `"title":"x"`, `"title":"y"`, 1))
+	if d := CheckCollateral("t", pagesDoc, changed, []string{"page:about"}); len(d) != 0 {
+		t.Fatal(d)
+	}
+	if d := CheckCollateral("t", pagesDoc, changed, nil); len(d) == 0 {
+		t.Fatal("a change to another page went unnoticed")
+	}
+	if d := CheckCollateral("t", pagesDoc, changed, []string{"pages"}); len(d) != 0 {
+		t.Fatal(d)
 	}
 }

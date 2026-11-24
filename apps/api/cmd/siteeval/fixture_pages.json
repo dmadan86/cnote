@@ -216,7 +216,7 @@
         {
           "type": "Text",
           "props": {
-            "id": "Text-about-0001",
+            "id": "Text-a0b00001",
             "title": "Our Story",
             "body": "Sharma Dental has been serving patients in Pune since 2008. Our team of experienced dentists is committed to making every visit comfortable and stress-free."
           }
@@ -231,7 +231,7 @@
         {
           "type": "Text",
           "props": {
-            "id": "Text-pricing-0001",
+            "id": "Text-a0b00002",
             "title": "Our Packages",
             "body": "We offer clear, upfront pricing for all treatments. EMI available on treatments above \u20b95,000."
           }

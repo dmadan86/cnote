@@ -14,7 +14,9 @@ import (
 	"unicode"
 )
 
-func TLSAsk(ctx context.Context, pool *pgxpool.Pool, domain string) (bool, error) { return false, nil }
+func TLSAsk(ctx context.Context, pool *pgxpool.Pool, domain string) (bool, error) {
+	return tlsAsk(ctx, pool, domain)
+}
 
 func NormalizeHostname(h string) (string, error) {
 	h = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(h)), ".")

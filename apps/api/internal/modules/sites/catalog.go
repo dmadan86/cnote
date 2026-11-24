@@ -24,15 +24,26 @@ type field struct {
 	Optional bool             `json:"optional"`
 	Values   []string         `json:"values"`
 	Props    map[string]field `json:"props"`
+	Verbatim bool             `json:"verbatim"` // the model may only copy it from the user's message
 }
 type blockDef struct {
-	Max   int              `json:"max"`
-	Props map[string]field `json:"props"`
+	Max    int              `json:"max"`
+	Shared bool             `json:"shared"` // lives on Home, drawn on every page
+	Props  map[string]field `json:"props"`
 }
 
 var catalog struct {
 	Theme  map[string]field    `json:"theme"`
 	Blocks map[string]blockDef `json:"blocks"`
+	Pages  struct {
+		Max  int `json:"max"`
+		Slug struct {
+			Pattern string `json:"pattern"`
+		} `json:"slug"`
+		Content struct {
+			Max int `json:"max"`
+		} `json:"content"`
+	} `json:"pages"`
 }
 
 func init() {
@@ -40,6 +51,7 @@ func init() {
 	if err := json.Unmarshal(b, &catalog); err != nil {
 		panic(err)
 	}
+	slugPattern = regexp.MustCompile(catalog.Pages.Slug.Pattern)
 }
 
 var imageIDPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
@@ -48,13 +60,23 @@ var colorPattern = regexp.MustCompile(`^#[0-9a-f]{6}$`)
 var phonePattern = regexp.MustCompile(`^\+?[0-9 ()-]{3,30}$`)
 var telPattern = regexp.MustCompile(`^[0-9+ -]+$`)
 
-func validateFields(path string, values map[string]any, defs map[string]field) error {
+// slugPattern is a page address (design 17.10); internalLink is "/", "/<slug>" or either with "#<block id>".
+var slugPattern *regexp.Regexp
+var internalLink = regexp.MustCompile(`^/([a-z0-9-]{1,40})?(?:#([A-Za-z]+-[0-9a-f]{8}))?$`)
+
+// reservedSlugs can never be a page: the web server answers them itself.
+var reservedSlugs = map[string]bool{"api": true, "internal": true, "_next": true, "robots.txt": true, "sitemap.xml": true, "favicon.ico": true, "assets": true, "img": true, "published": true}
+
+// maxDocBytes is below the column's 262144 because jsonb text is a little longer than compact JSON.
+const maxDocBytes = 240000
+
+func validateFields(path string, values map[string]any, defs map[string]field, slugs map[string]bool) error {
 	for k, v := range values {
 		f, ok := defs[k]
 		if !ok {
 			return fmt.Errorf("%s.%s: unknown property", path, k)
 		}
-		if err := validateField(path+"."+k, v, f); err != nil {
+		if err := validateFieldIn(path+"."+k, v, f, slugs); err != nil {
 			return err
 		}
 	}
@@ -68,7 +90,10 @@ func validateFields(path string, values map[string]any, defs map[string]field) e
 	}
 	return nil
 }
-func validateField(path string, v any, f field) error {
+func validateField(path string, v any, f field) error { return validateFieldIn(path, v, f, nil) }
+
+// validateFieldIn checks one value; slugs are the pages a link may point at.
+func validateFieldIn(path string, v any, f field, slugs map[string]bool) error {
 	if f.Kind == "list" {
 		a, ok := v.([]any)
 		if !ok {
@@ -82,7 +107,7 @@ func validateField(path string, v any, f field) error {
 			if !ok {
 				return fmt.Errorf("%s: expected object", path)
 			}
-			if err := validateFields(path, m, f.Props); err != nil {
+			if err := validateFields(path, m, f.Props, slugs); err != nil {
 				return err
 			}
 		}
@@ -145,6 +170,9 @@ func validateField(path string, v any, f field) error {
 					good = u.Opaque != "" && validEmail(u.Opaque) && !strings.ContainsFunc(s, unicode.IsSpace)
 				case "":
 					good = strings.HasPrefix(s, "#") && idPattern.MatchString(strings.TrimPrefix(s, "#"))
+					if m := internalLink.FindStringSubmatch(s); m != nil {
+						good = m[1] == "" || slugs[m[1]]
+					}
 				}
 			}
 			if !good {
@@ -169,17 +197,29 @@ func luminance(s string) float64 {
 	}
 	return .2126*conv(r) + .7152*conv(g) + .0722*conv(b)
 }
+
+type docBlock struct {
+	Type  string         `json:"type"`
+	Props map[string]any `json:"props"`
+}
+type docPage struct {
+	Slug        string     `json:"slug"`
+	Title       string     `json:"title"`
+	Description *string    `json:"description"`
+	Content     []docBlock `json:"content"`
+}
+type document struct {
+	Root struct {
+		Props map[string]any `json:"props"`
+	} `json:"root"`
+	Content []docBlock `json:"content"`
+	Pages   []docPage  `json:"pages"`
+}
+
+// Validate checks a whole document: Home, every extra page and the theme (design 2, 17.10).
 func Validate(data json.RawMessage) error {
-	var d struct {
-		Root struct {
-			Props map[string]any `json:"props"`
-		} `json:"root"`
-		Content []struct {
-			Type  string         `json:"type"`
-			Props map[string]any `json:"props"`
-		} `json:"content"`
-	}
-	if len(data) >= 65536 {
+	var d document
+	if len(data) >= maxDocBytes {
 		return fmt.Errorf("page too large")
 	}
 	dec := json.NewDecoder(bytes.NewReader(data))
@@ -187,8 +227,21 @@ func Validate(data json.RawMessage) error {
 	if err := dec.Decode(&d); err != nil {
 		return err
 	}
-	if len(d.Content) > 30 {
-		return fmt.Errorf("at most 30 blocks")
+	if len(d.Pages) > catalog.Pages.Max {
+		return fmt.Errorf("at most %d pages", catalog.Pages.Max)
+	}
+	slugs := map[string]bool{}
+	for _, p := range d.Pages {
+		if !slugPattern.MatchString(p.Slug) {
+			return fmt.Errorf("page %q: the address may use only a-z, 0-9 and hyphens, up to 40 characters", p.Slug)
+		}
+		if reservedSlugs[p.Slug] {
+			return fmt.Errorf("page %q: that address is reserved", p.Slug)
+		}
+		if slugs[p.Slug] {
+			return fmt.Errorf("page %q: duplicate address", p.Slug)
+		}
+		slugs[p.Slug] = true
 	}
 	for k := range d.Root.Props {
 		if k != "title" && k != "description" && k != "theme" {
@@ -211,7 +264,7 @@ func Validate(data json.RawMessage) error {
 	if !ok {
 		return fmt.Errorf("theme: expected object")
 	}
-	if err := validateFields("theme", theme, catalog.Theme); err != nil {
+	if err := validateFields("theme", theme, catalog.Theme, nil); err != nil {
 		return err
 	}
 	for k, f := range catalog.Theme {
@@ -226,12 +279,42 @@ func Validate(data json.RawMessage) error {
 	if (a+.05)/(b+.05) < 4.5 {
 		return fmt.Errorf("theme: text contrast must be at least 4.5")
 	}
-	counts := map[string]int{}
 	ids := map[string]bool{}
-	for _, block := range d.Content {
+	if err := validateBlocks(d.Content, true, slugs, ids); err != nil {
+		return err
+	}
+	for _, p := range d.Pages {
+		if p.Title == "" {
+			return fmt.Errorf("page %s: title required", p.Slug)
+		}
+		if err := validateField("page "+p.Slug+" title", p.Title, field{Kind: "text", Max: 80}); err != nil {
+			return err
+		}
+		if p.Description != nil {
+			if err := validateField("page "+p.Slug+" description", *p.Description, field{Kind: "longtext", Max: 160}); err != nil {
+				return err
+			}
+		}
+		if err := validateBlocks(p.Content, false, slugs, ids); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateBlocks checks one page's blocks; ids is shared by every page so a block id is unique in the document.
+func validateBlocks(blocks []docBlock, home bool, slugs, ids map[string]bool) error {
+	if len(blocks) > catalog.Pages.Content.Max {
+		return fmt.Errorf("at most %d blocks", catalog.Pages.Content.Max)
+	}
+	counts := map[string]int{}
+	for _, block := range blocks {
 		def, ok := catalog.Blocks[block.Type]
 		if !ok {
 			return fmt.Errorf("unknown block %s", block.Type)
+		}
+		if def.Shared && !home {
+			return fmt.Errorf("%s: only the Home page can have it; it shows on every page", block.Type)
 		}
 		counts[block.Type]++
 		if def.Max > 0 && counts[block.Type] > def.Max {
@@ -248,24 +331,35 @@ func Validate(data json.RawMessage) error {
 				props[k] = v
 			}
 		}
-		if err := validateFields(block.Type, props, def.Props); err != nil {
+		if err := validateFields(block.Type, props, def.Props, slugs); err != nil {
 			return err
+		}
+		if block.Type == "Embed" {
+			provider, _ := props["provider"].(string)
+			ref, _ := props["source"].(string)
+			if EmbedSrc(provider, ref) == "" {
+				return fmt.Errorf("Embed.source: not a valid link or id for %s", provider)
+			}
 		}
 	}
 	return nil
 }
 
-// ImageIDs returns the distinct uploaded image IDs referenced by the page.
-func ImageIDs(data json.RawMessage) []string {
-	var d struct {
-		Content []struct {
-			Type  string         `json:"type"`
-			Props map[string]any `json:"props"`
-		} `json:"content"`
-	}
+// allBlocks lists every block of every page, Home first. A document that does not parse has none.
+func allBlocks(data json.RawMessage) []docBlock {
+	var d document
 	if json.Unmarshal(data, &d) != nil {
 		return nil
 	}
+	out := d.Content
+	for _, p := range d.Pages {
+		out = append(out, p.Content...)
+	}
+	return out
+}
+
+// ImageIDs returns the distinct uploaded image IDs referenced by any page.
+func ImageIDs(data json.RawMessage) []string {
 	seen := map[string]bool{}
 	var out []string
 	var walk func(map[string]any, map[string]field)
@@ -289,21 +383,15 @@ func ImageIDs(data json.RawMessage) []string {
 			}
 		}
 	}
-	for _, block := range d.Content {
+	for _, block := range allBlocks(data) {
 		walk(block.Props, catalog.Blocks[block.Type].Props)
 	}
 	return out
 }
+
+// HasBlock reports whether any page has a block of this type.
 func HasBlock(data json.RawMessage, typ string) bool {
-	var d struct {
-		Content []struct {
-			Type string `json:"type"`
-		} `json:"content"`
-	}
-	if json.Unmarshal(data, &d) != nil {
-		return false
-	}
-	for _, b := range d.Content {
+	for _, b := range allBlocks(data) {
 		if b.Type == typ {
 			return true
 		}

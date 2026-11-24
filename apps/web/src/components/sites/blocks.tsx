@@ -1,7 +1,8 @@
 import { ImageIcon, MessageCircle } from 'lucide-react'
 import type { ComponentType, ReactNode } from 'react'
-import { imageId, mapsHref, safeHref, telHref, waHref } from '@/lib/sites'
+import { embedLinks, imageId, mapsHref, safeHref, telHref, waHref } from '@/lib/sites'
 import type catalog from './catalog.json'
+import { EmbedFrame } from './embed'
 
 /**
  * Block context (design section 8): every block gets `assetBase` (an image renders as `${assetBase}/${id}`),
@@ -110,7 +111,9 @@ function Header(p: P) {
   const cta = str(p.cta_label)
   const brand = str(p.brand)
   return (
-    <header className="mx-auto flex w-full max-w-[1120px] flex-wrap items-center justify-between gap-x-6 gap-y-2 px-5 py-3 md:px-8 md:py-4">
+    <header
+      className={`mx-auto flex w-full max-w-[1120px] flex-wrap items-center gap-x-6 gap-y-2 px-5 py-3 md:px-8 md:py-4 ${str(p.variant) === 'centered' ? 'flex-col justify-center text-center' : 'justify-between'}`}
+    >
       <p className="flex items-center gap-2.5 text-lg font-bold">
         <Img id={p.logo} p={p} alt={brand} className="h-9 w-auto max-w-[140px] object-contain" />
         {brand}
@@ -141,12 +144,37 @@ function Header(p: P) {
 }
 
 function Hero(p: P) {
-  const center = p.align === 'center'
-  const cta = str(p.cta_label)
+  const v = str(p.variant)
   const hasImg = !!imageId(p.image) && !!p.assetBase
+  const cover = v === 'cover' && hasImg
+  const center = v === 'centered' || v === 'cover' || (!v && p.align === 'center')
+  const cta = str(p.cta_label)
+  if (cover)
+    return (
+      <section className="relative isolate overflow-hidden text-white">
+        <Img
+          id={p.image}
+          p={p}
+          alt={str(p.image_alt)}
+          className="absolute inset-0 -z-10 size-full object-cover"
+        />
+        <div aria-hidden="true" className="absolute inset-0 -z-10 bg-black/55" />
+        <div className="mx-auto flex w-full max-w-[1120px] flex-col items-center gap-4 px-5 py-20 text-center md:px-8 md:py-32">
+          <h1 className="max-w-[20ch] text-[32px] font-bold leading-[38px] md:text-[56px] md:leading-[60px]">
+            {str(p.title)}
+          </h1>
+          {str(p.subtitle) && <p className="max-w-[56ch] text-lg opacity-90">{str(p.subtitle)}</p>}
+          {cta && (
+            <Link href={p.cta_href} className={`${btnCls} max-md:w-full`}>
+              {cta}
+            </Link>
+          )}
+        </div>
+      </section>
+    )
   return (
     <section
-      className={`mx-auto grid w-full max-w-[1120px] gap-8 px-5 py-14 md:px-8 md:py-24 ${hasImg && !center ? 'md:grid-cols-2 md:items-center' : ''}`}
+      className={`mx-auto grid w-full max-w-[1120px] gap-8 px-5 py-14 md:px-8 md:py-24 ${hasImg && !center && v !== 'centered' ? 'md:grid-cols-2 md:items-center' : ''}`}
     >
       <div className={`flex flex-col gap-4 ${center ? 'items-center text-center' : 'items-start'}`}>
         <h1 className="max-w-[20ch] text-[32px] font-bold leading-[38px] md:text-[56px] md:leading-[60px]">
@@ -161,13 +189,15 @@ function Hero(p: P) {
           </Link>
         )}
       </div>
-      <Img
-        id={p.image}
-        p={p}
-        alt={str(p.image_alt)}
-        placeholder="Add a photo"
-        className="aspect-[4/3] w-full rounded-[var(--site-radius)] object-cover"
-      />
+      {v !== 'centered' && (
+        <Img
+          id={p.image}
+          p={p}
+          alt={str(p.image_alt)}
+          placeholder="Add a photo"
+          className="aspect-[4/3] w-full rounded-[var(--site-radius)] object-cover"
+        />
+      )}
     </section>
   )
 }
@@ -178,10 +208,16 @@ function Services(p: P) {
     <section className={sec}>
       {str(p.title) && <h2 className={`${h2} mb-8`}>{str(p.title)}</h2>}
       {items.length > 0 && (
-        <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 lg:gap-6">
+        <ul
+          className={
+            str(p.variant) === 'list'
+              ? 'max-w-[720px] divide-y divide-[var(--site-border)] border-y border-[var(--site-border)]'
+              : 'grid gap-4 sm:grid-cols-2 lg:grid-cols-3 lg:gap-6'
+          }
+        >
           {items.map((it, i) => (
             // biome-ignore lint/suspicious/noArrayIndexKey: list items have no ids
-            <li key={i} className={`${card} p-5`}>
+            <li key={i} className={str(p.variant) === 'list' ? 'py-4' : `${card} p-5`}>
               <h3 className="text-lg font-semibold">{str(it.name)}</h3>
               {str(it.description) && (
                 <p className="mt-1 text-[15px] text-[var(--site-muted)]">{str(it.description)}</p>
@@ -199,16 +235,17 @@ function Services(p: P) {
 
 function About(p: P) {
   const hasImg = !!imageId(p.image) && !!p.assetBase
+  const v = str(p.variant)
   return (
     <section
-      className={`${sec} grid gap-8 ${hasImg || p.editing ? 'md:grid-cols-[5fr_7fr] md:items-center md:gap-14' : ''}`}
+      className={`${sec} grid gap-8 ${(hasImg || p.editing) && v !== 'stacked' ? `${v === 'image-right' ? 'md:grid-cols-[7fr_5fr]' : 'md:grid-cols-[5fr_7fr]'} md:items-center md:gap-14` : ''}`}
     >
       <Img
         id={p.image}
         p={p}
         alt={str(p.image_alt)}
         placeholder="Add a photo"
-        className="aspect-[4/3] w-full rounded-[var(--site-radius)] object-cover"
+        className={`aspect-[4/3] w-full rounded-[var(--site-radius)] object-cover ${v === 'image-right' ? 'md:order-2' : ''}`}
       />
       <div className="max-w-[60ch]">
         {str(p.title) && <h2 className={`${h2} mb-4`}>{str(p.title)}</h2>}
@@ -229,10 +266,19 @@ function Gallery(p: P) {
   return (
     <section className={sec}>
       {str(p.title) && <h2 className={`${h2} mb-8`}>{str(p.title)}</h2>}
-      <ul className="grid grid-cols-2 gap-2 md:grid-cols-3 md:gap-4">
+      <ul
+        className={
+          str(p.variant) === 'strip'
+            ? 'flex snap-x gap-3 overflow-x-auto pb-2'
+            : 'grid grid-cols-2 gap-2 md:grid-cols-3 md:gap-4'
+        }
+      >
         {items.map((it, i) => (
-          // biome-ignore lint/suspicious/noArrayIndexKey: list items have no ids
-          <li key={i}>
+          <li
+            // biome-ignore lint/suspicious/noArrayIndexKey: list items have no ids
+            key={i}
+            className={str(p.variant) === 'strip' ? 'w-[70%] shrink-0 snap-start md:w-[32%]' : undefined}
+          >
             <figure>
               <Img
                 id={it.image}
@@ -259,10 +305,16 @@ function Pricing(p: P) {
     <section className={sec}>
       {str(p.title) && <h2 className={`${h2} mb-8`}>{str(p.title)}</h2>}
       {items.length > 0 && (
-        <ul className={`${card} max-w-[720px] divide-y divide-[var(--site-border)] p-2 md:p-4`}>
+        <ul
+          className={
+            str(p.variant) === 'cards'
+              ? 'grid gap-4 sm:grid-cols-2 lg:grid-cols-3'
+              : `${card} max-w-[720px] divide-y divide-[var(--site-border)] p-2 md:p-4`
+          }
+        >
           {items.map((it, i) => (
             // biome-ignore lint/suspicious/noArrayIndexKey: list items have no ids
-            <li key={i} className="px-2 py-3">
+            <li key={i} className={str(p.variant) === 'cards' ? `${card} p-5` : 'px-2 py-3'}>
               <div className="flex items-baseline gap-2">
                 <span className="font-semibold">{str(it.name)}</span>
                 <span
@@ -292,7 +344,7 @@ function FAQ(p: P) {
         <div className="divide-y divide-[var(--site-border)] border-y border-[var(--site-border)]">
           {items.map((it, i) => (
             // biome-ignore lint/suspicious/noArrayIndexKey: list items have no ids
-            <details key={i} open={i === 0} className="group">
+            <details key={i} open={str(p.variant) === 'open' || (!p.variant && i === 0)} className="group">
               <summary className="flex min-h-14 cursor-pointer list-none items-center justify-between gap-4 py-3 font-semibold [&::-webkit-details-marker]:hidden">
                 {str(it.question)}
                 <span aria-hidden="true" className="text-xl leading-none group-open:rotate-45">
@@ -311,8 +363,16 @@ function FAQ(p: P) {
 function CallToAction(p: P) {
   const label = str(p.cta_label)
   return (
-    <section className="bg-[var(--site-primary)] text-[var(--site-on-primary)]">
-      <div className="mx-auto flex w-full max-w-[1120px] flex-col items-center gap-4 px-5 py-12 text-center md:flex-row md:justify-between md:px-8 md:text-left">
+    <section
+      className={
+        str(p.variant) === 'card'
+          ? 'mx-auto w-full max-w-[1120px] px-5 py-10 md:px-8'
+          : 'bg-[var(--site-primary)] text-[var(--site-on-primary)]'
+      }
+    >
+      <div
+        className={`mx-auto flex w-full max-w-[1120px] flex-col items-center gap-4 px-5 py-12 text-center md:flex-row md:justify-between md:px-8 md:text-left ${str(p.variant) === 'card' ? 'rounded-[var(--site-radius)] bg-[var(--site-primary)] text-[var(--site-on-primary)]' : ''}`}
+      >
         <div>
           <h2 className="text-2xl font-bold md:text-3xl">{str(p.title)}</h2>
           {str(p.text) && <p className="mt-1 opacity-90">{str(p.text)}</p>}
@@ -338,7 +398,7 @@ function MapHours(p: P) {
     <section className="bg-[var(--site-tint)]">
       <div className={sec}>
         {str(p.title) && <h2 className={`${h2} mb-8`}>{str(p.title)}</h2>}
-        <div className="grid gap-8 md:grid-cols-2">
+        <div className={`grid gap-8 ${str(p.variant) === 'stacked' ? '' : 'md:grid-cols-2'}`}>
           {address && (
             <div>
               <h3 className="mb-2 text-lg font-semibold">Find us</h3>
@@ -469,7 +529,9 @@ function ContactForm(p: P) {
   const [phone, email, address] = [str(p.phone), str(p.email), str(p.address)]
   const wa = waHref(p.phone)
   return (
-    <section className={`${sec} grid gap-8 md:grid-cols-[5fr_7fr] md:gap-14`}>
+    <section
+      className={`${sec} grid gap-8 ${str(p.variant) === 'stacked' ? 'max-w-[720px]' : 'md:grid-cols-[5fr_7fr] md:gap-14'}`}
+    >
       <div className="space-y-3">
         {str(p.title) && <h2 className={h2}>{str(p.title)}</h2>}
         {str(p.intro) && <p className="text-[var(--site-muted)]">{str(p.intro)}</p>}
@@ -498,15 +560,17 @@ function Footer(p: P) {
   const [phone, email, address] = [str(p.phone), str(p.email), str(p.address)]
   return (
     <footer className="space-y-3 border-t border-[var(--site-border)] px-5 py-8 pb-20 text-[14px] md:px-8">
-      <div className="mx-auto w-full max-w-[1120px] space-y-3">
+      <div
+        className={`mx-auto w-full max-w-[1120px] ${str(p.variant) === 'columns' ? 'grid gap-6 md:grid-cols-3' : 'space-y-3'}`}
+      >
         {str(p.text) && <p>{str(p.text)}</p>}
         {(phone || email || address) && (
-          <ul className="flex flex-wrap gap-x-6 gap-y-1">
+          <ul className={str(p.variant) === 'columns' ? 'space-y-1' : 'flex flex-wrap gap-x-6 gap-y-1'}>
             <Contact phone={phone} email={email} address={address} />
           </ul>
         )}
         {links.length > 0 && (
-          <ul className="flex flex-wrap gap-x-5 gap-y-1">
+          <ul className={str(p.variant) === 'columns' ? 'space-y-1' : 'flex flex-wrap gap-x-5 gap-y-1'}>
             {links.map((l, i) => (
               // biome-ignore lint/suspicious/noArrayIndexKey: list items have no ids
               <li key={i}>
@@ -544,11 +608,42 @@ export function SiteBadge({ pro, home, report }: { pro: boolean; home: string; r
   )
 }
 
-export function Text(_props: P) {
-  return null
+export function Text(p: P) {
+  if (!str(p.title) && !str(p.body))
+    return p.editing ? (
+      <section className={sec}>
+        <Empty label="Add a title and some text" />
+      </section>
+    ) : null
+  return (
+    <section className={sec}>
+      <div className="max-w-[60ch]">
+        {str(p.title) && <h2 className={`${h2} mb-4`}>{str(p.title)}</h2>}
+        {str(p.body) && (
+          <p className="whitespace-pre-line text-[17px] leading-7 text-[var(--site-muted)]">{str(p.body)}</p>
+        )}
+      </div>
+    </section>
+  )
 }
-export function Embed(_props: P) {
-  return null
+
+/** Click-to-load (design 17.7): a local placeholder, no third-party request until the visitor clicks. */
+export function Embed(p: P) {
+  const provider = str(p.provider)
+  const id = str(p.source)
+  const href = embedLinks(provider, id)
+  if (!href)
+    return p.editing ? (
+      <section className={sec}>
+        <Empty label="Choose a video, map, form or calendar and add its address or ID" />
+      </section>
+    ) : null
+  return (
+    <section className={sec}>
+      {str(p.title) && <h2 className={`${h2} mb-6`}>{str(p.title)}</h2>}
+      <EmbedFrame provider={provider} href={href.page} src={href.frame} title={str(p.title)} />
+    </section>
+  )
 }
 
 /** A block added to the catalog without a component fails tsc (BlockType is the catalog's keys). */

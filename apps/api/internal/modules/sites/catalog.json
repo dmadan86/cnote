@@ -591,12 +591,12 @@
           "label": "Provider",
           "labels": ["Youtube", "Google maps", "Google forms", "Calendly"]
         },
-        "id": {
+        "source": {
           "kind": "text",
           "max": 2000,
           "verbatim": true,
           "required": true,
-          "label": "Id"
+          "label": "Link or ID"
         },
         "title": {
           "kind": "text",

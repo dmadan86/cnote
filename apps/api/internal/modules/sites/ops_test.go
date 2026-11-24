@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/rand"
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -81,5 +82,132 @@ func TestAddRegeneratesCollidingID(t *testing.T) {
 	}
 	if !bytes.Contains(out, []byte("Services-00000009")) {
 		t.Fatal("collision was not regenerated")
+	}
+}
+
+func TestSetContent(t *testing.T) {
+	data := mustApply(t, fixture(t), "add_page", `{"title":"About"}`)
+	data = mustApply(t, data, "add_block", `{"type":"Text","page":"about","props":{"title":"A","body":"b"}}`)
+	d := docOf(t, data)
+	keep := asMap(contentOf(d, "about")[0])
+	keepID := asMap(keep["props"])["id"].(string)
+	in, _ := json.Marshal(map[string]any{"page": "about", "content": []any{
+		keep, // same id and type: kept
+		map[string]any{"type": "Text", "props": map[string]any{"id": keepID, "title": "dup"}},        // repeated id: replaced
+		map[string]any{"type": "Text", "props": map[string]any{"id": "Text-ffffffff", "title": "x"}}, // client-chosen id: replaced
+		map[string]any{"type": "Hero", "props": map[string]any{"id": "Hero-00000002", "title": "t"}}, // id of a Home block: replaced
+	}})
+	out := mustApply(t, data, "set_content", string(in))
+	list := contentOf(docOf(t, out), "about")
+	if len(list) != 4 {
+		t.Fatalf("blocks %d", len(list))
+	}
+	seen := map[string]bool{}
+	for i, b := range list {
+		id := asMap(asMap(b)["props"])["id"].(string)
+		if seen[id] || (i > 0 && (id == keepID || id == "Text-ffffffff" || id == "Hero-00000002")) {
+			t.Fatalf("id %s reused", id)
+		}
+		seen[id] = true
+	}
+	if asMap(asMap(list[0])["props"])["id"] != keepID {
+		t.Fatal("kept block lost its id")
+	}
+	if len(contentOf(docOf(t, out), "")) != 5 {
+		t.Fatal("Home changed")
+	}
+	// the same checks as every other write
+	for name, in := range map[string]string{
+		"shared off Home": `{"page":"about","content":[{"type":"Footer","props":{}}]}`,
+		"unknown prop":    `{"page":"about","content":[{"type":"Text","props":{"nope":"x"}}]}`,
+		"too long":        `{"page":"about","content":[{"type":"Text","props":{"title":"` + strings.Repeat("x", 81) + `"}}]}`,
+		"mask":            `{"page":"about","content":[{"type":"Text","props":{"title":"[PHONE]"}}]}`,
+		"unknown page":    `{"page":"nope","content":[]}`,
+		"not a list":      `{"page":"about","content":{}}`,
+		"extra key":       `{"page":"about","content":[],"x":1}`,
+		"no type":         `{"page":"about","content":[{"props":{}}]}`,
+		"bad embed":       `{"page":"about","content":[{"type":"Embed","props":{"provider":"youtube","source":"https://evil.test/x"}}]}`,
+	} {
+		if _, err := Apply(data, "set_content", json.RawMessage(in)); err == nil {
+			t.Errorf("%s accepted", name)
+		}
+	}
+	// Home can be set too, shared blocks included
+	home := docOf(t, data)["content"]
+	hb, _ := json.Marshal(map[string]any{"content": home})
+	mustApply(t, data, "set_content", string(hb))
+}
+
+func TestEmbedNormalised(t *testing.T) {
+	data := mustApply(t, fixture(t), "add_block", `{"type":"Embed","props":{"provider":"youtube","source":"https://youtu.be/dQw4w9WgXcQ"}}`)
+	if !strings.Contains(string(data), `"source":"dQw4w9WgXcQ"`) {
+		t.Fatalf("not normalised: %s", data)
+	}
+	for _, bad := range []string{`https://vimeo.com/1`, `javascript:alert(1)`, `<iframe src="https://evil.test/x"></iframe>`} {
+		b, _ := json.Marshal(map[string]any{"type": "Embed", "props": map[string]any{"provider": "youtube", "source": bad}})
+		if _, err := Apply(data, "add_block", b); err == nil {
+			t.Errorf("accepted %s", bad)
+		}
+	}
+}
+
+func TestVariants(t *testing.T) {
+	base := fixture(t)
+	for typ, def := range catalog.Blocks {
+		v, ok := def.Props["variant"]
+		if !ok {
+			continue
+		}
+		_ = typ
+		for _, val := range v.Values {
+			if err := validateField("variant", val, v); err != nil {
+				t.Errorf("%s %s: %v", typ, val, err)
+			}
+		}
+	}
+	for _, val := range []string{"split", "cover", "centered"} {
+		out := mustApply(t, base, "update_block_props", `{"id":"Hero-00000002","props":{"variant":"`+val+`"}}`)
+		if !strings.Contains(string(out), `"variant":"`+val+`"`) || !strings.Contains(string(out), `"align":"center"`) {
+			t.Fatal(val)
+		}
+	}
+	if _, err := Apply(base, "update_block_props", json.RawMessage(`{"id":"Hero-00000002","props":{"variant":"full-bleed"}}`)); err == nil {
+		t.Fatal("unknown variant accepted")
+	}
+}
+
+func TestOldDocumentsStayValid(t *testing.T) {
+	if err := Validate(fixture(t)); err != nil {
+		t.Fatal(err)
+	}
+	var d map[string]any
+	_ = json.Unmarshal(fixture(t), &d)
+	d["pages"] = []any{map[string]any{"slug": "a", "title": "A", "content": []any{}, "extra": 1}}
+	b, _ := json.Marshal(d)
+	if Validate(b) == nil {
+		t.Fatal("unknown page field accepted")
+	}
+	d["pages"] = []any{map[string]any{"slug": "a", "title": "", "content": []any{}}}
+	b, _ = json.Marshal(d)
+	if Validate(b) == nil {
+		t.Fatal("empty title accepted")
+	}
+	d["pages"] = []any{map[string]any{"slug": "a", "title": "A", "content": []any{}}, map[string]any{"slug": "a", "title": "B", "content": []any{}}}
+	b, _ = json.Marshal(d)
+	if Validate(b) == nil {
+		t.Fatal("duplicate slug accepted")
+	}
+	// a block id is unique across pages
+	d["pages"] = []any{map[string]any{"slug": "a", "title": "A", "content": []any{map[string]any{"type": "Hero", "props": map[string]any{"id": "Hero-00000002", "title": "x"}}}}}
+	b, _ = json.Marshal(d)
+	if Validate(b) == nil {
+		t.Fatal("duplicate block id across pages accepted")
+	}
+}
+
+func TestImageIDsWalkPages(t *testing.T) {
+	data := json.RawMessage(`{"content":[],"pages":[{"slug":"a","title":"A","content":[{"type":"Hero","props":{"image":"12345678-1234-1234-1234-123456789abc"}}]}]}`)
+	if ids := ImageIDs(data); len(ids) != 1 || !HasBlock(data, "Hero") {
+		t.Fatal("pages not walked")
 	}
 }
