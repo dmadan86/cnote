@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"regexp"
 	"strings"
 )
 
@@ -358,7 +359,7 @@ func setContent(d, in map[string]any) error {
 		var before map[string]any
 		if ob, ok := old[cand]; ok && !used[cand] && ob["type"] == typ {
 			before = asMap(ob["props"])
-		} else {
+		} else if used[cand] || taken[cand] || !regexp.MustCompile(`^`+regexp.QuoteMeta(typ)+`-[0-9a-f]{8}$`).MatchString(cand) {
 			cand = ""
 		}
 		if err := maskCheck(before, props); err != nil {
@@ -370,6 +371,7 @@ func setContent(d, in map[string]any) error {
 			}
 		}
 		used[cand] = true
+		taken[cand] = true
 		props["id"] = cand
 		next = append(next, map[string]any{"type": typ, "props": props})
 	}

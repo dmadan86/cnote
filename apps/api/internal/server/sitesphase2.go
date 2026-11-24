@@ -57,9 +57,10 @@ func (s *Server) siteExport(w http.ResponseWriter, r *http.Request) {
 	}
 	p, err := s.Auth.PrincipalFor(r.Context(), r.Header, m[1])
 	var zipped []byte
+	var missing int
 	if err == nil {
 		err = s.Registry.WithTx(r.Context(), s.Pool, p, func(c *command.Ctx) (e error) {
-			zipped, e = sites.BuildExport(c, m[2])
+			zipped, missing, e = sites.BuildExport(c, m[2])
 			return e
 		})
 	}
@@ -68,6 +69,7 @@ func (s *Server) siteExport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h := w.Header()
+	h.Set("X-Export-Missing-Images", strconv.Itoa(missing))
 	h.Set("Content-Type", "application/zip")
 	h.Set("Content-Disposition", `attachment; filename="website-content.zip"`)
 	h.Set("Content-Length", strconv.Itoa(len(zipped)))

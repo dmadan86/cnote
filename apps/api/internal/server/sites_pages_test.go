@@ -18,7 +18,7 @@ func (p *pubEnv) setPro(on bool) {
 }
 
 func (p *pubEnv) ops(w who, source string, ops ...map[string]any) resp {
-	return p.call(w, "site.edit", map[string]any{"id": p.site, "expected_version_id": p.draft(), "source": source, "ops": ops})
+	return p.call(w, "site.edit", map[string]any{"id": p.site, "expected_version_id": p.draft(), "expected_rev": p.get(w, p.site)["site"].(map[string]any)["rev"], "source": source, "ops": ops})
 }
 
 func addPageOp(title string) map[string]any {
@@ -210,4 +210,27 @@ func TestSiteVersionPrune(t *testing.T) {
 	if err := sites.PruneVersions(context.Background(), p.pool); err != nil || p.versions() != after {
 		t.Fatalf("second prune changed: %v %s", err, p.versions())
 	}
+}
+
+func TestSiteEditorStaleRevision(t *testing.T) {
+	p := newPubEnv(t)
+	data := p.get(p.owner, p.site)
+	content := data["data"].(map[string]any)["content"].([]any)
+	var hero map[string]any
+	for _, block := range content {
+		b := block.(map[string]any)
+		if b["type"] == "Hero" {
+			hero = b["props"].(map[string]any)
+			break
+		}
+	}
+	hero["title"] = "First save"
+	op := map[string]any{"tool": "set_content", "input": map[string]any{"page": "", "content": content}}
+	adminOK(t, p.ops(p.owner, "editor", op))
+	snapshot := p.get(p.owner, p.site)["site"].(map[string]any)
+	args := map[string]any{"id": p.site, "expected_version_id": snapshot["draft_version_id"], "expected_rev": snapshot["rev"], "source": "editor", "ops": []any{op}}
+	hero["title"] = "Second save"
+	adminOK(t, p.call(p.owner, "site.edit", args))
+	hero["title"] = "Stale save"
+	eq(t, p.call(p.owner, "site.edit", args).status, 409)
 }

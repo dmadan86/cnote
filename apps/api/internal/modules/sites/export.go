@@ -51,19 +51,19 @@ func docImageIDs(data json.RawMessage) []string {
 
 // BuildExport returns the zip of the site's published version. It needs a signed-in admin (not a key or an agent),
 // allows one export per site at a time (a second answers 409) and holds the site row while it reads.
-func BuildExport(c *command.Ctx, siteID string) ([]byte, error) {
+func BuildExport(c *command.Ctx, siteID string) ([]byte, int, error) {
 	if c.Principal.Kind != command.KindUser || c.Principal.Role < command.Admin {
-		return nil, command.ErrForbidden("only an admin signed in as a person can download the site")
+		return nil, 0, command.ErrForbidden("only an admin signed in as a person can download the site")
 	}
 	if err := uid("id", siteID); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	var free bool
 	if err := c.Tx.QueryRow(c.Context, "select pg_try_advisory_xact_lock(hashtextextended($1, 9))", "siteexport:"+siteID).Scan(&free); err != nil {
-		return nil, command.DB(err)
+		return nil, 0, command.DB(err)
 	}
 	if !free {
-		return nil, command.ErrConflict("A download of this site is already being prepared. Try again in a moment.")
+		return nil, 0, command.ErrConflict("A download of this site is already being prepared. Try again in a moment.")
 	}
 	var name string
 	var vid *string
@@ -71,21 +71,21 @@ func BuildExport(c *command.Ctx, siteID string) ([]byte, error) {
 	err := c.Tx.QueryRow(c.Context, "select name, published_version_id::text, published_at from sites.sites where workspace_id = $1::uuid and id = $2::uuid for share",
 		c.WorkspaceID(), siteID).Scan(&name, &vid, &pubAt)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, command.ErrNotFound("site")
+		return nil, 0, command.ErrNotFound("site")
 	}
 	if err != nil {
-		return nil, command.DB(err)
+		return nil, 0, command.DB(err)
 	}
 	if vid == nil {
-		return nil, command.ErrConflict("This website is not published yet. Publish it first.")
+		return nil, 0, command.ErrConflict("This website is not published yet. Publish it first.")
 	}
 	data, err := versionData(c, siteID, *vid)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	ids := docImageIDs(data)
 	if len(ids) > maxExportImages {
-		return nil, command.ErrInvalid("the site uses too many photos to download")
+		return nil, 0, command.ErrInvalid("the site uses too many photos to download")
 	}
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)
@@ -96,28 +96,30 @@ func BuildExport(c *command.Ctx, siteID string) ([]byte, error) {
 		ContentType string `json:"content_type"`
 	}
 	images := []imgOut{}
+	missing := []string{}
 	for _, id := range ids {
 		out, err := c.Call("file.image_get", props{"site_id": siteID, "id": id})
 		var ce *command.Error
 		if errors.As(err, &ce) && ce.Code == command.NotFound {
-			continue // a photo that was deleted after publishing is simply not in the zip
+			missing = append(missing, id)
+			continue
 		}
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		var img struct {
 			ContentType string `json:"content_type"`
 			Data        string `json:"data_base64"`
 		}
 		if err := json.Unmarshal(out, &img); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		b, err := base64.StdEncoding.DecodeString(img.Data)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		if total += len(b); total > maxExportBytes {
-			return nil, command.ErrInvalid("the site's photos are too large to download (20 MB at most)")
+			return nil, 0, command.ErrInvalid("the site's photos are too large to download (20 MB at most)")
 		}
 		ext := map[string]string{"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp", "image/gif": ".gif"}[img.ContentType]
 		file := "images/" + id + ext
@@ -126,14 +128,14 @@ func BuildExport(c *command.Ctx, siteID string) ([]byte, error) {
 			_, err = w.Write(b)
 		}
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		images = append(images, imgOut{id, file, img.ContentType})
 	}
 	doc, err := json.MarshalIndent(props{"site_id": siteID, "name": name, "published_version_id": *vid, "published_at": pubAt,
-		"exported_at": time.Now().UTC(), "data": data, "images": images}, "", "  ")
+		"exported_at": time.Now().UTC(), "data": data, "images": images, "missing_images": missing}, "", "  ")
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	w, err := zw.Create("site.json")
 	if err == nil {
@@ -143,7 +145,7 @@ func BuildExport(c *command.Ctx, siteID string) ([]byte, error) {
 		err = zw.Close()
 	}
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	return buf.Bytes(), nil
+	return buf.Bytes(), len(missing), nil
 }

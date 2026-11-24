@@ -346,12 +346,21 @@ func domainCheck(c *command.Ctx, raw json.RawMessage) (any, error) {
 		if res.routeKnown {
 			cl.Routing = res.routeOK
 		}
-		if res.txtKnown && res.txtOK && cl.Status == "verified" {
-			cl.Failures = 0
+		failed := res.txtKnown && !res.txtOK && cl.Status == "verified"
+		if res.txtKnown && cl.Status == "verified" {
+			if res.txtOK {
+				cl.Failures = 0
+			} else {
+				cl.Failures++
+				if cl.Failures >= failuresToLose {
+					cl.Status = "lost"
+					cl.Routing = false
+				}
+			}
 		}
-		if err := c.Tx.QueryRow(c.Context, `update sites.domain_claims set status = $2, routing_configured = $3, failures = $4, checked_at = now(),
+		if err := c.Tx.QueryRow(c.Context, `update sites.domain_claims set status = $2, routing_configured = $3, failures = $4, checked_at = case when $5 then checked_at else now() end,
 			verified_at = case when $2 = 'verified' and status <> 'verified' then now() else verified_at end where id = $1::uuid returning verified_at`,
-			cl.ID, cl.Status, cl.Routing, cl.Failures).Scan(&cl.VerifiedAt); err != nil {
+			cl.ID, cl.Status, cl.Routing, cl.Failures, failed).Scan(&cl.VerifiedAt); err != nil {
 			return nil, command.DB(err)
 		}
 		views[i] = view(*cl, *site.Subdomain, res)

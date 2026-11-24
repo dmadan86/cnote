@@ -713,6 +713,7 @@ export function Builder({
                 siteId={siteId}
                 page={page}
                 versionId={site.draft_version_id}
+                revision={site.rev}
                 data={preview ? preview.data : data}
                 images={meta.images ?? []}
                 readOnly={!!active || !!preview}

@@ -9,6 +9,7 @@ export function EditTab(props: {
   siteId: string
   page: string
   versionId: string
+  revision: number
   data: SiteData
   images: { id: string; filename: string }[]
   readOnly: boolean

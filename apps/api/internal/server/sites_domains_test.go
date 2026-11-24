@@ -575,3 +575,17 @@ func TestSiteDomainAskListener(t *testing.T) {
 		t.Fatalf("tls-ask answered on the public API: %d", st)
 	}
 }
+
+func TestSiteDomainManualFailures(t *testing.T) {
+	d := newDomEnv(t)
+	d.pro(true)
+	d.publishOK(d.sub)
+	host := domHost()
+	set := d.setOK(host)
+	d.prove(host, set)
+	d.routeWWW(host)
+	eq(t, d.check()["status"], "verified")
+	d.dns.set(func() { delete(d.dns.txt, "_cnote-verify."+host) })
+	eq(t, d.check()["status"], "verified")
+	eq(t, d.check()["status"], "lost")
+}

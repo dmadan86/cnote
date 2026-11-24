@@ -239,6 +239,7 @@ export function SiteEditor({
   page,
   isHome,
   versionId,
+  revision,
   data,
   images,
   assetBase,
@@ -256,6 +257,7 @@ export function SiteEditor({
   isHome: boolean
   /** The draft version the person is looking at. Remount (key) when it moves for any reason but our own save. */
   versionId: string
+  revision: number
   data: SiteData
   images: Img[]
   assetBase: string
@@ -273,6 +275,9 @@ export function SiteEditor({
   const [state, setStateRaw] = useState<SaveState>('saved')
   const [msg, setMsg] = useState('')
   const ver = useRef(versionId)
+  const rev = useRef(revision)
+  const ids = useRef(new Map<string, string>())
+  const warnRef = useRef<((e: BeforeUnloadEvent) => void) | null>(null)
   const last = useRef(JSON.stringify(pageContent(data, page, isHome)))
   const pending = useRef<SiteBlock[] | null>(null)
   const inflight = useRef(false)
@@ -297,8 +302,9 @@ export function SiteEditor({
     setState('saving')
     try {
       // Each save uses the version id the previous one returned.
-      const r = await siteApi.setContent(ws, siteId, ver.current, page, content)
+      const r = await siteApi.setContent(ws, siteId, ver.current, rev.current, page, content)
       ver.current = r.site.draft_version_id
+      rev.current = r.site.rev
       last.current = JSON.stringify(content)
       cb.current.onSaved?.(r)
       setState(pending.current ? 'editing' : 'saved')
@@ -309,11 +315,16 @@ export function SiteEditor({
       } else {
         pending.current ??= content // keep the local copy so Retry resends it
         setState('error', e instanceof Error ? e.message : 'Could not save')
+        return
       }
     } finally {
       inflight.current = false
     }
-    if (pending.current && !stopped.current && alive.current) timer.current = setTimeout(flush, debounceMs)
+    if (pending.current && !stopped.current) {
+      if (alive.current) timer.current = setTimeout(flush, debounceMs)
+      else void flush()
+    } else if (!alive.current && !pending.current && warnRef.current)
+      window.removeEventListener('beforeunload', warnRef.current)
   }, [ws, siteId, page, debounceMs, setState])
 
   useEffect(() => {
@@ -321,22 +332,19 @@ export function SiteEditor({
     return () => {
       alive.current = false
       clearTimeout(timer.current)
-      // Leaving with unsaved work: send it once (a conflict simply answers 409).
-      if (pending.current && !inflight.current && !stopped.current) {
-        siteApi.setContent(ws, siteId, ver.current, page, pending.current).then(
-          (r) => cb.current.onSaved?.(r),
-          () => {},
-        )
-      }
+      if (pending.current && !inflight.current && !stopped.current) void flush()
     }
-  }, [ws, siteId, page])
+  }, [flush])
 
   useEffect(() => {
     const warn = (e: BeforeUnloadEvent) => {
       if (pending.current || inflight.current) e.preventDefault()
     }
+    warnRef.current = warn
     window.addEventListener('beforeunload', warn)
-    return () => window.removeEventListener('beforeunload', warn)
+    return () => {
+      if (!pending.current && !inflight.current) window.removeEventListener('beforeunload', warn)
+    }
   }, [])
 
   const config = useMemo(
@@ -359,7 +367,17 @@ export function SiteEditor({
 
   const change = (d: { content?: unknown }) => {
     if (stopped.current) return
-    const content = toBlocks(d.content)
+    const content = toBlocks(d.content).map((block) => {
+      const id = String(block.props.id ?? '')
+      if (new RegExp(`^${block.type}-[0-9a-f]{8}$`).test(id)) return block
+      let next = ids.current.get(id)
+      if (!next) {
+        const bytes = crypto.getRandomValues(new Uint8Array(4))
+        next = `${block.type}-${Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')}`
+        ids.current.set(id, next)
+      }
+      return { ...block, props: { ...block.props, id: next } }
+    })
     if (JSON.stringify(content) === last.current && !pending.current) return
     pending.current = content
     setState('editing')

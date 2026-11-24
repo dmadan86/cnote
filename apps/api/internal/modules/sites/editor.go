@@ -102,6 +102,7 @@ func edit(c *command.Ctx, raw json.RawMessage) (any, error) {
 	var in struct {
 		ID                string
 		ExpectedVersionID string `json:"expected_version_id"`
+		ExpectedRev       *int   `json:"expected_rev"`
 		Source            string
 		Ops               []struct {
 			Tool  string
@@ -124,6 +125,18 @@ func edit(c *command.Ctx, raw json.RawMessage) (any, error) {
 	}
 	if err := checkDraft(c, site, in.ExpectedVersionID); err != nil {
 		return nil, err
+	}
+	needsRev := source == "editor"
+	for _, op := range in.Ops {
+		if op.Tool == "set_content" {
+			needsRev = true
+		}
+	}
+	if needsRev && in.ExpectedRev == nil {
+		return nil, command.ErrInvalid("expected_rev is required")
+	}
+	if in.ExpectedRev != nil && *in.ExpectedRev != site.Rev {
+		return nil, command.ErrConflict(conflictMsg)
 	}
 	var slots map[string]string
 	working := data
@@ -218,7 +231,7 @@ func replaceDraft(c *command.Ctx, site siteOut, parent, data json.RawMessage) er
 	if base == nil {
 		base = data
 	}
-	if _, err := c.Tx.Exec(c.Context, `update sites.site_versions set data = $3, summary = $4, updated_at = now()
+	if _, err := c.Tx.Exec(c.Context, `update sites.site_versions set data = $3, summary = $4, updated_at = now(), rev = rev + 1
 		where workspace_id = $1::uuid and site_id = $2::uuid and id = $5::uuid`, c.WorkspaceID(), site.ID, []byte(data), describeDoc(base, data), site.DraftVersionID); err != nil {
 		return command.DB(err)
 	}

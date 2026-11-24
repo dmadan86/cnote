@@ -44,6 +44,7 @@ export type Site = {
   name: string
   template: string
   draft_version_id: string
+  rev: number
   parent_version_id: string | null
   created_at: string
   updated_at: string
@@ -115,10 +116,18 @@ export const siteApi = {
       expected_version_id,
       ops: [{ tool: 'set_page', input }],
     }),
-  setContent: (ws: string, id: string, expected_version_id: string, page: string, content: SiteBlock[]) =>
+  setContent: (
+    ws: string,
+    id: string,
+    expected_version_id: string,
+    expected_rev: number,
+    page: string,
+    content: SiteBlock[],
+  ) =>
     cmd<{ site: Site; data: SiteData }>(ws, 'site.edit', {
       id,
       expected_version_id,
+      expected_rev,
       source: 'editor',
       ops: [{ tool: 'set_content', input: { page, content } }],
     }),

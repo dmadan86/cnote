@@ -34,6 +34,7 @@ type siteOut struct {
 	Name            string    `json:"name"`
 	Template        string    `json:"template"`
 	DraftVersionID  string    `json:"draft_version_id"`
+	Rev             int       `json:"rev"`
 	ParentVersionID *string   `json:"parent_version_id"`
 	CreatedAt       time.Time `json:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at"`
@@ -54,13 +55,13 @@ type siteOut struct {
 }
 
 // siteFields and siteFrom are the columns every site read shares; dest lists the scan targets in that order.
-const siteFields = `s.id::text, s.name, s.template, s.draft_version_id::text, v.parent_id::text, s.created_at, s.updated_at,
+const siteFields = `s.id::text, s.name, s.template, s.draft_version_id::text, v.rev, v.parent_id::text, s.created_at, s.updated_at,
 	s.subdomain, s.published_version_id::text, s.published_at, s.form_count, s.form_paused, coalesce(p.pro, false), p.taken_down_at is not null, p.taken_down_reason`
 const siteFrom = ` from sites.sites s join sites.site_versions v on v.workspace_id = s.workspace_id and v.site_id = s.id and v.id = s.draft_version_id
 	left join sites.site_platform p on p.site_id = s.id `
 
 func (s *siteOut) dest(extra ...any) []any {
-	return append([]any{&s.ID, &s.Name, &s.Template, &s.DraftVersionID, &s.ParentVersionID, &s.CreatedAt, &s.UpdatedAt,
+	return append([]any{&s.ID, &s.Name, &s.Template, &s.DraftVersionID, &s.Rev, &s.ParentVersionID, &s.CreatedAt, &s.UpdatedAt,
 		&s.Subdomain, &s.PublishedVersionID, &s.PublishedAt, &s.FormCount, &s.FormPaused, &s.Pro, &s.down, &s.reason}, extra...)
 }
 
@@ -135,7 +136,7 @@ func Commands() []command.Command {
 		mk("site.turn_get", R, M, false, "One chat turn; data is the new page once it is done and changed the page.", obj([]string{"id"}, props{"id": str("turn id")}), turnGet),
 		mk("site.turn_cancel", W, M, false, "Stop a chat turn that is queued or running.", obj([]string{"id"}, props{"id": str("turn id")}), turnCancel),
 		mk("site.edit", W, M, false, "Edit the site without the AI as a new version. ops are {tool, input}: update_block_props, add_block (page?), remove_block, move_block, set_theme, duplicate_block {id}, add_page {title, slug?, template?}, remove_page {page}, set_page {page?, title?, description?, slug?}, set_content {page, content} (the editor). source is edit (toolbar, default) or editor.",
-			obj([]string{"id", "expected_version_id", "ops"}, props{"id": id, "expected_version_id": ver, "source": props{"type": "string", "enum": []string{"edit", "editor"}}, "ops": props{"type": "array", "items": props{"type": "object"}}}), edit),
+			obj([]string{"id", "expected_version_id", "ops"}, props{"id": id, "expected_version_id": ver, "expected_rev": props{"type": "integer"}, "source": props{"type": "string", "enum": []string{"edit", "editor"}}, "ops": props{"type": "array", "items": props{"type": "object"}}}), edit),
 		mk("site.restore", W, M, false, "Make an older version of this site the draft. By default moves the draft pointer (undo, redo); with as_new adds a new version on top with that content.",
 			obj([]string{"id", "expected_version_id", "version_id"}, props{"id": id, "expected_version_id": ver, "version_id": str("the version to make the draft"), "as_new": props{"type": "boolean"}}), restore),
 	}, publishCommands(id, ver)...)

@@ -250,6 +250,20 @@ func TestSiteExport(t *testing.T) {
 		t.Fatalf("site.json: %s", files["site.json"])
 	}
 
+	adminSQL(p.env, p.owner.ws, "delete from core.attachments where id = $1::uuid", used)
+	st, h, body = p.export(p.owner)
+	eq(t, st, 200)
+	eq(t, h.Get("X-Export-Missing-Images"), "1")
+	var missing struct {
+		IDs []string `json:"missing_images"`
+	}
+	if err := json.Unmarshal(zipFiles(t, body)["site.json"], &missing); err != nil {
+		t.Fatal(err)
+	}
+	if len(missing.IDs) != 1 || missing.IDs[0] != used {
+		t.Fatalf("missing images: %v", missing.IDs)
+	}
+
 	// one export at a time: while another holds the site's lock this one is a 409
 	conn, err := p.pool.Acquire(context.Background())
 	if err != nil {

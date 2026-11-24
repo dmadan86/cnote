@@ -94,7 +94,7 @@ func TestSetContent(t *testing.T) {
 	in, _ := json.Marshal(map[string]any{"page": "about", "content": []any{
 		keep, // same id and type: kept
 		map[string]any{"type": "Text", "props": map[string]any{"id": keepID, "title": "dup"}},        // repeated id: replaced
-		map[string]any{"type": "Text", "props": map[string]any{"id": "Text-ffffffff", "title": "x"}}, // client-chosen id: replaced
+		map[string]any{"type": "Text", "props": map[string]any{"id": "Text-ffffffff", "title": "x"}}, // valid client-chosen id: kept
 		map[string]any{"type": "Hero", "props": map[string]any{"id": "Hero-00000002", "title": "t"}}, // id of a Home block: replaced
 	}})
 	out := mustApply(t, data, "set_content", string(in))
@@ -105,10 +105,17 @@ func TestSetContent(t *testing.T) {
 	seen := map[string]bool{}
 	for i, b := range list {
 		id := asMap(asMap(b)["props"])["id"].(string)
-		if seen[id] || (i > 0 && (id == keepID || id == "Text-ffffffff" || id == "Hero-00000002")) {
+		if seen[id] || (i > 0 && (id == keepID || id == "Hero-00000002")) {
 			t.Fatalf("id %s reused", id)
 		}
 		seen[id] = true
+	}
+	if asMap(asMap(list[2])["props"])["id"] != "Text-ffffffff" {
+		t.Fatal("proposed id not kept")
+	}
+	second := mustApply(t, out, "set_content", string(in))
+	if asMap(asMap(contentOf(docOf(t, second), "about")[2])["props"])["id"] != "Text-ffffffff" {
+		t.Fatal("id changed on second save")
 	}
 	if asMap(asMap(list[0])["props"])["id"] != keepID {
 		t.Fatal("kept block lost its id")
