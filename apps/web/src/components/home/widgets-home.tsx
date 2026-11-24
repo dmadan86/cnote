@@ -29,8 +29,7 @@ export function HomeWidgets() {
     return () => clearInterval(t)
   }, [])
   const role = me.workspaces.find((w) => w.id === ws)?.role ?? 'member'
-  // the summary only carries money tiles when billing is on and the person has finance access
-  const finance = !!data?.tiles.payments_pending
+  const finance = !!data?.finance
   const ctx: Ctx | undefined = useMemo(
     () => data && { ws, base: `/w/${ws}`, role, finance, modules, summary: data, branch },
     [data, ws, role, finance, modules, branch],

@@ -26,6 +26,8 @@ import { useCmd } from '@/lib/hooks'
 
 export type Summary = {
   view: 'owner' | 'personal'
+  /** The person's real finance access (admins and owners always have it). */
+  finance?: boolean
   tiles: {
     tasks_due?: { count: number; overdue: number }
     payments_pending?: { count: number; total_minor: number; overdue_count: number; overdue_minor: number }

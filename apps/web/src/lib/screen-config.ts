@@ -213,6 +213,7 @@ export function useScreenConfig<T extends { v: number }>(
     entry.timer = undefined
     entry.pending = undefined
     settle(entry) // superseded saves resolve: the reset wins
+    const before = entry.config
     entry.config = d.current.defaults
     entry.error = undefined
     entry.saving = true
@@ -226,7 +227,10 @@ export function useScreenConfig<T extends { v: number }>(
       entry.customised = false
       entry.locked = false
     } catch (err) {
-      if (mine === entry.seq) entry.error = err as Error
+      if (mine === entry.seq) {
+        entry.config = before // what is shown stays what is stored
+        entry.error = err as Error
+      }
       throw err
     } finally {
       if (mine === entry.seq) entry.saving = false

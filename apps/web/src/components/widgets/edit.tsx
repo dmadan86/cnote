@@ -213,8 +213,14 @@ export function WidgetEditor({
     const next = rest[i] ?? rest[i - 1]
     focusOn(next ? `handle:${next.id}` : 'add')
   }
-  const add = (d: WidgetDef) => {
+  const add = (d: WidgetDef, from: HTMLElement) => {
     if (draft.length >= MAX_WIDGETS) return
+    // the clicked button turns into "Added": move focus to the next Add button, else the gallery heading
+    const rest = [...(from.closest('dialog')?.querySelectorAll<HTMLElement>('[data-gallery-add]') ?? [])]
+    const i = rest.indexOf(from)
+    rest.splice(i, 1)
+    const next = rest[i] ?? rest[rest.length - 1] ?? from.closest('dialog')?.querySelector<HTMLElement>('h2')
+    next?.focus()
     setDraft([...draft, { id: d.type, type: d.type, size: d.sizes[0] }])
     setAdded(d.type)
     say(`Added ${d.title}.`)
@@ -345,7 +351,8 @@ export function WidgetEditor({
                           <button
                             type="button"
                             aria-label={`Add ${d.title}`}
-                            onClick={() => add(d)}
+                            data-gallery-add
+                            onClick={(e) => add(d, e.currentTarget)}
                             className={btn}
                           >
                             <Plus size={14} aria-hidden /> Add
@@ -357,6 +364,9 @@ export function WidgetEditor({
               </ul>
             </section>
           ))}
+        </div>
+        <div role="status" aria-live="polite" className="sr-only">
+          {msg}
         </div>
         <div className="mt-3 flex justify-end">
           <button type="button" onClick={() => setGallery(false)} className={btnPrimary}>

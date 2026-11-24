@@ -63,7 +63,9 @@ export function Modal({
       {open && (
         <div className="p-4">
           <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-[15px] font-semibold">{title}</h2>
+            <h2 tabIndex={-1} className="text-[15px] font-semibold focus:outline-none">
+              {title}
+            </h2>
             <button type="button" onClick={onClose} aria-label="Close" className="rounded p-1 hover:bg-hover">
               <X size={16} />
             </button>

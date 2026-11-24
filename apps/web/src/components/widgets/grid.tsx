@@ -4,7 +4,15 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { btn } from '@/components/ui'
 import { useScreenConfig } from '@/lib/screen-config'
 import { useRuns } from './data'
-import { type Ctx, type GridConfig, MAX_WIDGETS, type Size, type WidgetCfg, type WidgetDef } from './types'
+import {
+  type Ctx,
+  type GridConfig,
+  MAX_WIDGETS,
+  type RunState,
+  type Size,
+  type WidgetCfg,
+  type WidgetDef,
+} from './types'
 
 // Edit mode (drag, gallery) loads only when someone customises.
 const WidgetEditor = dynamic(() => import('./edit').then((m) => m.WidgetEditor), { ssr: false })
@@ -64,7 +72,7 @@ function Cell({
   def: WidgetDef
   size: Size
   ctx: Ctx
-  runs: ReturnType<typeof useRuns>
+  runs: RunState[]
   nonce: number
   retry: () => void
 }) {
@@ -135,15 +143,12 @@ export function WidgetGrid({
     const def = catalog.find((d) => d.type === w.type)
     return def?.available(ctx) ? [{ w, def }] : []
   })
-  const specs = shown.flatMap(({ def }) => def.runs?.(ctx) ?? [])
-  const results = useRuns(ctx.ws, specs, nonce + retries)
-  let at = 0
-  const cells = shown.map(({ w, def }) => {
-    const n = def.runs?.(ctx).length ?? 0
-    const runs = results.slice(at, at + n)
-    at += n
-    return { w, def, runs }
-  })
+  const results = useRuns(
+    ctx.ws,
+    shown.map(({ def }) => def.runs?.(ctx) ?? []),
+    nonce + retries,
+  )
+  const cells = shown.map(({ w, def }, i) => ({ w, def, runs: results[i] }))
 
   if (editing)
     return (

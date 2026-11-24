@@ -183,7 +183,7 @@ function SalesKpi({ ctx, runs }: WidgetProps) {
   return (
     <KpiCard
       href={`${ctx.base}/billing`}
-      label="Sales this month"
+      label="Sales this month, all branches"
       value={short(mtd, 'money')}
       full={full(mtd, 'money')}
       spark={pts.map((p) => p.value)}
@@ -204,7 +204,7 @@ function SalesKpi({ ctx, runs }: WidgetProps) {
 function SalesChart({ runs }: WidgetProps) {
   const pts = points(runs[0], true)
   return (
-    <Card title="Sales trend, last 12 months" note="Invoices issued, before credit notes">
+    <Card title="Sales trend, last 12 months" note="Invoices issued, before credit notes. All branches">
       <TrendChart title="Sales, last 12 months" points={pts} />
     </Card>
   )
@@ -250,7 +250,7 @@ function ExpensesChart({ runs }: WidgetProps) {
 
 function CustomersChart({ runs }: WidgetProps) {
   return (
-    <Card title="Top customers" note="Invoiced this financial year">
+    <Card title="Top customers" note="Invoiced this financial year. All branches">
       <HBars title="Top customers" rows={points(runs[0])} />
     </Card>
   )
@@ -266,7 +266,7 @@ function AgeingChart({ ctx, nonce }: WidgetProps) {
   )
   if (r.state !== 'ok' || !r.data) return <Status state={r.state} title="Receivables ageing" />
   return (
-    <Card title="Receivables ageing" note={`${money(r.data.total_minor)} outstanding`}>
+    <Card title="Receivables ageing" note={`${money(r.data.total_minor)} outstanding. All branches`}>
       <HBars
         title="Receivables ageing"
         rows={r.data.buckets.map((b) => ({ label: b.bucket, value: b.outstanding_minor }))}

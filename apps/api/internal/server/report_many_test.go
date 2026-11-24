@@ -135,16 +135,15 @@ func TestRunManyChargesLikeRunAndRefusesWhatItCannotCover(t *testing.T) {
 		t.Fatal("report.run and report.run_many must share one bucket")
 	}
 
-	// identical runs execute once and cost one token: 15 batches of 12 identical runs fit in one burst of 20
+	// identical runs execute once but every submitted run costs a token (no batch discount): 12 fit, the next 12 do not
 	same := make([]any, 12)
 	for i := range same {
 		same[i] = map[string]any{"key": "s" + strconv.Itoa(i), "spec": map[string]any{"dataset": "tasks"}}
 	}
-	for i := 0; i < 15; i++ {
-		res := many(t, r, r.noFin, map[string]any{"runs": same})
-		eq(t, len(res), 12)
-		eq(t, entry(t, res, "s11")["ok"], true)
-	}
+	res := many(t, r, r.noFin, map[string]any{"runs": same})
+	eq(t, len(res), 12)
+	eq(t, entry(t, res, "s11")["ok"], true)
+	r.errAs(r.noFin, "report.run_many", map[string]any{"runs": same}, 429, "rate_limited")
 	// someone else's bucket is untouched by all of the above
 	many(t, r, r.owner, distinct(12, 0))
 }
@@ -172,6 +171,38 @@ func TestRunManyResponseIsCapped(t *testing.T) {
 		if e["ok"] == true {
 			ok++
 		} else if e["code"] == "failed" {
+			full++
+		}
+	}
+	if ok == 0 || full == 0 || ok+full != 12 {
+		t.Fatalf("ok %d, cut %d: want some of each and 12 in all", ok, full)
+	}
+}
+
+// Identical runs run once but each key gets its own copy in the response: every copy counts toward the cap.
+func TestRunManyCapCountsDuplicateKeys(t *testing.T) {
+	r := newRB(t)
+	title := strings.Repeat("x", 200)
+	for i := 0; i < 120; i++ {
+		r.ok("deal.create", map[string]any{"space_id": r.crm, "title": title + strconv.Itoa(i), "amount_minor": 100})
+	}
+	rs := make([]any, 12)
+	for i := range rs {
+		rs[i] = map[string]any{"key": "k" + strconv.Itoa(i), "spec": map[string]any{"dataset": "deals", "columns": []string{"title", "stage", "amount"}, "limit": 120}}
+	}
+	raw := r.call(r.owner, "report.run_many", map[string]any{"runs": rs})
+	if raw.status != 200 {
+		t.Fatalf("%d %s", raw.status, raw.body)
+	}
+	if len(raw.body) > 256<<10 {
+		t.Fatalf("response is %d bytes, over the 256 KB cap", len(raw.body))
+	}
+	ok, full := 0, 0
+	for _, v := range raw.json()["results"].(map[string]any) {
+		e := v.(map[string]any)
+		if e["ok"] == true {
+			ok++
+		} else if e["code"] == "failed" && e["message"] != nil {
 			full++
 		}
 	}

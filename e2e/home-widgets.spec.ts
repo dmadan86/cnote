@@ -28,6 +28,12 @@ test.describe('configurable Home', () => {
     // add from the gallery
     await page.getByRole('button', { name: 'Add a widget' }).click()
     await page.getByRole('button', { name: 'Add Quick links' }).click()
+    // focus moves to another Add button (the clicked one became "Added") and the addition is announced
+    await expect(page.getByRole('dialog').getByText('Added Quick links.')).toBeAttached()
+    await expect(page.getByRole('dialog').getByRole('button', { name: /^Add / })).not.toHaveCount(0)
+    await expect
+      .poll(() => page.evaluate(() => document.activeElement?.getAttribute('aria-label') ?? ''))
+      .toMatch(/^Add /)
     await page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).last().click()
     await expect(page.getByRole('button', { name: 'Move Quick links', exact: true })).toBeFocused()
 
@@ -85,6 +91,27 @@ test.describe('configurable Home', () => {
     await page.reload()
     await expect(page.getByRole('form', { name: 'Ask your business' })).toBeVisible()
     await expect(page.getByRole('link', { name: 'Invoices', exact: true })).toHaveCount(0)
+  })
+
+  test('a failed reset keeps the layout that is stored and shows the error', async ({ page }) => {
+    await signup(page)
+    await createSpace(page)
+    await page.goto(`/w/${wsOf(page)}`)
+    await page.getByRole('button', { name: 'Customise' }).click()
+    await page.getByRole('button', { name: 'Remove Ask your business' }).click()
+    await page.getByRole('button', { name: 'Done' }).click()
+    await expect(page.getByRole('form', { name: 'Ask your business' })).toHaveCount(0)
+    await page.route('**/commands/ui_config.reset', (r) => r.fulfill({ status: 500, body: '{}' }))
+    await page.getByRole('button', { name: 'Customise' }).click()
+    await page.getByRole('button', { name: 'Reset to default' }).click()
+    await page.getByRole('dialog').getByRole('button', { name: 'Reset', exact: true }).click()
+    await expect(page.getByRole('alert')).toBeVisible()
+    await page.getByRole('button', { name: 'Cancel' }).click()
+    // still the custom layout, not the defaults
+    await expect(page.getByRole('form', { name: 'Ask your business' })).toHaveCount(0)
+    await page.unroute('**/commands/ui_config.reset')
+    await page.reload()
+    await expect(page.getByRole('form', { name: 'Ask your business' })).toHaveCount(0)
   })
 
   test('a member without finance access sees no finance widgets', async ({ browser }) => {
