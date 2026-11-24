@@ -14,6 +14,7 @@ export function Renderer({
   assetBase,
   pro,
   catalog: items,
+  lang,
 }: {
   data: SiteData
   selectedId?: string | null
@@ -24,6 +25,8 @@ export function Renderer({
   catalog?: CatalogueView
   /** false shows the plan badge strip (the preview of a free site); undefined shows nothing. */
   pro?: boolean
+  /** The language of the blocks' own visitor text (strings.json); English when absent. */
+  lang?: string
 }) {
   const style = themeStyle(data.root?.props?.theme)
   const known = (data.content ?? []).filter((b) => b.type in BLOCKS)
@@ -98,13 +101,14 @@ export function Renderer({
             <C
               {...b.props}
               assetBase={assetBase}
+              lang={lang}
               editing={!!onSelect}
               catalog={b.type === 'Catalogue' ? items : undefined}
             />
           </div>
         )
       })}
-      {pro === false && <SiteBadge pro={false} home="#" />}
+      {pro === false && <SiteBadge pro={false} home="#" lang={lang} />}
     </div>
   )
 }

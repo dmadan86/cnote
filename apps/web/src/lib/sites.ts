@@ -223,7 +223,26 @@ const web = (v: string) => {
     return false
   }
 }
-export function safeHref(v: unknown): string | undefined {
+/** Same canonical form as Go CanonicalURL (webrisk.go): lower-case scheme and host, default port and query/fragment dropped, path kept. IDN hosts stay punycode here (Go decodes them): shortcut, match them when the scanner stores them. */
+export function canonicalUrl(raw: string): string | undefined {
+  try {
+    const u = new URL(raw)
+    if (u.protocol !== 'https:' && u.protocol !== 'http:') return undefined
+    return `${u.protocol}//${u.host}${u.pathname || '/'}`
+  } catch {
+    return undefined
+  }
+}
+/** `blocked` holds canonical URLs the abuse scan hid (PublicSite.blocked_links); a blocked link returns undefined, so it renders as plain text. */
+export function safeHref(v: unknown, blocked?: ReadonlySet<string>): string | undefined {
+  const r = safeHrefRaw(v)
+  if (r && blocked?.size && /^https?:/i.test(r)) {
+    const c = canonicalUrl(r)
+    if (c && blocked.has(c)) return undefined
+  }
+  return r
+}
+function safeHrefRaw(v: unknown): string | undefined {
   if (typeof v !== 'string' || !v || v.length > 300 || CTRL.test(v)) return undefined
   if (/^tel:[\d+\- ]+$/.test(v)) return v
   if (/\s/.test(v)) return undefined
@@ -331,7 +350,11 @@ export type PublicSite = {
   /** The one host this site is served from (a verified custom domain, else the subdomain). Absent on older servers. */
   canonical_host?: string
   form_paused?: boolean
+  /** Canonical URLs hidden by the abuse scan (Phase 3b). */
+  blocked_links?: string[]
 }
+export const blockedOf = (site: Pick<PublicSite, 'blocked_links'>): ReadonlySet<string> =>
+  new Set(site.blocked_links ?? [])
 const SUB = /^[a-z0-9]+(-[a-z0-9]+)*$/
 export const validSub = (v: string) => v.length >= 3 && v.length <= 40 && SUB.test(v)
 
@@ -381,6 +404,7 @@ const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
 const IMG = new RegExp(`^/api/sites/img/${UUID}/${UUID}$`)
 const FORM = new RegExp(`^/api/sites/form/${UUID}$`)
 const HIT = new RegExp(`^/api/sites/hit/${UUID}$`)
+const REPORT = new RegExp(`^/api/sites/report/${UUID}$`)
 /** A page address: the same rule as Go (design 17.10). Reserved names never match a page, so they 404. */
 export const PAGE_SLUG = /^[a-z0-9]+(-[a-z0-9]+)*$/
 export const RESERVED_SLUGS = [
@@ -439,7 +463,8 @@ export function route(
     return site(`/published/${host}${pathname}`)
   if (read && validSlug(pathname.slice(1))) return site(`/published/${host}${pathname}`)
   if (read && IMG.test(pathname)) return site(null)
-  if (method === 'POST' && (FORM.test(pathname) || HIT.test(pathname))) return site(null)
+  if (method === 'POST' && (FORM.test(pathname) || HIT.test(pathname) || REPORT.test(pathname)))
+    return site(null)
   return { kind: 'notfound' }
 }
 
@@ -921,3 +946,220 @@ export const pageOgId = (site: Site, page: string) => {
   const m = (site as Site & { page_og_images?: Record<string, string> }).page_og_images
   return m?.[page] ?? (page ? undefined : m?.home)
 }
+
+// ======== Phase 3b types (design section 18): languages and abuse. Stubs: shapes are assumed until the backend lands. ========
+
+/** Languages: English plus eight; pa and or are refused by the API unless SITES_EXTRA_LANGS lists them (`extra`). */
+export type SiteLang = { code: string; name: string; native: string; extra?: boolean }
+export const SUPPORTED_LANGS: readonly SiteLang[] = [
+  { code: 'en', name: 'English', native: 'English' },
+  { code: 'hi', name: 'Hindi', native: 'हिन्दी' },
+  { code: 'ta', name: 'Tamil', native: 'தமிழ்' },
+  { code: 'te', name: 'Telugu', native: 'తెలుగు' },
+  { code: 'kn', name: 'Kannada', native: 'ಕನ್ನಡ' },
+  { code: 'mr', name: 'Marathi', native: 'मराठी' },
+  { code: 'bn', name: 'Bengali', native: 'বাংলা' },
+  { code: 'gu', name: 'Gujarati', native: 'ગુજરાતી' },
+  { code: 'ml', name: 'Malayalam', native: 'മലയാളം' },
+  { code: 'pa', name: 'Punjabi', native: 'ਪੰਜਾਬੀ', extra: true },
+]
+/** One translated value; `stale` when its source text changed since (fingerprint mismatch), so the page shows the source. */
+export type LangEntry = {
+  block_id: string
+  prop: string
+  index?: number
+  text: string
+  stale?: boolean
+  checked?: boolean
+}
+export type LangPage = { slug: string; entries: LangEntry[] }
+export type SiteLangInfo = {
+  code: string
+  translated: number
+  stale: number
+  missing: number
+  unchecked: number
+}
+export type LangReview = { lang: string; pages: LangPage[] }
+
+export type AbuseSignal = { rule: string; location: string; snippet: string; reported?: boolean }
+export type AbuseStatus = 'open' | 'dismissed' | 'taken_down' | 'restored'
+export type AbuseCase = {
+  id: string
+  site_id: string
+  site_name: string
+  status: AbuseStatus
+  score: number
+  version_id?: string
+  opened_at: string
+  signals?: AbuseSignal[]
+  not_checked?: string[]
+  appeal?: { note: string; at: string }
+}
+export type AbuseAction = 'dismiss' | 'takedown' | 'restore'
+
+export const siteApi3b = {
+  langList: (ws: string, id: string) => cmd<{ langs: SiteLangInfo[] }>(ws, 'site.lang_list', { id }),
+  langAdd: (ws: string, id: string, lang: string) =>
+    cmd<{ langs: SiteLangInfo[] }>(ws, 'site.lang_add', { id, lang }),
+  langRemove: (ws: string, id: string, lang: string) =>
+    cmd<{ langs: SiteLangInfo[] }>(ws, 'site.lang_remove', { id, lang }),
+  langReview: (ws: string, id: string, lang: string) => cmd<LangReview>(ws, 'site.lang_review', { id, lang }),
+  langEntrySet: (
+    ws: string,
+    id: string,
+    expected_version_id: string,
+    lang: string,
+    entry: { page: string; block_id: string; prop: string; index?: number; text: string },
+  ) => cmd<{ entry: LangEntry }>(ws, 'site.lang_entry_set', { id, expected_version_id, lang, ...entry }),
+  langMarkChecked: (ws: string, id: string, lang: string, page?: string) =>
+    cmd<{ ok: boolean }>(ws, 'site.lang_mark_checked', { id, lang, page }),
+  /** A whole-site translation is one chat turn of kind 'translate': same turn polling as any chat turn. */
+  chatTranslate: (ws: string, id: string, expected_version_id: string, translate: string) =>
+    cmd<{ turn_id: string }>(ws, 'site.translate', { id, expected_version_id, lang: translate }),
+
+  /** Visitor report: public, same-origin, no cookie (POST /api/sites/report/{site_id}). */
+  abuseReport: (
+    siteId: string,
+    body: { reason: string; details?: string; url?: string; company_website?: string },
+  ) => api<{ ok?: boolean }>(`/api/sites/report/${encodeURIComponent(siteId)}`, { body }),
+  // Platform review (platform admins only).
+  abuseList: (ws: string, status?: AbuseStatus) =>
+    cmd<{ cases: AbuseCase[] }>(ws, 'site.abuse_list', { status }),
+  abuseGet: (ws: string, id: string) => cmd<AbuseCase>(ws, 'site.abuse_get', { id }),
+  abuseAct: (ws: string, id: string, action: AbuseAction, note: string) =>
+    cmd<AbuseCase>(ws, 'site.abuse_act', { id, action, note }),
+  // Owner appeal: one per takedown.
+  abuseAppeal: (ws: string, id: string, note: string) =>
+    cmd<{ ok: boolean }>(ws, 'site.abuse_appeal', { id, note }),
+}
+// ======== end Phase 3b types ========
+
+// ======== Phase 3b languages web (L2): published routing, overlays, builder helpers ========
+
+/** Assumed public_get additions: `langs` = the shown non-default languages in order (hidden ones are left out by the server). */
+export type PublicLangSite = PublicSite & { langs?: string[] }
+export const shownLangs = (site: PublicSite): string[] =>
+  ((site as PublicLangSite).langs ?? []).filter((c) => LANG_PREFIX.test(`/${c}`) && c !== 'en')
+// pa and or are in the pattern even when the API refuses them: the server's list decides what is shown.
+const LANG_PREFIX = /^\/(hi|ta|te|kn|mr|bn|gu|ml|pa|or)(?=\/|$)/
+/** `/hi/about` -> {lang 'hi', rest '/about'}; any other path is English. Page slugs are never two letters, so this is unambiguous. */
+export function splitLang(pathname: string): { lang: string; rest: string } {
+  const m = LANG_PREFIX.exec(pathname)
+  return m ? { lang: m[1], rest: pathname.slice(m[0].length) || '/' } : { lang: 'en', rest: pathname }
+}
+/** The path a visitor in `lang` uses for a site path ('/', '/about', '/blog'); an in-page `#id` is kept. */
+export const langPath = (lang: string, path: string) =>
+  lang === 'en' ? path : `/${lang}${path === '/' ? '' : path}`
+export const langNative = (code: string) => SUPPORTED_LANGS.find((l) => l.code === code)?.native ?? code
+export const langName = (code: string) => SUPPORTED_LANGS.find((l) => l.code === code)?.name ?? code
+
+type OverlayDef = { kind: string; translatable?: boolean; props?: Record<string, OverlayDef> }
+const defsOf = (type: string) =>
+  (blockDefs[type] as { props?: Record<string, OverlayDef> } | undefined)?.props ?? {}
+const PAGE_LINK = /^\/([a-z0-9]+(-[a-z0-9]+)*)?(#[A-Za-z]+-[0-9a-f]{8})?$/
+/**
+ * Assumed overlay shape (design 18.1/18.2): `i18n[lang][blockId][prop]` = {text, fp} (fp = Fingerprint of the source
+ * string); list sub-props sit under `"items.name"` (or `items`) keyed by item index. An entry whose fp does not match
+ * the current source is ignored, so the source text shows. An entry without fp is trusted (the server marks stale).
+ */
+function pick(src: unknown, e: unknown, fp: (s: string) => string): string | undefined {
+  if (typeof src !== 'string' || !src || e == null) return undefined
+  const o =
+    typeof e === 'string' ? { text: e } : (e as { text?: unknown; t?: unknown; fp?: unknown; f?: unknown })
+  const text = o.text ?? o.t
+  const sum = o.fp ?? o.f
+  if (typeof text !== 'string' || !text.trim()) return undefined
+  if (typeof sum === 'string' && sum !== fp(src)) return undefined
+  return text
+}
+const at = (v: unknown, k: string | number) =>
+  v && typeof v === 'object' ? (v as Record<string | number, unknown>)[k] : undefined
+
+/**
+ * Translated copy of `blocks` for `lang`: overlay text where the fingerprint still matches, and page links
+ * (`/about`, `/blog`) pointing at that language's paths. English returns the blocks untouched.
+ */
+export function localizeBlocks(
+  blocks: SiteBlock[],
+  lang: string,
+  overlay: Record<string, Record<string, unknown>> | undefined,
+  fp: (s: string) => string,
+): SiteBlock[] {
+  if (lang === 'en') return blocks
+  const link = (v: unknown) =>
+    typeof v === 'string' && PAGE_LINK.test(v) ? v.replace(/^\/[^#]*/, (p) => langPath(lang, p)) : v
+  return blocks.map((b) => {
+    const id = String(b.props?.id ?? '')
+    const o = overlay?.[id]
+    const props: Record<string, unknown> = { ...b.props }
+    for (const [k, d] of Object.entries(defsOf(b.type))) {
+      if (d.kind === 'link') props[k] = link(props[k])
+      else if (d.translatable) props[k] = pick(props[k], at(o, k), fp) ?? props[k]
+      else if (d.kind === 'list' && Array.isArray(props[k]))
+        props[k] = (props[k] as Record<string, unknown>[]).map((item, i) => {
+          const next = { ...item }
+          for (const [s, sd] of Object.entries(d.props ?? {})) {
+            if (sd.kind === 'link') next[s] = link(next[s])
+            else if (sd.translatable)
+              next[s] =
+                pick(
+                  next[s],
+                  at(at(o, `${k}.${s}`), i) ?? at(at(at(o, k), i), s) ?? at(at(o, k), `${i}.${s}`),
+                  fp,
+                ) ?? next[s]
+          }
+          return next
+        })
+    }
+    return { ...b, props } as SiteBlock
+  })
+}
+
+/** Review status of one entry: nothing yet = missing; the source changed = needs-update. */
+export type EntryStatus = 'ok' | 'needs-update' | 'missing'
+export const entryStatus = (e: LangEntry): EntryStatus =>
+  !e.text?.trim() ? 'missing' : e.stale ? 'needs-update' : 'ok'
+/** Languages besides English a plan includes (design section 0): 1 free, 3 on Pro. */
+export const langLimit = (pro?: boolean) => (pro ? 3 : 1)
+/** The source text of an entry, from the draft: `e.source` when the API sends it, else read from the page's block. */
+export function entrySource(data: SiteData, page: string, e: LangEntry & { source?: string }): string {
+  if (typeof e.source === 'string') return e.source
+  const blocks = page ? (data.pages?.find((p) => p.slug === page)?.content ?? []) : (data.content ?? [])
+  const b = [...blocks, ...(data.content ?? [])].find((x) => x.props?.id === e.block_id)
+  const [list, sub] = e.prop.split('.')
+  const v = sub
+    ? (b?.props?.[list] as Record<string, unknown>[] | undefined)?.[e.index ?? 0]?.[sub]
+    : b?.props?.[e.prop]
+  return typeof v === 'string' ? v : ''
+}
+/** Assumed command for the hidden-until-checked switch; the shape is the one in the hand-off notes. */
+export const setLangHidden = (ws: string, id: string, lang: string, hidden: boolean) =>
+  cmd<{ langs: SiteLangInfo[] }>(ws, 'site.lang_set_hidden', { id, lang, hidden })
+/** Server only: published posts of one language (public_posts with `lang`; English when omitted). */
+export async function publicPostsIn(host: string, page: number, lang: string): Promise<PublicPosts | null> {
+  if (lang === 'en') return publicPosts(host, page)
+  const j = (await sitesPostLang('public_posts', { host, page, lang })) as Partial<PublicPosts> | null
+  if (!j || !Array.isArray(j.posts) || j.posts.length === 0) return null
+  return {
+    posts: j.posts,
+    total: j.total ?? j.posts.length,
+    page: j.page ?? page,
+    per_page: j.per_page ?? BLOG_PER_PAGE,
+  }
+}
+async function sitesPostLang(path: string, body: Record<string, unknown>) {
+  const domain = process.env.SITES_DOMAIN
+  const host = String(body.host ?? '')
+  if (!domain || !DNS_HOST.test(host)) return null
+  const [dHost, dPort] = domain.toLowerCase().split(':')
+  const sent = host.endsWith(`.${dHost}`) ? `${host}${dPort ? `:${dPort}` : ''}` : host
+  const r = await fetch(`${process.env.API_URL ?? 'http://localhost:4000'}/api/sites/${path}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-sites-token': process.env.SITES_SERVER_TOKEN ?? '' },
+    body: JSON.stringify({ ...body, host: sent }),
+    cache: 'no-store',
+  }).catch(() => null)
+  return r?.ok ? ((await r.json().catch(() => null)) as unknown) : null
+}
+// ======== end Phase 3b languages web ========

@@ -35,6 +35,8 @@ var globalByDesign = map[string]bool{
 	"sites.domain_additions": true,
 	"sites.site_stats":       true,
 	"sites.site_referrers":   true,
+	// written only through the platform admin connection (site.abuse_act); the app role can read, not write
+	"sites.abuse_actions": true,
 }
 
 type tbl struct{ schema, name string }

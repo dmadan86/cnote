@@ -49,6 +49,7 @@ import {
   type Turn,
   viewOfPage,
 } from '@/lib/sites'
+import { AbuseBanner, type AbuseMeta } from './abuse-banner'
 import { BlogPanel } from './blog-panel'
 import { HelpCard, hasSupport, type Support } from './help'
 import { VersionHistory } from './history'
@@ -157,6 +158,7 @@ export function Builder({
   const [syncOpen, setSyncOpen] = useState(false)
   const [syncBusy, setSyncBusy] = useState(false)
   const [syncErr, setSyncErr] = useState<Error>()
+  const [abuse, setAbuse] = useState<AbuseMeta | undefined>()
   const [blog, setBlog] = useState(false)
   const [openPost, setOpenPost] = useState<{ id: string; key: string; ai?: boolean } | null>(null)
   const [blogTick, setBlogTick] = useState(0)
@@ -167,6 +169,7 @@ export function Builder({
     try {
       const r = await siteApi.get(ws, siteId)
       setSite(r.site)
+      setAbuse((r as { abuse?: AbuseMeta }).abuse)
       setData(r.data)
       setMeta({
         images: r.images,
@@ -650,13 +653,7 @@ export function Builder({
         </button>
         {publishBtn}
       </header>
-      {site.taken_down && (
-        <p role="alert" className="border-b border-line bg-bad-bg px-3 py-2 text-[13px] text-bad">
-          This website was taken offline by C Note
-          {site.taken_down.reason ? `: ${site.taken_down.reason}` : '.'} Contact us if you think this is a
-          mistake.
-        </p>
-      )}
+      <AbuseBanner ws={ws} takenDown={site.taken_down} abuse={abuse} />
       {catalog && catalog.items.length > 0 && !!site.published_version_id && (
         <p
           role="status"

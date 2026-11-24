@@ -1,7 +1,8 @@
 'use client'
 import { ImageIcon, MessageCircle, X } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { type CatalogueItemView, type CatMode, catalogueTaxNote, waHref } from '@/lib/sites'
+import { type CatalogueItemView, type CatMode, safeHref, waHref } from '@/lib/sites'
+import { t } from './strings'
 
 const STEP = 12
 const btn =
@@ -28,6 +29,8 @@ export function CatalogueView({
   phone,
   askPath,
   formId,
+  blocked,
+  lang = 'en',
 }: {
   items: CatalogueItemView[]
   mode: CatMode
@@ -39,6 +42,8 @@ export function CatalogueView({
   /** The page path holding the ContactForm ('/' or '/slug') and its block id; none, no "Ask a question". */
   askPath?: string
   formId?: string
+  blocked?: ReadonlySet<string>
+  lang?: string
 }) {
   const [cat, setCat] = useState('')
   const [shown, setShown] = useState(STEP)
@@ -89,8 +94,14 @@ export function CatalogueView({
       // biome-ignore lint/performance/noImgElement: a published site serves its own images, same origin
       <img src={`${assetBase}/${id}`} alt="" loading="lazy" className="size-full object-cover" />
     ) : null
-  const note = catalogueTaxNote(mode)
-  const wa = (name: string) => waHref(phone, `Hi, I'm interested in ${name}`)
+  const note =
+    mode === 'incl'
+      ? t(lang, 'catalogue_prices_incl')
+      : mode === 'plus'
+        ? t(lang, 'catalogue_prices_plus')
+        : ''
+  const wa = (name: string) =>
+    safeHref(waHref(phone, t(lang, 'catalogue_whatsapp_message', { name })), blocked)
   const useWa = enquire !== 'form'
   const useAsk = enquire !== 'whatsapp' && !!askPath && !!formId
   const grid = variant !== 'list'
@@ -110,7 +121,7 @@ export function CatalogueView({
               }}
               className={`${chip} ${cat === c ? 'border-transparent bg-[var(--site-primary)] text-[var(--site-on-primary)]' : ''}`}
             >
-              {c || 'All'}
+              {c || t(lang, 'catalogue_all')}
             </button>
           ))}
         </div>
@@ -159,13 +170,13 @@ export function CatalogueView({
           onClick={() => setShown(shown + STEP)}
           className={`${btn} mt-4 max-w-xs border border-[var(--site-border)]`}
         >
-          Show {Math.min(STEP, list.length - shown)} more
+          {t(lang, 'catalogue_show_more', { count: Math.min(STEP, list.length - shown) })}
         </button>
       )}
       {/* biome-ignore lint/a11y/useKeyWithClickEvents: the click only closes on the backdrop; Escape closes the dialog natively */}
       <dialog
         ref={dlg}
-        aria-label={cur?.name ?? 'Item'}
+        aria-label={cur?.name ?? t(lang, 'catalogue_item')}
         onClose={() => open && close()}
         onClick={(e) => e.target === e.currentTarget && close()}
         className="m-0 mt-auto max-h-[92vh] w-full max-w-none overflow-y-auto rounded-t-2xl border-0 bg-[var(--site-bg)] p-0 text-[var(--site-text)] backdrop:bg-black/50 md:m-auto md:max-w-[780px] md:rounded-[var(--site-radius)]"
@@ -175,7 +186,7 @@ export function CatalogueView({
             <button
               type="button"
               onClick={close}
-              aria-label="Close"
+              aria-label={t(lang, 'catalogue_close')}
               className="absolute right-2 top-2 z-10 flex size-10 items-center justify-center rounded-full bg-[var(--site-bg)] focus-visible:outline-2 focus-visible:outline-[var(--site-primary)]"
             >
               <X size={20} aria-hidden="true" />
@@ -190,7 +201,9 @@ export function CatalogueView({
               <p className="text-lg font-bold tabular-nums">
                 {cur.price}
                 {mode === 'incl' && cur.amount !== undefined && (
-                  <span className="ml-2 text-[13px] font-normal text-[var(--site-muted)]">incl. GST</span>
+                  <span className="ml-2 text-[13px] font-normal text-[var(--site-muted)]">
+                    {t(lang, 'catalogue_incl_gst')}
+                  </span>
                 )}
               </p>
               {cur.description && (
@@ -205,7 +218,7 @@ export function CatalogueView({
                     className={`${btn} bg-[var(--site-primary)] text-[var(--site-on-primary)]`}
                   >
                     <MessageCircle size={18} aria-hidden="true" />
-                    Enquire on WhatsApp
+                    {t(lang, 'catalogue_enquire_whatsapp')}
                   </a>
                 )}
                 {useAsk && (
@@ -213,7 +226,7 @@ export function CatalogueView({
                     href={`${askPath}?item=${cur.id}#${formId}`}
                     className={`${btn} border border-[var(--site-border)]`}
                   >
-                    Ask a question
+                    {t(lang, 'catalogue_ask')}
                   </a>
                 )}
               </div>

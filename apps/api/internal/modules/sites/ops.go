@@ -100,6 +100,7 @@ func applyWith(data json.RawMessage, tool string, input json.RawMessage, slots m
 	if err != nil {
 		return nil, err
 	}
+	pruneOverlays(d) // translations of a block or language that an edit removed
 	out, err := json.Marshal(d)
 	if err != nil {
 		return nil, err

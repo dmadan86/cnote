@@ -1,0 +1,967 @@
+{
+ "_about": "Shapes follow docs/design/site-builder-phase3-facts.md section 1 (custom hostnames API). Error codes other than 10000 are examples; the code reads HTTP status and success only. expected_verdict is for cfJudge: ok, pending, failure (one strike), lost (at once).",
+ "installation_id": "inst-test",
+ "get_responses": [
+  {
+   "id": "active-active",
+   "description": "Live: both statuses active",
+   "http_status": 200,
+   "body": {
+    "result": {
+     "id": "cfid001",
+     "hostname": "active-active.example.com",
+     "status": "active",
+     "ssl": {
+      "id": "ssl-cfid001",
+      "type": "dv",
+      "method": "http",
+      "status": "active",
+      "settings": {
+       "min_tls_version": "1.2"
+      },
+      "validation_errors": []
+     },
+     "ownership_verification": {
+      "type": "txt",
+      "name": "_cf-custom-hostname.active-active.example.com",
+      "value": "00000000-0000-4000-8000-00000cfid001"
+     },
+     "custom_metadata": {
+      "cnote_installation": "inst-test"
+     },
+     "verification_errors": [],
+     "created_at": "2026-11-01T10:00:00Z"
+    },
+    "success": true,
+    "errors": [],
+    "messages": []
+   },
+   "expected_routing": true,
+   "expected_verdict": "ok"
+  },
+  {
+   "id": "active-redeploying",
+   "description": "Settings change rolling out; still served",
+   "http_status": 200,
+   "body": {
+    "result": {
+     "id": "cfid002",
+     "hostname": "active-redeploying.example.com",
+     "status": "active_redeploying",
+     "ssl": {
+      "id": "ssl-cfid002",
+      "type": "dv",
+      "method": "http",
+      "status": "active",
+      "settings": {
+       "min_tls_version": "1.2"
+      },
+      "validation_errors": []
+     },
+     "ownership_verification": {
+      "type": "txt",
+      "name": "_cf-custom-hostname.active-redeploying.example.com",
+      "value": "00000000-0000-4000-8000-00000cfid002"
+     },
+     "custom_metadata": {
+      "cnote_installation": "inst-test"
+     },
+     "verification_errors": [],
+     "created_at": "2026-11-01T10:00:00Z"
+    },
+    "success": true,
+    "errors": [],
+    "messages": []
+   },
+   "expected_routing": true,
+   "expected_verdict": "ok"
+  },
+  {
+   "id": "pending-initializing",
+   "description": "Created, certificate not started",
+   "http_status": 200,
+   "body": {
+    "result": {
+     "id": "cfid003",
+     "hostname": "pending-initializing.example.com",
+     "status": "pending",
+     "ssl": {
+      "id": "ssl-cfid003",
+      "type": "dv",
+      "method": "http",
+      "status": "initializing",
+      "settings": {
+       "min_tls_version": "1.2"
+      },
+      "validation_errors": []
+     },
+     "ownership_verification": {
+      "type": "txt",
+      "name": "_cf-custom-hostname.pending-initializing.example.com",
+      "value": "00000000-0000-4000-8000-00000cfid003"
+     },
+     "custom_metadata": {
+      "cnote_installation": "inst-test"
+     },
+     "verification_errors": [],
+     "created_at": "2026-11-01T10:00:00Z"
+    },
+    "success": true,
+    "errors": [],
+    "messages": []
+   },
+   "expected_routing": false,
+   "expected_verdict": "pending"
+  },
+  {
+   "id": "pending-validation",
+   "description": "Waiting for the CNAME or HTTP check",
+   "http_status": 200,
+   "body": {
+    "result": {
+     "id": "cfid004",
+     "hostname": "pending-validation.example.com",
+     "status": "pending",
+     "ssl": {
+      "id": "ssl-cfid004",
+      "type": "dv",
+      "method": "http",
+      "status": "pending_validation",
+      "settings": {
+       "min_tls_version": "1.2"
+      },
+      "validation_errors": []
+     },
+     "ownership_verification": {
+      "type": "txt",
+      "name": "_cf-custom-hostname.pending-validation.example.com",
+      "value": "00000000-0000-4000-8000-00000cfid004"
+     },
+     "custom_metadata": {
+      "cnote_installation": "inst-test"
+     },
+     "verification_errors": [],
+     "created_at": "2026-11-01T10:00:00Z"
+    },
+    "success": true,
+    "errors": [],
+    "messages": []
+   },
+   "expected_routing": false,
+   "expected_verdict": "pending"
+  },
+  {
+   "id": "pending-issuance",
+   "description": "Validated, certificate being issued",
+   "http_status": 200,
+   "body": {
+    "result": {
+     "id": "cfid005",
+     "hostname": "pending-issuance.example.com",
+     "status": "pending",
+     "ssl": {
+      "id": "ssl-cfid005",
+      "type": "dv",
+      "method": "http",
+      "status": "pending_issuance",
+      "settings": {
+       "min_tls_version": "1.2"
+      },
+      "validation_errors": []
+     },
+     "ownership_verification": {
+      "type": "txt",
+      "name": "_cf-custom-hostname.pending-issuance.example.com",
+      "value": "00000000-0000-4000-8000-00000cfid005"
+     },
+     "custom_metadata": {
+      "cnote_installation": "inst-test"
+     },
+     "verification_errors": [],
+     "created_at": "2026-11-01T10:00:00Z"
+    },
+    "success": true,
+    "errors": [],
+    "messages": []
+   },
+   "expected_routing": false,
+   "expected_verdict": "pending"
+  },
+  {
+   "id": "pending-deployment",
+   "description": "Certificate issued, deploying to the edge",
+   "http_status": 200,
+   "body": {
+    "result": {
+     "id": "cfid006",
+     "hostname": "pending-deployment.example.com",
+     "status": "pending",
+     "ssl": {
+      "id": "ssl-cfid006",
+      "type": "dv",
+      "method": "http",
+      "status": "pending_deployment",
+      "settings": {
+       "min_tls_version": "1.2"
+      },
+      "validation_errors": []
+     },
+     "ownership_verification": {
+      "type": "txt",
+      "name": "_cf-custom-hostname.pending-deployment.example.com",
+      "value": "00000000-0000-4000-8000-00000cfid006"
+     },
+     "custom_metadata": {
+      "cnote_installation": "inst-test"
+     },
+     "verification_errors": [],
+     "created_at": "2026-11-01T10:00:00Z"
+    },
+    "success": true,
+    "errors": [],
+    "messages": []
+   },
+   "expected_routing": false,
+   "expected_verdict": "pending"
+  },
+  {
+   "id": "active-ssl-pending",
+   "description": "Hostname active, certificate not yet",
+   "http_status": 200,
+   "body": {
+    "result": {
+     "id": "cfid007",
+     "hostname": "active-ssl-pending.example.com",
+     "status": "active",
+     "ssl": {
+      "id": "ssl-cfid007",
+      "type": "dv",
+      "method": "http",
+      "status": "pending_validation",
+      "settings": {
+       "min_tls_version": "1.2"
+      },
+      "validation_errors": []
+     },
+     "ownership_verification": {
+      "type": "txt",
+      "name": "_cf-custom-hostname.active-ssl-pending.example.com",
+      "value": "00000000-0000-4000-8000-00000cfid007"
+     },
+     "custom_metadata": {
+      "cnote_installation": "inst-test"
+     },
+     "verification_errors": [],
+     "created_at": "2026-11-01T10:00:00Z"
+    },
+    "success": true,
+    "errors": [],
+    "messages": []
+   },
+   "expected_routing": false,
+   "expected_verdict": "pending"
+  },
+  {
+   "id": "ssl-validation-timed-out",
+   "description": "Validation timed out: one strike",
+   "http_status": 200,
+   "body": {
+    "result": {
+     "id": "cfid008",
+     "hostname": "ssl-validation-timed-out.example.com",
+     "status": "pending",
+     "ssl": {
+      "id": "ssl-cfid008",
+      "type": "dv",
+      "method": "http",
+      "status": "validation_timed_out",
+      "settings": {
+       "min_tls_version": "1.2"
+      },
+      "validation_errors": []
+     },
+     "ownership_verification": {
+      "type": "txt",
+      "name": "_cf-custom-hostname.ssl-validation-timed-out.example.com",
+      "value": "00000000-0000-4000-8000-00000cfid008"
+     },
+     "custom_metadata": {
+      "cnote_installation": "inst-test"
+     },
+     "verification_errors": [],
+     "created_at": "2026-11-01T10:00:00Z"
+    },
+    "success": true,
+    "errors": [],
+    "messages": []
+   },
+   "expected_routing": false,
+   "expected_verdict": "failure"
+  },
+  {
+   "id": "ssl-issuance-timed-out",
+   "description": "Issuance timed out: one strike",
+   "http_status": 200,
+   "body": {
+    "result": {
+     "id": "cfid009",
+     "hostname": "ssl-issuance-timed-out.example.com",
+     "status": "pending",
+     "ssl": {
+      "id": "ssl-cfid009",
+      "type": "dv",
+      "method": "http",
+      "status": "issuance_timed_out",
+      "settings": {
+       "min_tls_version": "1.2"
+      },
+      "validation_errors": []
+     },
+     "ownership_verification": {
+      "type": "txt",
+      "name": "_cf-custom-hostname.ssl-issuance-timed-out.example.com",
+      "value": "00000000-0000-4000-8000-00000cfid009"
+     },
+     "custom_metadata": {
+      "cnote_installation": "inst-test"
+     },
+     "verification_errors": [],
+     "created_at": "2026-11-01T10:00:00Z"
+    },
+    "success": true,
+    "errors": [],
+    "messages": []
+   },
+   "expected_routing": false,
+   "expected_verdict": "failure"
+  },
+  {
+   "id": "ssl-expired",
+   "description": "Certificate expired: one strike",
+   "http_status": 200,
+   "body": {
+    "result": {
+     "id": "cfid010",
+     "hostname": "ssl-expired.example.com",
+     "status": "active",
+     "ssl": {
+      "id": "ssl-cfid010",
+      "type": "dv",
+      "method": "http",
+      "status": "expired",
+      "settings": {
+       "min_tls_version": "1.2"
+      },
+      "validation_errors": []
+     },
+     "ownership_verification": {
+      "type": "txt",
+      "name": "_cf-custom-hostname.ssl-expired.example.com",
+      "value": "00000000-0000-4000-8000-00000cfid010"
+     },
+     "custom_metadata": {
+      "cnote_installation": "inst-test"
+     },
+     "verification_errors": [],
+     "created_at": "2026-11-01T10:00:00Z"
+    },
+    "success": true,
+    "errors": [],
+    "messages": []
+   },
+   "expected_routing": false,
+   "expected_verdict": "failure"
+  },
+  {
+   "id": "hostname-moved",
+   "description": "Moved away from the zone: one strike",
+   "http_status": 200,
+   "body": {
+    "result": {
+     "id": "cfid011",
+     "hostname": "hostname-moved.example.com",
+     "status": "moved",
+     "ssl": {
+      "id": "ssl-cfid011",
+      "type": "dv",
+      "method": "http",
+      "status": "active",
+      "settings": {
+       "min_tls_version": "1.2"
+      },
+      "validation_errors": []
+     },
+     "ownership_verification": {
+      "type": "txt",
+      "name": "_cf-custom-hostname.hostname-moved.example.com",
+      "value": "00000000-0000-4000-8000-00000cfid011"
+     },
+     "custom_metadata": {
+      "cnote_installation": "inst-test"
+     },
+     "verification_errors": [],
+     "created_at": "2026-11-01T10:00:00Z"
+    },
+    "success": true,
+    "errors": [],
+    "messages": []
+   },
+   "expected_routing": false,
+   "expected_verdict": "failure"
+  },
+  {
+   "id": "hostname-deleted",
+   "description": "Deleted at the provider: one strike",
+   "http_status": 200,
+   "body": {
+    "result": {
+     "id": "cfid012",
+     "hostname": "hostname-deleted.example.com",
+     "status": "deleted",
+     "ssl": {
+      "id": "ssl-cfid012",
+      "type": "dv",
+      "method": "http",
+      "status": "active",
+      "settings": {
+       "min_tls_version": "1.2"
+      },
+      "validation_errors": []
+     },
+     "ownership_verification": {
+      "type": "txt",
+      "name": "_cf-custom-hostname.hostname-deleted.example.com",
+      "value": "00000000-0000-4000-8000-00000cfid012"
+     },
+     "custom_metadata": {
+      "cnote_installation": "inst-test"
+     },
+     "verification_errors": [],
+     "created_at": "2026-11-01T10:00:00Z"
+    },
+    "success": true,
+    "errors": [],
+    "messages": []
+   },
+   "expected_routing": false,
+   "expected_verdict": "failure"
+  },
+  {
+   "id": "hostname-pending-deletion",
+   "description": "Being deleted: one strike",
+   "http_status": 200,
+   "body": {
+    "result": {
+     "id": "cfid013",
+     "hostname": "hostname-pending-deletion.example.com",
+     "status": "pending_deletion",
+     "ssl": {
+      "id": "ssl-cfid013",
+      "type": "dv",
+      "method": "http",
+      "status": "active",
+      "settings": {
+       "min_tls_version": "1.2"
+      },
+      "validation_errors": []
+     },
+     "ownership_verification": {
+      "type": "txt",
+      "name": "_cf-custom-hostname.hostname-pending-deletion.example.com",
+      "value": "00000000-0000-4000-8000-00000cfid013"
+     },
+     "custom_metadata": {
+      "cnote_installation": "inst-test"
+     },
+     "verification_errors": [],
+     "created_at": "2026-11-01T10:00:00Z"
+    },
+    "success": true,
+    "errors": [],
+    "messages": []
+   },
+   "expected_routing": false,
+   "expected_verdict": "failure"
+  },
+  {
+   "id": "hostname-blocked",
+   "description": "Blocked by Cloudflare: lost at once",
+   "http_status": 200,
+   "body": {
+    "result": {
+     "id": "cfid014",
+     "hostname": "hostname-blocked.example.com",
+     "status": "blocked",
+     "ssl": {
+      "id": "ssl-cfid014",
+      "type": "dv",
+      "method": "http",
+      "status": "active",
+      "settings": {
+       "min_tls_version": "1.2"
+      },
+      "validation_errors": []
+     },
+     "ownership_verification": {
+      "type": "txt",
+      "name": "_cf-custom-hostname.hostname-blocked.example.com",
+      "value": "00000000-0000-4000-8000-00000cfid014"
+     },
+     "custom_metadata": {
+      "cnote_installation": "inst-test"
+     },
+     "verification_errors": [],
+     "created_at": "2026-11-01T10:00:00Z"
+    },
+    "success": true,
+    "errors": [],
+    "messages": []
+   },
+   "expected_routing": false,
+   "expected_verdict": "lost"
+  },
+  {
+   "id": "hostname-pending-blocked",
+   "description": "Blocked while pending: lost at once",
+   "http_status": 200,
+   "body": {
+    "result": {
+     "id": "cfid015",
+     "hostname": "hostname-pending-blocked.example.com",
+     "status": "pending_blocked",
+     "ssl": {
+      "id": "ssl-cfid015",
+      "type": "dv",
+      "method": "http",
+      "status": "initializing",
+      "settings": {
+       "min_tls_version": "1.2"
+      },
+      "validation_errors": []
+     },
+     "ownership_verification": {
+      "type": "txt",
+      "name": "_cf-custom-hostname.hostname-pending-blocked.example.com",
+      "value": "00000000-0000-4000-8000-00000cfid015"
+     },
+     "custom_metadata": {
+      "cnote_installation": "inst-test"
+     },
+     "verification_errors": [],
+     "created_at": "2026-11-01T10:00:00Z"
+    },
+    "success": true,
+    "errors": [],
+    "messages": []
+   },
+   "expected_routing": false,
+   "expected_verdict": "lost"
+  },
+  {
+   "id": "not-found",
+   "description": "The id is unknown (Cloudflare deleted it after retrying validation for seven days)",
+   "http_status": 404,
+   "body": {
+    "result": null,
+    "success": false,
+    "errors": [
+     {
+      "code": 1436,
+      "message": "Custom hostname not found."
+     }
+    ],
+    "messages": []
+   },
+   "expected_verdict": "failure"
+  }
+ ],
+ "list_responses": [
+  {
+   "id": "page-1",
+   "description": "First of two pages; the hostname is not on it",
+   "http_status": 200,
+   "body": {
+    "result": [
+     {
+      "id": "cfid901",
+      "hostname": "other-a.example.com",
+      "status": "active",
+      "ssl": {
+       "id": "ssl-cfid901",
+       "type": "dv",
+       "method": "http",
+       "status": "active",
+       "settings": {
+        "min_tls_version": "1.2"
+       },
+       "validation_errors": []
+      },
+      "ownership_verification": {
+       "type": "txt",
+       "name": "_cf-custom-hostname.other-a.example.com",
+       "value": "00000000-0000-4000-8000-00000cfid901"
+      },
+      "custom_metadata": {
+       "cnote_installation": "inst-test"
+      },
+      "verification_errors": [],
+      "created_at": "2026-11-01T10:00:00Z"
+     },
+     {
+      "id": "cfid902",
+      "hostname": "other-b.example.com",
+      "status": "active",
+      "ssl": {
+       "id": "ssl-cfid902",
+       "type": "dv",
+       "method": "http",
+       "status": "active",
+       "settings": {
+        "min_tls_version": "1.2"
+       },
+       "validation_errors": []
+      },
+      "ownership_verification": {
+       "type": "txt",
+       "name": "_cf-custom-hostname.other-b.example.com",
+       "value": "00000000-0000-4000-8000-00000cfid902"
+      },
+      "custom_metadata": {
+       "cnote_installation": "inst-test"
+      },
+      "verification_errors": [],
+      "created_at": "2026-11-01T10:00:00Z"
+     }
+    ],
+    "success": true,
+    "errors": [],
+    "messages": [],
+    "result_info": {
+     "page": 1,
+     "per_page": 2,
+     "total_pages": 2,
+     "count": 2,
+     "total_count": 3
+    }
+   }
+  },
+  {
+   "id": "page-2",
+   "description": "Second page holds our hostname",
+   "http_status": 200,
+   "body": {
+    "result": [
+     {
+      "id": "cfid903",
+      "hostname": "shop.example.com",
+      "status": "pending",
+      "ssl": {
+       "id": "ssl-cfid903",
+       "type": "dv",
+       "method": "http",
+       "status": "initializing",
+       "settings": {
+        "min_tls_version": "1.2"
+       },
+       "validation_errors": []
+      },
+      "ownership_verification": {
+       "type": "txt",
+       "name": "_cf-custom-hostname.shop.example.com",
+       "value": "00000000-0000-4000-8000-00000cfid903"
+      },
+      "custom_metadata": {
+       "cnote_installation": "inst-test"
+      },
+      "verification_errors": [],
+      "created_at": "2026-11-01T10:00:00Z"
+     }
+    ],
+    "success": true,
+    "errors": [],
+    "messages": [],
+    "result_info": {
+     "page": 2,
+     "per_page": 2,
+     "total_pages": 2,
+     "count": 1,
+     "total_count": 3
+    }
+   }
+  },
+  {
+   "id": "foreign",
+   "description": "A hostname of the zone that carries no installation id",
+   "http_status": 200,
+   "body": {
+    "result": [
+     {
+      "id": "cfid904",
+      "hostname": "shop.example.com",
+      "status": "active",
+      "ssl": {
+       "id": "ssl-cfid904",
+       "type": "dv",
+       "method": "http",
+       "status": "active",
+       "settings": {
+        "min_tls_version": "1.2"
+       },
+       "validation_errors": []
+      },
+      "ownership_verification": {
+       "type": "txt",
+       "name": "_cf-custom-hostname.shop.example.com",
+       "value": "00000000-0000-4000-8000-00000cfid904"
+      },
+      "custom_metadata": {},
+      "verification_errors": [],
+      "created_at": "2026-11-01T10:00:00Z"
+     }
+    ],
+    "success": true,
+    "errors": [],
+    "messages": [],
+    "result_info": {
+     "page": 1,
+     "per_page": 50,
+     "total_pages": 1,
+     "count": 1,
+     "total_count": 1
+    }
+   }
+  },
+  {
+   "id": "empty",
+   "description": "No such hostname",
+   "http_status": 200,
+   "body": {
+    "result": [],
+    "success": true,
+    "errors": [],
+    "messages": [],
+    "result_info": {
+     "page": 1,
+     "per_page": 50,
+     "total_pages": 1,
+     "count": 0,
+     "total_count": 0
+    }
+   }
+  },
+  {
+   "id": "count",
+   "description": "Zone totals (the count for the budget)",
+   "http_status": 200,
+   "body": {
+    "result": [
+     {
+      "id": "cfid905",
+      "hostname": "one.example.com",
+      "status": "active",
+      "ssl": {
+       "id": "ssl-cfid905",
+       "type": "dv",
+       "method": "http",
+       "status": "active",
+       "settings": {
+        "min_tls_version": "1.2"
+       },
+       "validation_errors": []
+      },
+      "ownership_verification": {
+       "type": "txt",
+       "name": "_cf-custom-hostname.one.example.com",
+       "value": "00000000-0000-4000-8000-00000cfid905"
+      },
+      "custom_metadata": {
+       "cnote_installation": "inst-test"
+      },
+      "verification_errors": [],
+      "created_at": "2026-11-01T10:00:00Z"
+     }
+    ],
+    "success": true,
+    "errors": [],
+    "messages": [],
+    "result_info": {
+     "page": 1,
+     "per_page": 5,
+     "total_pages": 18,
+     "count": 1,
+     "total_count": 86
+    }
+   }
+  }
+ ],
+ "create_responses": [
+  {
+   "id": "created",
+   "description": "Created: pending until the certificate and DNS are ready",
+   "http_status": 200,
+   "body": {
+    "result": {
+     "id": "cfid910",
+     "hostname": "shop.example.com",
+     "status": "pending",
+     "ssl": {
+      "id": "ssl-cfid910",
+      "type": "dv",
+      "method": "http",
+      "status": "initializing",
+      "settings": {
+       "min_tls_version": "1.2"
+      },
+      "validation_errors": []
+     },
+     "ownership_verification": {
+      "type": "txt",
+      "name": "_cf-custom-hostname.shop.example.com",
+      "value": "00000000-0000-4000-8000-00000cfid910"
+     },
+     "custom_metadata": {
+      "cnote_installation": "inst-test"
+     },
+     "verification_errors": [],
+     "created_at": "2026-11-01T10:00:00Z"
+    },
+    "success": true,
+    "errors": [],
+    "messages": []
+   },
+   "expected_id": "cfid910"
+  },
+  {
+   "id": "quota",
+   "description": "Over the zone's hostname quota",
+   "http_status": 400,
+   "body": {
+    "result": null,
+    "success": false,
+    "errors": [
+     {
+      "code": 1409,
+      "message": "Custom hostname quota exceeded."
+     }
+    ],
+    "messages": []
+   },
+   "expected_code": 1409
+  },
+  {
+   "id": "duplicate",
+   "description": "Already exists in the zone",
+   "http_status": 409,
+   "body": {
+    "result": null,
+    "success": false,
+    "errors": [
+     {
+      "code": 1406,
+      "message": "Duplicate custom hostname found."
+     }
+    ],
+    "messages": []
+   },
+   "expected_code": 1406
+  }
+ ],
+ "delete_responses": [
+  {
+   "id": "deleted",
+   "description": "Deleted",
+   "http_status": 200,
+   "body": {
+    "result": {
+     "id": "cfid910"
+    },
+    "success": true,
+    "errors": [],
+    "messages": []
+   }
+  },
+  {
+   "id": "already-gone",
+   "description": "Not there any more: counts as deleted",
+   "http_status": 404,
+   "body": {
+    "result": null,
+    "success": false,
+    "errors": [
+     {
+      "code": 1436,
+      "message": "Custom hostname not found."
+     }
+    ],
+    "messages": []
+   }
+  }
+ ],
+ "error_responses": [
+  {
+   "id": "auth",
+   "description": "Bad or missing token",
+   "http_status": 401,
+   "body": {
+    "result": null,
+    "success": false,
+    "errors": [
+     {
+      "code": 10000,
+      "message": "Authentication error"
+     }
+    ],
+    "messages": []
+   }
+  },
+  {
+   "id": "zone",
+   "description": "Unknown zone or no access",
+   "http_status": 403,
+   "body": {
+    "result": null,
+    "success": false,
+    "errors": [
+     {
+      "code": 1001,
+      "message": "Zone not found"
+     }
+    ],
+    "messages": []
+   }
+  },
+  {
+   "id": "rate-limited",
+   "description": "Rate limit: the token is blocked for five minutes",
+   "http_status": 429,
+   "retry_after": "300",
+   "body": {
+    "result": null,
+    "success": false,
+    "errors": [
+     {
+      "code": 971,
+      "message": "Too many requests"
+     }
+    ],
+    "messages": []
+   }
+  },
+  {
+   "id": "server",
+   "description": "Cloudflare failed",
+   "http_status": 500,
+   "body": {
+    "result": null,
+    "success": false,
+    "errors": [
+     {
+      "code": 1000,
+      "message": "An unexpected error occurred"
+     }
+    ],
+    "messages": []
+   }
+  }
+ ]
+}

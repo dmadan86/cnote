@@ -1,0 +1,1734 @@
+{
+ "benign": [
+  {
+   "id": "benign-dental-clinic",
+   "description": "Dental clinic with appointment form — has form but no credential words",
+   "business_name": "Sharma Dental Clinic",
+   "workspace_age_days": 365,
+   "site": {
+    "root": {
+     "props": {
+      "title": "Sharma Dental Clinic",
+      "description": "Expert dental care in Pune."
+     }
+    },
+    "content": [
+     {
+      "type": "Hero",
+      "props": {
+       "id": "Hero-001",
+       "title": "Sharma Dental Clinic",
+       "subtitle": "Expert care for your whole family.",
+       "cta_label": "Book Appointment",
+       "cta_href": "tel:+919876543210"
+      }
+     },
+     {
+      "type": "ContactForm",
+      "props": {
+       "id": "ContactForm-001",
+       "title": "Book an Appointment",
+       "intro": "Tell us your name, date of birth, and the treatment you need.",
+       "phone": "+91 98765 43210",
+       "email": "hello@sharmadental.in"
+      }
+     }
+    ]
+   },
+   "posts": [],
+   "catalogue": [],
+   "expected_score_max": 49,
+   "expected_rules_triggered": []
+  },
+  {
+   "id": "benign-restaurant",
+   "description": "Restaurant with menu page and WhatsApp contact",
+   "business_name": "Spice Garden Restaurant",
+   "workspace_age_days": 180,
+   "site": {
+    "root": {
+     "props": {
+      "title": "Spice Garden Restaurant",
+      "description": "Authentic Indian cuisine in Mumbai."
+     }
+    },
+    "content": [
+     {
+      "type": "Hero",
+      "props": {
+       "id": "Hero-001",
+       "title": "Spice Garden Restaurant",
+       "subtitle": "Authentic Indian flavours crafted with love. Dine in or order online.",
+       "cta_label": "View Menu",
+       "cta_href": "https://spicegarden.in/menu"
+      }
+     },
+     {
+      "type": "WhatsAppButton",
+      "props": {
+       "id": "WhatsApp-001",
+       "phone": "+91 99887 76655",
+       "message": "Hi, I would like to reserve a table.",
+       "label": "Chat on WhatsApp"
+      }
+     }
+    ]
+   },
+   "posts": [],
+   "catalogue": [],
+   "expected_score_max": 49,
+   "expected_rules_triggered": []
+  },
+  {
+   "id": "benign-textile-shop",
+   "description": "Textile shop with catalogue items and prices",
+   "business_name": "Ravi Textiles",
+   "workspace_age_days": 90,
+   "site": {
+    "root": {
+     "props": {
+      "title": "Ravi Textiles",
+      "description": "Quality fabrics and sarees in Surat."
+     }
+    },
+    "content": [
+     {
+      "type": "Hero",
+      "props": {
+       "id": "Hero-001",
+       "title": "Ravi Textiles",
+       "subtitle": "Premium sarees, dress materials, and fabrics at wholesale prices.",
+       "cta_label": "Shop Now",
+       "cta_href": "https://ravitextiles.in/shop"
+      }
+     },
+     {
+      "type": "Services",
+      "props": {
+       "id": "Services-001",
+       "title": "Our Products",
+       "items": [
+        {
+         "name": "Banarasi Silk Saree",
+         "description": "Pure silk, handwoven.",
+         "price": "₹4,500"
+        },
+        {
+         "name": "Cotton Dress Material",
+         "description": "Light and comfortable.",
+         "price": "₹650"
+        }
+       ]
+      }
+     }
+    ]
+   },
+   "posts": [],
+   "catalogue": [
+    {
+     "name": "Banarasi Silk Saree",
+     "price": 4500
+    },
+    {
+     "name": "Cotton Dress Material",
+     "price": 650
+    }
+   ],
+   "expected_score_max": 49,
+   "expected_rules_triggered": []
+  },
+  {
+   "id": "benign-ca-firm",
+   "description": "CA firm mentioning PAN filing and income tax returns legitimately; business name contains those words",
+   "business_name": "Income Tax & PAN Filing Experts - Mehta & Co",
+   "workspace_age_days": 730,
+   "site": {
+    "root": {
+     "props": {
+      "title": "Mehta & Co - CA Firm",
+      "description": "Chartered Accountants specialising in PAN filing and income tax returns."
+     }
+    },
+    "content": [
+     {
+      "type": "Hero",
+      "props": {
+       "id": "Hero-001",
+       "title": "Mehta & Co CA Firm",
+       "subtitle": "Expert CA services for PAN registration, income tax return filing, GST, and company registration.",
+       "cta_label": "Get a Quote",
+       "cta_href": "tel:+912212345678"
+      }
+     },
+     {
+      "type": "About",
+      "props": {
+       "id": "About-001",
+       "title": "About Us",
+       "body": "Mehta & Co has been helping individuals and businesses with PAN card applications, income tax return filing, and GST compliance for over 20 years."
+      }
+     }
+    ]
+   },
+   "posts": [],
+   "catalogue": [],
+   "expected_score_max": 49,
+   "expected_rules_triggered": [
+    "R1"
+   ]
+  },
+  {
+   "id": "benign-sbi-branch",
+   "description": "SBI bank branch page — business name matches site title so no R6, known domain so no R2",
+   "business_name": "SBI MG Road Branch Pune",
+   "workspace_age_days": 500,
+   "site": {
+    "root": {
+     "props": {
+      "title": "SBI MG Road Branch",
+      "description": "State Bank of India — MG Road branch, Pune."
+     }
+    },
+    "content": [
+     {
+      "type": "Hero",
+      "props": {
+       "id": "Hero-001",
+       "title": "SBI MG Road Branch",
+       "subtitle": "Welcome to State Bank of India, MG Road Pune. Visit us for all your banking needs.",
+       "cta_label": "Get Directions",
+       "cta_href": "https://www.google.com/maps/search/?api=1&query=SBI+MG+Road+Pune"
+      }
+     },
+     {
+      "type": "MapHours",
+      "props": {
+       "id": "MapHours-001",
+       "title": "Branch Hours",
+       "address": "MG Road, Pune 411001",
+       "hours": [
+        {
+         "days": "Monday – Friday",
+         "time": "10:00 AM – 4:00 PM"
+        },
+        {
+         "days": "Saturday",
+         "time": "10:00 AM – 1:00 PM"
+        }
+       ]
+      }
+     }
+    ]
+   },
+   "posts": [],
+   "catalogue": [],
+   "expected_score_max": 49,
+   "expected_rules_triggered": []
+  },
+  {
+   "id": "benign-hdfc-branch",
+   "description": "HDFC bank branch page — name matches, links go to hdfcbank.com",
+   "business_name": "HDFC Bank Koregaon Park Branch",
+   "workspace_age_days": 400,
+   "site": {
+    "root": {
+     "props": {
+      "title": "HDFC Bank Koregaon Park Branch",
+      "description": "HDFC Bank Koregaon Park — Pune."
+     }
+    },
+    "content": [
+     {
+      "type": "Hero",
+      "props": {
+       "id": "Hero-001",
+       "title": "HDFC Bank Koregaon Park",
+       "subtitle": "Your trusted HDFC Bank branch in Koregaon Park, Pune. Online banking at hdfcbank.com.",
+       "cta_label": "Internet Banking",
+       "cta_href": "https://www.hdfcbank.com/netbanking"
+      }
+     },
+     {
+      "type": "MapHours",
+      "props": {
+       "id": "MapHours-001",
+       "title": "Branch Hours",
+       "address": "Koregaon Park, Pune 411001",
+       "hours": [
+        {
+         "days": "Monday – Friday",
+         "time": "10:00 AM – 4:00 PM"
+        }
+       ]
+      }
+     }
+    ]
+   },
+   "posts": [],
+   "catalogue": [],
+   "expected_score_max": 49,
+   "expected_rules_triggered": [
+    "R1"
+   ]
+  },
+  {
+   "id": "benign-clinic-intake",
+   "description": "Clinic asking for name, DOB, medical history for appointment — no credential words",
+   "business_name": "City Health Clinic",
+   "workspace_age_days": 200,
+   "site": {
+    "root": {
+     "props": {
+      "title": "City Health Clinic",
+      "description": "General practice clinic in Bangalore."
+     }
+    },
+    "content": [
+     {
+      "type": "Hero",
+      "props": {
+       "id": "Hero-001",
+       "title": "City Health Clinic",
+       "subtitle": "Comprehensive primary healthcare. Book a consultation today.",
+       "cta_label": "Book Now",
+       "cta_href": "tel:+918023456789"
+      }
+     },
+     {
+      "type": "ContactForm",
+      "props": {
+       "id": "ContactForm-001",
+       "title": "New Patient Registration",
+       "intro": "Please provide your full name, date of birth, and a brief medical history. Our staff will confirm your appointment.",
+       "phone": "+91 80 2345 6789",
+       "email": "reception@cityhealthclinic.in"
+      }
+     }
+    ]
+   },
+   "posts": [],
+   "catalogue": [],
+   "expected_score_max": 49,
+   "expected_rules_triggered": []
+  },
+  {
+   "id": "benign-yoga-studio",
+   "description": "Yoga studio with class schedule",
+   "business_name": "Sunrise Yoga Studio",
+   "workspace_age_days": 150,
+   "site": {
+    "root": {
+     "props": {
+      "title": "Sunrise Yoga Studio",
+      "description": "Yoga and wellness classes in Chennai."
+     }
+    },
+    "content": [
+     {
+      "type": "Hero",
+      "props": {
+       "id": "Hero-001",
+       "title": "Sunrise Yoga Studio",
+       "subtitle": "Transform your body and mind with expert-led yoga classes. Beginners welcome.",
+       "cta_label": "View Schedule",
+       "cta_href": "https://sunriseyoga.in/schedule"
+      }
+     },
+     {
+      "type": "Services",
+      "props": {
+       "id": "Services-001",
+       "title": "Classes",
+       "items": [
+        {
+         "name": "Hatha Yoga",
+         "description": "Foundation yoga for all levels.",
+         "price": "₹1,200/month"
+        },
+        {
+         "name": "Pranayama",
+         "description": "Breathwork and meditation.",
+         "price": "₹800/month"
+        }
+       ]
+      }
+     }
+    ]
+   },
+   "posts": [],
+   "catalogue": [],
+   "expected_score_max": 49,
+   "expected_rules_triggered": []
+  },
+  {
+   "id": "benign-grocery-upi",
+   "description": "Grocery store mentioning Pay by UPI or Paytm for payment context — business name is grocery store",
+   "business_name": "Sharma Kirana Store",
+   "workspace_age_days": 60,
+   "site": {
+    "root": {
+     "props": {
+      "title": "Sharma Kirana Store",
+      "description": "Fresh groceries delivered to your door."
+     }
+    },
+    "content": [
+     {
+      "type": "Hero",
+      "props": {
+       "id": "Hero-001",
+       "title": "Sharma Kirana Store",
+       "subtitle": "Fresh groceries and daily essentials. We accept cash, Pay by UPI, or Paytm.",
+       "cta_label": "Order Now",
+       "cta_href": "tel:+919988776655"
+      }
+     },
+     {
+      "type": "About",
+      "props": {
+       "id": "About-001",
+       "title": "About Us",
+       "body": "Sharma Kirana Store has been serving the Andheri neighbourhood since 2005. Payment accepted by cash, UPI, or Paytm."
+      }
+     }
+    ]
+   },
+   "posts": [],
+   "catalogue": [],
+   "expected_score_max": 49,
+   "expected_rules_triggered": []
+  },
+  {
+   "id": "benign-tutoring",
+   "description": "Tutoring center for school students",
+   "business_name": "Bright Future Tutorials",
+   "workspace_age_days": 300,
+   "site": {
+    "root": {
+     "props": {
+      "title": "Bright Future Tutorials",
+      "description": "Expert tuition for Class 8–12 students in Hyderabad."
+     }
+    },
+    "content": [
+     {
+      "type": "Hero",
+      "props": {
+       "id": "Hero-001",
+       "title": "Bright Future Tutorials",
+       "subtitle": "Score higher with personalised coaching for Maths, Science, and English. Classes 8 to 12.",
+       "cta_label": "Enquire Now",
+       "cta_href": "tel:+914023456789"
+      }
+     },
+     {
+      "type": "Services",
+      "props": {
+       "id": "Services-001",
+       "title": "Subjects",
+       "items": [
+        {
+         "name": "Mathematics",
+         "description": "CBSE and State Board.",
+         "price": "₹1,500/month"
+        },
+        {
+         "name": "Physics & Chemistry",
+         "description": "Combined science batch.",
+         "price": "₹2,000/month"
+        }
+       ]
+      }
+     }
+    ]
+   },
+   "posts": [],
+   "catalogue": [],
+   "expected_score_max": 49,
+   "expected_rules_triggered": []
+  },
+  {
+   "id": "benign-travel-agency",
+   "description": "Travel agency with booking form",
+   "business_name": "Dream Voyages Travel Agency",
+   "workspace_age_days": 250,
+   "site": {
+    "root": {
+     "props": {
+      "title": "Dream Voyages Travel Agency",
+      "description": "Holiday packages and visa assistance."
+     }
+    },
+    "content": [
+     {
+      "type": "Hero",
+      "props": {
+       "id": "Hero-001",
+       "title": "Dream Voyages",
+       "subtitle": "Customised holiday packages to Europe, Southeast Asia, and the Maldives. Visa assistance included.",
+       "cta_label": "Get a Quote",
+       "cta_href": "#ContactForm-001"
+      }
+     },
+     {
+      "type": "ContactForm",
+      "props": {
+       "id": "ContactForm-001",
+       "title": "Plan Your Trip",
+       "intro": "Tell us your destination, travel dates, and number of travellers and we will get back to you within 24 hours.",
+       "email": "hello@dreamvoyages.in"
+      }
+     }
+    ]
+   },
+   "posts": [],
+   "catalogue": [],
+   "expected_score_max": 49,
+   "expected_rules_triggered": []
+  },
+  {
+   "id": "benign-law-firm",
+   "description": "Law firm with practice areas",
+   "business_name": "Patel & Associates Law Firm",
+   "workspace_age_days": 600,
+   "site": {
+    "root": {
+     "props": {
+      "title": "Patel & Associates Law Firm",
+      "description": "Corporate and civil law practice in Delhi."
+     }
+    },
+    "content": [
+     {
+      "type": "Hero",
+      "props": {
+       "id": "Hero-001",
+       "title": "Patel & Associates",
+       "subtitle": "Experienced legal counsel for corporate, civil, and family law matters.",
+       "cta_label": "Book Consultation",
+       "cta_href": "tel:+911123456789"
+      }
+     },
+     {
+      "type": "Services",
+      "props": {
+       "id": "Services-001",
+       "title": "Practice Areas",
+       "items": [
+        {
+         "name": "Corporate Law",
+         "description": "Company formation and contracts."
+        },
+        {
+         "name": "Family Law",
+         "description": "Divorce, custody, and succession."
+        }
+       ]
+      }
+     }
+    ]
+   },
+   "posts": [],
+   "catalogue": [],
+   "expected_score_max": 49,
+   "expected_rules_triggered": []
+  },
+  {
+   "id": "benign-real-estate",
+   "description": "Real estate agent with property listings",
+   "business_name": "Prestige Properties",
+   "workspace_age_days": 120,
+   "site": {
+    "root": {
+     "props": {
+      "title": "Prestige Properties",
+      "description": "Buy, sell and rent properties in Bangalore."
+     }
+    },
+    "content": [
+     {
+      "type": "Hero",
+      "props": {
+       "id": "Hero-001",
+       "title": "Prestige Properties",
+       "subtitle": "Find your dream home in Bangalore. Flats, villas, and plots.",
+       "cta_label": "Browse Listings",
+       "cta_href": "https://prestigeproperties.in/listings"
+      }
+     },
+     {
+      "type": "About",
+      "props": {
+       "id": "About-001",
+       "title": "About Us",
+       "body": "Prestige Properties has 10 years of experience in residential and commercial real estate in Bangalore."
+      }
+     }
+    ]
+   },
+   "posts": [],
+   "catalogue": [],
+   "expected_score_max": 49,
+   "expected_rules_triggered": []
+  },
+  {
+   "id": "benign-pharma",
+   "description": "Pharmaceutical distributor with product catalogue",
+   "business_name": "MedLife Pharma Distributors",
+   "workspace_age_days": 450,
+   "site": {
+    "root": {
+     "props": {
+      "title": "MedLife Pharma Distributors",
+      "description": "Wholesale pharmaceutical distribution in Ahmedabad."
+     }
+    },
+    "content": [
+     {
+      "type": "Hero",
+      "props": {
+       "id": "Hero-001",
+       "title": "MedLife Pharma",
+       "subtitle": "Authorised distributor for leading pharmaceutical brands. Serving hospitals and retail pharmacies across Gujarat.",
+       "cta_label": "Contact Us",
+       "cta_href": "tel:+917912345678"
+      }
+     },
+     {
+      "type": "About",
+      "props": {
+       "id": "About-001",
+       "title": "About MedLife",
+       "body": "MedLife Pharma is a licensed pharmaceutical distributor with cold-chain capabilities and same-day delivery in Ahmedabad."
+      }
+     }
+    ]
+   },
+   "posts": [],
+   "catalogue": [],
+   "expected_score_max": 49,
+   "expected_rules_triggered": []
+  },
+  {
+   "id": "benign-coaching",
+   "description": "Coaching institute with fee structure",
+   "business_name": "Victory IIT Coaching Institute",
+   "workspace_age_days": 365,
+   "site": {
+    "root": {
+     "props": {
+      "title": "Victory IIT Coaching",
+      "description": "JEE and NEET preparation in Kota."
+     }
+    },
+    "content": [
+     {
+      "type": "Hero",
+      "props": {
+       "id": "Hero-001",
+       "title": "Victory IIT Coaching",
+       "subtitle": "Top-ranked IIT JEE and NEET coaching in Kota. Enrol for 2026 batch now.",
+       "cta_label": "Apply Now",
+       "cta_href": "https://victoryiit.in/apply"
+      }
+     },
+     {
+      "type": "Pricing",
+      "props": {
+       "id": "Pricing-001",
+       "title": "Course Fees",
+       "items": [
+        {
+         "name": "JEE Main + Advanced",
+         "price": "₹1,20,000/year",
+         "description": "2-year integrated programme."
+        },
+        {
+         "name": "NEET Foundation",
+         "price": "₹95,000/year",
+         "description": "Comprehensive biology-focused batch."
+        }
+       ]
+      }
+     }
+    ]
+   },
+   "posts": [],
+   "catalogue": [],
+   "expected_score_max": 49,
+   "expected_rules_triggered": []
+  },
+  {
+   "id": "benign-photographer",
+   "description": "Photographer with portfolio gallery",
+   "business_name": "Lens & Light Photography",
+   "workspace_age_days": 80,
+   "site": {
+    "root": {
+     "props": {
+      "title": "Lens & Light Photography",
+      "description": "Wedding and portrait photography in Jaipur."
+     }
+    },
+    "content": [
+     {
+      "type": "Hero",
+      "props": {
+       "id": "Hero-001",
+       "title": "Lens & Light Photography",
+       "subtitle": "Capturing timeless moments — weddings, portraits, and events across Rajasthan.",
+       "cta_label": "View Portfolio",
+       "cta_href": "https://lensandlight.in/portfolio"
+      }
+     },
+     {
+      "type": "Gallery",
+      "props": {
+       "id": "Gallery-001",
+       "title": "Recent Work",
+       "items": []
+      }
+     }
+    ]
+   },
+   "posts": [],
+   "catalogue": [],
+   "expected_score_max": 49,
+   "expected_rules_triggered": []
+  },
+  {
+   "id": "benign-gym",
+   "description": "Gym with membership plans",
+   "business_name": "Iron House Fitness",
+   "workspace_age_days": 200,
+   "site": {
+    "root": {
+     "props": {
+      "title": "Iron House Fitness",
+      "description": "Modern gym and fitness centre in Pune."
+     }
+    },
+    "content": [
+     {
+      "type": "Hero",
+      "props": {
+       "id": "Hero-001",
+       "title": "Iron House Fitness",
+       "subtitle": "State-of-the-art gym with personal training, group classes, and nutrition guidance.",
+       "cta_label": "Join Now",
+       "cta_href": "#ContactForm-001"
+      }
+     },
+     {
+      "type": "Pricing",
+      "props": {
+       "id": "Pricing-001",
+       "title": "Membership Plans",
+       "items": [
+        {
+         "name": "Monthly",
+         "price": "₹1,200",
+         "description": "Full gym access."
+        },
+        {
+         "name": "Quarterly",
+         "price": "₹3,000",
+         "description": "Best value."
+        },
+        {
+         "name": "Annual",
+         "price": "₹10,000",
+         "description": "Unlimited access + 2 PT sessions."
+        }
+       ]
+      }
+     }
+    ]
+   },
+   "posts": [],
+   "catalogue": [],
+   "expected_score_max": 49,
+   "expected_rules_triggered": []
+  },
+  {
+   "id": "benign-catering",
+   "description": "Catering company for events",
+   "business_name": "Royal Feast Caterers",
+   "workspace_age_days": 500,
+   "site": {
+    "root": {
+     "props": {
+      "title": "Royal Feast Caterers",
+      "description": "Wedding and corporate catering in Lucknow."
+     }
+    },
+    "content": [
+     {
+      "type": "Hero",
+      "props": {
+       "id": "Hero-001",
+       "title": "Royal Feast Caterers",
+       "subtitle": "Exquisite catering for weddings, receptions, and corporate events. Veg and non-veg menus.",
+       "cta_label": "Get a Quote",
+       "cta_href": "tel:+915223456789"
+      }
+     },
+     {
+      "type": "About",
+      "props": {
+       "id": "About-001",
+       "title": "Our Story",
+       "body": "Royal Feast has catered over 5,000 events across Uttar Pradesh since 2001."
+      }
+     }
+    ]
+   },
+   "posts": [],
+   "catalogue": [],
+   "expected_score_max": 49,
+   "expected_rules_triggered": []
+  },
+  {
+   "id": "benign-plumbing",
+   "description": "Plumbing services company",
+   "business_name": "QuickFix Plumbing Services",
+   "workspace_age_days": 45,
+   "site": {
+    "root": {
+     "props": {
+      "title": "QuickFix Plumbing Services",
+      "description": "24/7 plumbing repairs in Kolkata."
+     }
+    },
+    "content": [
+     {
+      "type": "Hero",
+      "props": {
+       "id": "Hero-001",
+       "title": "QuickFix Plumbing",
+       "subtitle": "24/7 emergency plumbing repairs, pipe fitting, and bathroom renovation in Kolkata.",
+       "cta_label": "Call Now",
+       "cta_href": "tel:+913312345678"
+      }
+     },
+     {
+      "type": "Services",
+      "props": {
+       "id": "Services-001",
+       "title": "Services",
+       "items": [
+        {
+         "name": "Leak Repair",
+         "description": "Pipe and tap leak fixing."
+        },
+        {
+         "name": "Drain Cleaning",
+         "description": "Blocked drain unblocking."
+        }
+       ]
+      }
+     }
+    ]
+   },
+   "posts": [],
+   "catalogue": [],
+   "expected_score_max": 49,
+   "expected_rules_triggered": []
+  },
+  {
+   "id": "benign-it-services",
+   "description": "IT services company",
+   "business_name": "TechBridge IT Solutions",
+   "workspace_age_days": 365,
+   "site": {
+    "root": {
+     "props": {
+      "title": "TechBridge IT Solutions",
+      "description": "Custom software development and IT support in Bengaluru."
+     }
+    },
+    "content": [
+     {
+      "type": "Hero",
+      "props": {
+       "id": "Hero-001",
+       "title": "TechBridge IT Solutions",
+       "subtitle": "Custom web and mobile app development, cloud migration, and IT support for startups and enterprises.",
+       "cta_label": "Talk to Us",
+       "cta_href": "https://techbridge.in/contact"
+      }
+     },
+     {
+      "type": "Services",
+      "props": {
+       "id": "Services-001",
+       "title": "What We Do",
+       "items": [
+        {
+         "name": "Web Development",
+         "description": "React, Node.js, Go."
+        },
+        {
+         "name": "Mobile Apps",
+         "description": "iOS and Android."
+        },
+        {
+         "name": "Cloud & DevOps",
+         "description": "AWS and GCP."
+        }
+       ]
+      }
+     }
+    ]
+   },
+   "posts": [],
+   "catalogue": [],
+   "expected_score_max": 49,
+   "expected_rules_triggered": []
+  }
+ ],
+ "abusive": [
+  {
+   "id": "abuse-sbi-phishing",
+   "description": "Fake SBI login page with credential words, SBI brand, bit.ly link, 2-day-old workspace",
+   "business_name": "SBI Customer Support",
+   "workspace_age_days": 2,
+   "site": {
+    "root": {
+     "props": {
+      "title": "SBI Net Banking - Login",
+      "description": "Login to your SBI net banking account."
+     }
+    },
+    "content": [
+     {
+      "type": "Hero",
+      "props": {
+       "id": "Hero-001",
+       "title": "SBI Net Banking",
+       "subtitle": "Please login with your username and password to access your account. Enter your OTP to verify.",
+       "cta_label": "Login Now",
+       "cta_href": "https://bit.ly/sbi-login"
+      }
+     },
+     {
+      "type": "ContactForm",
+      "props": {
+       "id": "ContactForm-001",
+       "title": "Account Verification",
+       "intro": "Enter your bank account number, net banking password and OTP to verify your account.",
+       "phone": "",
+       "email": "support@sbi-netbanking.tk"
+      }
+     }
+    ]
+   },
+   "posts": [],
+   "catalogue": [],
+   "expected_score_min": 50,
+   "expected_rules_triggered": [
+    "R1",
+    "R2",
+    "R3"
+   ]
+  },
+  {
+   "id": "abuse-hdfc-otp",
+   "description": "Fake HDFC OTP verification page with credential words and HDFC brand, new workspace",
+   "business_name": "HDFC Help Desk",
+   "workspace_age_days": 3,
+   "site": {
+    "root": {
+     "props": {
+      "title": "HDFC Bank - OTP Verification",
+      "description": "Verify your HDFC Bank account."
+     }
+    },
+    "content": [
+     {
+      "type": "Hero",
+      "props": {
+       "id": "Hero-001",
+       "title": "HDFC Bank Account Verification",
+       "subtitle": "Your HDFC account requires verification. Please enter your debit card number and OTP sent to your registered mobile.",
+       "cta_label": "Verify Now",
+       "cta_href": "https://hdfc-verify.top/otp"
+      }
+     },
+     {
+      "type": "About",
+      "props": {
+       "id": "About-001",
+       "title": "Why Verify?",
+       "body": "HDFC Bank requires all users to complete KYC verification. Enter your net banking password and OTP to continue."
+      }
+     }
+    ]
+   },
+   "posts": [],
+   "catalogue": [],
+   "expected_score_min": 50,
+   "expected_rules_triggered": [
+    "R1",
+    "R2"
+   ]
+  },
+  {
+   "id": "abuse-phonepe-kyc",
+   "description": "Fake PhonePe KYC update with credential words and PhonePe brand",
+   "business_name": "PhonePe Support India",
+   "workspace_age_days": 1,
+   "site": {
+    "root": {
+     "props": {
+      "title": "PhonePe KYC Update",
+      "description": "Update your PhonePe KYC."
+     }
+    },
+    "content": [
+     {
+      "type": "Hero",
+      "props": {
+       "id": "Hero-001",
+       "title": "PhonePe KYC Verification Required",
+       "subtitle": "Your PhonePe account has been limited. Complete KYC by entering your Aadhaar number and UPI PIN.",
+       "cta_label": "Update KYC",
+       "cta_href": "https://phonepe-kyc.xyz/update"
+      }
+     },
+     {
+      "type": "ContactForm",
+      "props": {
+       "id": "ContactForm-001",
+       "title": "KYC Form",
+       "intro": "Enter your bank account number, Aadhaar number, and UPI PIN to restore full access.",
+       "phone": "",
+       "email": "kyc@phonepe-india.top"
+      }
+     }
+    ]
+   },
+   "posts": [],
+   "catalogue": [],
+   "expected_score_min": 50,
+   "expected_rules_triggered": [
+    "R1",
+    "R2"
+   ]
+  },
+  {
+   "id": "abuse-crypto-doubling",
+   "description": "Double your money crypto investment scam with guaranteed returns",
+   "business_name": "CryptoWealth India",
+   "workspace_age_days": 10,
+   "site": {
+    "root": {
+     "props": {
+      "title": "CryptoWealth - Double Your Money",
+      "description": "Guaranteed crypto investment returns."
+     }
+    },
+    "content": [
+     {
+      "type": "Hero",
+      "props": {
+       "id": "Hero-001",
+       "title": "Double Your Money in 30 Days!",
+       "subtitle": "Guaranteed returns of 100% in 30 days. USDT crypto investment with our expert trading team. Risk free returns for all investors.",
+       "cta_label": "Invest Now",
+       "cta_href": "https://cryptowealth.in/invest"
+      }
+     },
+     {
+      "type": "About",
+      "props": {
+       "id": "About-001",
+       "title": "How It Works",
+       "body": "Deposit USDT and earn daily profit. Our bitcoin investment platform guarantees 10x returns within 30 days. Double your investment today."
+      }
+     }
+    ]
+   },
+   "posts": [],
+   "catalogue": [],
+   "expected_score_min": 50,
+   "expected_rules_triggered": [
+    "R5"
+   ]
+  },
+  {
+   "id": "abuse-forex-shorteners",
+   "description": "Forex signals site with 3+ bit.ly links and daily profit wording",
+   "business_name": "Forex Signals Pro",
+   "workspace_age_days": 5,
+   "site": {
+    "root": {
+     "props": {
+      "title": "Forex Signals Pro - Daily Profit",
+      "description": "Expert forex signals for daily profit."
+     }
+    },
+    "content": [
+     {
+      "type": "Hero",
+      "props": {
+       "id": "Hero-001",
+       "title": "Forex Signals Pro",
+       "subtitle": "Get expert forex signals and earn daily profit. Join our telegram channel for guaranteed weekly profit from our trading system.",
+       "cta_label": "Join Telegram",
+       "cta_href": "https://bit.ly/forex-signals-pro"
+      }
+     },
+     {
+      "type": "About",
+      "props": {
+       "id": "About-001",
+       "title": "Our Services",
+       "body": "Subscribe to our forex signals group. Daily profit signals sent every morning. Join now: https://tinyurl.com/forexpro-vip or https://cutt.ly/forex-daily"
+      }
+     }
+    ]
+   },
+   "posts": [],
+   "catalogue": [],
+   "expected_score_min": 50,
+   "expected_rules_triggered": [
+    "R3",
+    "R5"
+   ]
+  },
+  {
+   "id": "abuse-shortener-flood",
+   "description": "10 different shortener links in hero text and footer",
+   "business_name": "LinkHub Services",
+   "workspace_age_days": 30,
+   "site": {
+    "root": {
+     "props": {
+      "title": "LinkHub Services",
+      "description": "All our links in one place."
+     }
+    },
+    "content": [
+     {
+      "type": "Hero",
+      "props": {
+       "id": "Hero-001",
+       "title": "LinkHub Services",
+       "subtitle": "Find all our resources here.",
+       "cta_label": "Main Link",
+       "cta_href": "https://bit.ly/linkhub-main"
+      }
+     },
+     {
+      "type": "About",
+      "props": {
+       "id": "About-001",
+       "title": "Quick Links",
+       "body": "Download form: https://tinyurl.com/lh-form | Register: https://cutt.ly/lh-reg | Brochure: https://rb.gy/lh-brochure | Support: https://is.gd/lhsupport | Schedule: https://ow.ly/lhschedule | Videos: https://buff.ly/lhvids | Shop: https://short.io/lhshop | Feedback: https://tiny.cc/lhfeedback | Updates: https://v.gd/lhupdates"
+      }
+     }
+    ]
+   },
+   "posts": [],
+   "catalogue": [],
+   "expected_score_min": 50,
+   "expected_rules_triggered": [
+    "R3"
+   ]
+  },
+  {
+   "id": "abuse-gpay-impersonation",
+   "description": "Google Pay cashback offer impersonation asking to verify Google Pay account",
+   "business_name": "Google Pay Cashback Offer",
+   "workspace_age_days": 1,
+   "site": {
+    "root": {
+     "props": {
+      "title": "Google Pay Cashback Offer - Verify Account",
+      "description": "Claim your Google Pay cashback reward."
+     }
+    },
+    "content": [
+     {
+      "type": "Hero",
+      "props": {
+       "id": "Hero-001",
+       "title": "Google Pay ₹2000 Cashback!",
+       "subtitle": "Congratulations! You have been selected for a Google Pay cashback reward. Verify your Google Pay account to claim ₹2000.",
+       "cta_label": "Verify Now",
+       "cta_href": "https://gpay-cashback.top/verify"
+      }
+     },
+     {
+      "type": "ContactForm",
+      "props": {
+       "id": "ContactForm-001",
+       "title": "Account Verification",
+       "intro": "Enter your registered mobile number and Google Pay UPI PIN to verify your account and receive your cashback.",
+       "phone": "",
+       "email": "support@gpay-offer.xyz"
+      }
+     }
+    ]
+   },
+   "posts": [],
+   "catalogue": [],
+   "expected_score_min": 50,
+   "expected_rules_triggered": [
+    "R1",
+    "R2"
+   ]
+  },
+  {
+   "id": "abuse-incometax-refund",
+   "description": "Fake income tax refund portal asking for PAN and bank account",
+   "business_name": "Income Tax Refund Portal",
+   "workspace_age_days": 2,
+   "site": {
+    "root": {
+     "props": {
+      "title": "Income Tax Refund Portal - Claim Your Refund",
+      "description": "Verify your PAN to receive income tax refund."
+     }
+    },
+    "content": [
+     {
+      "type": "Hero",
+      "props": {
+       "id": "Hero-001",
+       "title": "Income Tax Refund — Claim Now",
+       "subtitle": "Your income tax refund of ₹8,500 is ready. Verify your PAN number and bank account number to receive your refund directly.",
+       "cta_label": "Claim Refund",
+       "cta_href": "https://incometax-refund.xyz/claim"
+      }
+     },
+     {
+      "type": "ContactForm",
+      "props": {
+       "id": "ContactForm-001",
+       "title": "Refund Verification Form",
+       "intro": "Enter your PAN card number, bank account number, and IFSC code to process your income tax refund.",
+       "phone": "",
+       "email": "refund@incometax-gov.tk"
+      }
+     }
+    ]
+   },
+   "posts": [],
+   "catalogue": [],
+   "expected_score_min": 50,
+   "expected_rules_triggered": [
+    "R1",
+    "R2"
+   ]
+  },
+  {
+   "id": "abuse-high-risk-tlds",
+   "description": "Site with 12+ external links pointing to .tk, .xyz, .top high-risk TLD domains",
+   "business_name": "Global Link Directory",
+   "workspace_age_days": 14,
+   "site": {
+    "root": {
+     "props": {
+      "title": "Global Link Directory",
+      "description": "Directory of international resources."
+     }
+    },
+    "content": [
+     {
+      "type": "Hero",
+      "props": {
+       "id": "Hero-001",
+       "title": "Global Resource Directory",
+       "subtitle": "Find international resources and services.",
+       "cta_label": "Browse",
+       "cta_href": "http://resources.tk/browse"
+      }
+     },
+     {
+      "type": "About",
+      "props": {
+       "id": "About-001",
+       "title": "Partner Resources",
+       "body": "Explore: http://deals.xyz/offers | http://news.top/today | http://jobs.tk/apply | http://learn.xyz/courses | http://health.top/tips | http://finance.tk/calculator | http://travel.xyz/packages | http://food.top/recipes | http://tech.tk/guides | http://sport.xyz/scores | http://music.top/playlist | http://movies.xyz/watch"
+      }
+     }
+    ]
+   },
+   "posts": [],
+   "catalogue": [],
+   "expected_score_min": 50,
+   "expected_rules_triggered": [
+    "R4"
+   ]
+  },
+  {
+   "id": "abuse-punycode-host",
+   "description": "Link with punycode host xn--pypal-4ve.com impersonating PayPal",
+   "business_name": "Secure Payments Hub",
+   "workspace_age_days": 2,
+   "site": {
+    "root": {
+     "props": {
+      "title": "Secure Payments Hub",
+      "description": "Complete your payment securely."
+     }
+    },
+    "content": [
+     {
+      "type": "Hero",
+      "props": {
+       "id": "Hero-001",
+       "title": "Complete Your Secure Payment",
+       "subtitle": "Click the button below to complete your payment via our secure payment gateway.",
+       "cta_label": "Pay Now",
+       "cta_href": "https://xn--pypal-4ve.com/wallet"
+      }
+     },
+     {
+      "type": "About",
+      "props": {
+       "id": "About-001",
+       "title": "Payment Instructions",
+       "body": "You will be redirected to our secure checkout at https://xn--pypal-4ve.com/wallet to complete your transaction."
+      }
+     }
+    ]
+   },
+   "posts": [],
+   "catalogue": [],
+   "expected_score_min": 50,
+   "expected_rules_triggered": [
+    "R7"
+   ]
+  },
+  {
+   "id": "abuse-ip-literal",
+   "description": "Link with IPv4 literal address and new workspace",
+   "business_name": "Priya Fashion Store",
+   "workspace_age_days": 1,
+   "site": {
+    "root": {
+     "props": {
+      "title": "HDFC Bank Helpline",
+      "description": "HDFC Bank customer support."
+     }
+    },
+    "content": [
+     {
+      "type": "Hero",
+      "props": {
+       "id": "Hero-001",
+       "title": "HDFC Bank Helpline",
+       "subtitle": "Contact HDFC Bank support. Enter your login credentials to access your account.",
+       "cta_label": "Login",
+       "cta_href": "http://185.220.101.42/login"
+      }
+     },
+     {
+      "type": "About",
+      "props": {
+       "id": "About-001",
+       "title": "Support Portal",
+       "body": "Our secure portal is available at http://185.220.101.42/login — enter your password and OTP to continue."
+      }
+     }
+    ]
+   },
+   "posts": [],
+   "catalogue": [],
+   "expected_score_min": 50,
+   "expected_rules_triggered": [
+    "R1",
+    "R2",
+    "R6",
+    "R7"
+   ]
+  },
+  {
+   "id": "abuse-crypto-mlm",
+   "description": "MLM network marketing scheme with passive income and referral bonuses",
+   "business_name": "GrowthNetwork India",
+   "workspace_age_days": 20,
+   "site": {
+    "root": {
+     "props": {
+      "title": "GrowthNetwork India - Join Today",
+      "description": "Network marketing and passive income."
+     }
+    },
+    "content": [
+     {
+      "type": "Hero",
+      "props": {
+       "id": "Hero-001",
+       "title": "Join Our Network Marketing Team!",
+       "subtitle": "Earn guaranteed passive income by joining our network. Referral bonus on every downline. Multi-level marketing that actually works. Build your pyramid and earn daily.",
+       "cta_label": "Join Now",
+       "cta_href": "https://growthnetwork.in/join"
+      }
+     },
+     {
+      "type": "About",
+      "props": {
+       "id": "About-001",
+       "title": "How It Works",
+       "body": "Join our network, recruit your downline, and earn passive income guaranteed. MLM participants earn referral bonus from every member they bring in. This is not a pyramid scheme — it is a legitimate multi level marketing business."
+      }
+     }
+    ]
+   },
+   "posts": [],
+   "catalogue": [],
+   "expected_score_min": 50,
+   "expected_rules_triggered": [
+    "R5"
+   ]
+  },
+  {
+   "id": "abuse-paytm-cashback",
+   "description": "Fake Paytm cashback asking for UPI PIN",
+   "business_name": "Paytm Cashback Rewards",
+   "workspace_age_days": 2,
+   "site": {
+    "root": {
+     "props": {
+      "title": "Paytm Cashback — Claim ₹500",
+      "description": "Enter Paytm UPI PIN to claim cashback."
+     }
+    },
+    "content": [
+     {
+      "type": "Hero",
+      "props": {
+       "id": "Hero-001",
+       "title": "Paytm ₹500 Cashback Offer",
+       "subtitle": "You have won a Paytm cashback reward! Enter your Paytm UPI PIN to claim your ₹500 cashback instantly.",
+       "cta_label": "Claim Cashback",
+       "cta_href": "https://paytm-cashback.xyz/claim"
+      }
+     },
+     {
+      "type": "ContactForm",
+      "props": {
+       "id": "ContactForm-001",
+       "title": "Claim Your Reward",
+       "intro": "Provide your registered mobile number and UPI PIN linked to your Paytm account to receive the cashback.",
+       "phone": "",
+       "email": "cashback@paytm-offers.tk"
+      }
+     }
+    ]
+   },
+   "posts": [],
+   "catalogue": [],
+   "expected_score_min": 50,
+   "expected_rules_triggered": [
+    "R1",
+    "R2"
+   ]
+  },
+  {
+   "id": "abuse-aadhaar-otp",
+   "description": "Fake UIDAI Aadhaar verification page asking for Aadhaar number and OTP",
+   "business_name": "UIDAI Aadhaar Verification",
+   "workspace_age_days": 1,
+   "site": {
+    "root": {
+     "props": {
+      "title": "UIDAI Aadhaar Verification Portal",
+      "description": "Verify your Aadhaar number online."
+     }
+    },
+    "content": [
+     {
+      "type": "Hero",
+      "props": {
+       "id": "Hero-001",
+       "title": "Aadhaar Verification Required",
+       "subtitle": "Your Aadhaar card requires re-verification. Enter your Aadhaar number and the OTP sent to your registered mobile to continue.",
+       "cta_label": "Verify Now",
+       "cta_href": "https://uidai-verify.top/aadhaar"
+      }
+     },
+     {
+      "type": "ContactForm",
+      "props": {
+       "id": "ContactForm-001",
+       "title": "Aadhaar eKYC Form",
+       "intro": "Enter your 12-digit Aadhaar number and OTP to complete your KYC verification.",
+       "phone": "",
+       "email": "aadhaar@uidai-gov.xyz"
+      }
+     }
+    ]
+   },
+   "posts": [],
+   "catalogue": [],
+   "expected_score_min": 50,
+   "expected_rules_triggered": [
+    "R1",
+    "R2"
+   ]
+  },
+  {
+   "id": "abuse-irctc-cvv",
+   "description": "Fake IRCTC booking page asking for CVV and card number with bit.ly link",
+   "business_name": "IRCTC Ticket Booking Portal",
+   "workspace_age_days": 3,
+   "site": {
+    "root": {
+     "props": {
+      "title": "IRCTC Ticket Booking — Confirm Payment",
+      "description": "Confirm your IRCTC train ticket booking."
+     }
+    },
+    "content": [
+     {
+      "type": "Hero",
+      "props": {
+       "id": "Hero-001",
+       "title": "Confirm Your IRCTC Booking",
+       "subtitle": "To confirm your train ticket, please enter your credit card number and CVV. Your booking will be confirmed instantly.",
+       "cta_label": "Book Ticket",
+       "cta_href": "https://bit.ly/irctc-confirm"
+      }
+     },
+     {
+      "type": "ContactForm",
+      "props": {
+       "id": "ContactForm-001",
+       "title": "Payment Details",
+       "intro": "Enter your card number and CVV to confirm payment for your IRCTC booking.",
+       "phone": "",
+       "email": "booking@irctc-portal.tk"
+      }
+     }
+    ]
+   },
+   "posts": [],
+   "catalogue": [],
+   "expected_score_min": 50,
+   "expected_rules_triggered": [
+    "R1",
+    "R2",
+    "R3"
+   ]
+  },
+  {
+   "id": "abuse-instagram-dm",
+   "description": "Instagram brand in text with bit.ly link, 3-day-old workspace",
+   "business_name": "Insta DM Growth Service",
+   "workspace_age_days": 3,
+   "site": {
+    "root": {
+     "props": {
+      "title": "Instagram DM Growth Service",
+      "description": "Grow your Instagram followers fast."
+     }
+    },
+    "content": [
+     {
+      "type": "Hero",
+      "props": {
+       "id": "Hero-001",
+       "title": "Boost Your Instagram Account",
+       "subtitle": "Get 10,000 real Instagram followers in 7 days. Click to log in and verify your Instagram account for the boost.",
+       "cta_label": "Login to Instagram",
+       "cta_href": "https://bit.ly/insta-login-verify"
+      }
+     },
+     {
+      "type": "About",
+      "props": {
+       "id": "About-001",
+       "title": "How It Works",
+       "body": "Log in with your Instagram credentials to authorize our service. We only need your login to initiate the follower boost."
+      }
+     }
+    ]
+   },
+   "posts": [],
+   "catalogue": [],
+   "expected_score_min": 50,
+   "expected_rules_triggered": [
+    "R1",
+    "R2",
+    "R3"
+   ]
+  },
+  {
+   "id": "abuse-amazon-refund",
+   "description": "Fake Amazon refund page asking for card details",
+   "business_name": "Amazon Refund Processing India",
+   "workspace_age_days": 2,
+   "site": {
+    "root": {
+     "props": {
+      "title": "Amazon Refund — Verify Card Details",
+      "description": "Receive your Amazon refund by verifying card details."
+     }
+    },
+    "content": [
+     {
+      "type": "Hero",
+      "props": {
+       "id": "Hero-001",
+       "title": "Amazon Refund Ready — ₹1,250",
+       "subtitle": "An Amazon refund of ₹1,250 is pending for your account. Verify your card details to receive the refund to your original payment method.",
+       "cta_label": "Claim Refund",
+       "cta_href": "https://amazon-refund.xyz/verify"
+      }
+     },
+     {
+      "type": "ContactForm",
+      "props": {
+       "id": "ContactForm-001",
+       "title": "Card Verification",
+       "intro": "Enter your credit card number or debit card number and CVV to verify your payment method and receive the Amazon refund.",
+       "phone": "",
+       "email": "refunds@amazon-india.tk"
+      }
+     }
+    ]
+   },
+   "posts": [],
+   "catalogue": [],
+   "expected_score_min": 50,
+   "expected_rules_triggered": [
+    "R1",
+    "R2"
+   ]
+  },
+  {
+   "id": "abuse-upi-pin",
+   "description": "Site asking visitors to enter UPI PIN to link account",
+   "business_name": "UPI Account Linking Service",
+   "workspace_age_days": 5,
+   "site": {
+    "root": {
+     "props": {
+      "title": "UPI Account Linking",
+      "description": "Link your bank account via UPI PIN."
+     }
+    },
+    "content": [
+     {
+      "type": "Hero",
+      "props": {
+       "id": "Hero-001",
+       "title": "Link Your Bank Account",
+       "subtitle": "Enter your UPI PIN to link your account and enable seamless payments across all our partner services.",
+       "cta_label": "Link Account",
+       "cta_href": "https://upi-link.top/connect"
+      }
+     },
+     {
+      "type": "ContactForm",
+      "props": {
+       "id": "ContactForm-001",
+       "title": "UPI Account Link Form",
+       "intro": "Enter your bank account number, IFSC code, and UPI PIN to complete the account linking process.",
+       "phone": "",
+       "email": "support@upilinking.xyz"
+      }
+     }
+    ]
+   },
+   "posts": [],
+   "catalogue": [],
+   "expected_score_min": 50,
+   "expected_rules_triggered": [
+    "R1"
+   ]
+  },
+  {
+   "id": "abuse-name-mismatch",
+   "description": "2-day-old workspace, business name Ravi Enterprises but site title HDFC Bank Helpline",
+   "business_name": "Ravi Enterprises",
+   "workspace_age_days": 2,
+   "site": {
+    "root": {
+     "props": {
+      "title": "HDFC Bank Helpline",
+      "description": "HDFC Bank customer support helpline."
+     }
+    },
+    "content": [
+     {
+      "type": "Hero",
+      "props": {
+       "id": "Hero-001",
+       "title": "HDFC Bank Customer Helpline",
+       "subtitle": "Contact HDFC Bank support for account issues. Please have your account number and registered mobile ready. Enter OTP to verify your identity.",
+       "cta_label": "Contact Support",
+       "cta_href": "https://hdfc-help.top/support"
+      }
+     },
+     {
+      "type": "ContactForm",
+      "props": {
+       "id": "ContactForm-001",
+       "title": "HDFC Bank Support Form",
+       "intro": "Enter your HDFC net banking username and OTP to access your account details with our support team.",
+       "phone": "",
+       "email": "help@hdfc-helpline.xyz"
+      }
+     }
+    ]
+   },
+   "posts": [],
+   "catalogue": [],
+   "expected_score_min": 50,
+   "expected_rules_triggered": [
+    "R1",
+    "R2",
+    "R6"
+   ]
+  },
+  {
+   "id": "abuse-flipkart-netbanking",
+   "description": "Fake Flipkart account verification asking for net banking details",
+   "business_name": "Flipkart Account Services",
+   "workspace_age_days": 2,
+   "site": {
+    "root": {
+     "props": {
+      "title": "Flipkart Account Verification",
+      "description": "Verify your Flipkart account via net banking."
+     }
+    },
+    "content": [
+     {
+      "type": "Hero",
+      "props": {
+       "id": "Hero-001",
+       "title": "Flipkart Account Verification Required",
+       "subtitle": "To continue shopping on Flipkart, complete account verification by entering your net banking details and OTP.",
+       "cta_label": "Verify Account",
+       "cta_href": "https://flipkart-verify.xyz/netbanking"
+      }
+     },
+     {
+      "type": "ContactForm",
+      "props": {
+       "id": "ContactForm-001",
+       "title": "Account Verification Form",
+       "intro": "Enter your Flipkart registered email, net banking password, and OTP to verify your Flipkart account.",
+       "phone": "",
+       "email": "verify@flipkart-india.tk"
+      }
+     }
+    ]
+   },
+   "posts": [],
+   "catalogue": [],
+   "expected_score_min": 50,
+   "expected_rules_triggered": [
+    "R1",
+    "R2"
+   ]
+  }
+ ]
+}

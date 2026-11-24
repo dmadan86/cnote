@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"net/netip"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -39,6 +40,7 @@ type Public struct {
 	URL                                               string
 	CanonicalHost                                     *string         // the live custom hostname, when the site has one (custom domains)
 	Catalog, OGImages                                 json.RawMessage // the catalogue snapshot and the share image of each page
+	Blocked                                           []string        // canonical URLs of outbound links hidden by the abuse scan (public_get blocked_links)
 }
 
 const publicCols = `workspace_id::text, site_id::text, version_id::text, name, data, pro, published_at, published_by::text, form_paused, lead_space_id::text, catalog_published, og_images`
@@ -82,6 +84,16 @@ func SubdomainOf(host string) string {
 
 // LookupHost resolves a request host to its published site; unknown, unpublished and taken down all answer not found.
 func LookupHost(ctx context.Context, q interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}, host string) (Public, error) {
+	p, err := lookupHost(ctx, q, host)
+	if err == nil {
+		err = withBlocked(ctx, q, &p)
+	}
+	return p, err
+}
+
+func lookupHost(ctx context.Context, q interface {
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 }, host string) (Public, error) {
 	sub := SubdomainOf(host)
@@ -211,7 +223,8 @@ func FormAllowed(ctx context.Context, pool *pgxpool.Pool, siteID, ip string) err
 // ---------- the form ----------
 
 // Submission is one validated contact-form post.
-type Submission struct{ Name, Phone, Email, Message, ConsentText, ItemID string }
+// Lang is the language of the page the form was on and ConsentVersion the version of the text shown, "<version>-<lang>".
+type Submission struct{ Name, Phone, Email, Message, ConsentText, ItemID, Lang, ConsentVersion string }
 
 // ConsentTexts are the approved consent sentences, by id. The form sends an id; the text and its version are the
 // server's own (17.8). The first is the default for a client that sends none.
@@ -257,6 +270,9 @@ func Submit(ctx context.Context, pool *pgxpool.Pool, reg *command.Registry, p Pu
 		if err != nil {
 			return command.DB(err)
 		}
+		if in.Lang != "" && !slices.Contains(ShownLangs(data), in.Lang) { // the language must be shown on the locked published version
+			return command.ErrInvalid("that language is not available on this website")
+		}
 		sum := submissionFingerprint(in)
 		print := hex.EncodeToString(sum[:])
 		var dup bool
@@ -290,7 +306,7 @@ func Submit(ctx context.Context, pool *pgxpool.Pool, reg *command.Registry, p Pu
 		if about := aboutLine(snap, in.ItemID); about != "" { // the name and price come from the published snapshot, never from the client
 			in.Message = about + "\n" + in.Message
 		}
-		consent := fmt.Sprintf("Consent given on the website contact form (text %s, %s). Shown: %s", consentVersion, time.Now().UTC().Format(time.RFC3339), in.ConsentText)
+		consent := fmt.Sprintf("Consent given on the website contact form (text %s, %s). Shown: %s", firstNonEmpty(in.ConsentVersion, consentVersion), time.Now().UTC().Format(time.RFC3339), in.ConsentText)
 		out, err := c.Call("inquiry.receive", map[string]any{"space_id": *space, "name": in.Name, "phone": in.Phone, "email": in.Email,
 			"message": in.Message, "source": "website", "consent": truncate(consent, 500)})
 		if err != nil {
@@ -389,19 +405,32 @@ type PostSummary struct {
 	OGImageID    *string   `json:"og_image_id"`
 	PublishedAt  time.Time `json:"published_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
+	Lang         string    `json:"lang"`
 }
 
 const BlogPerPage = 10
 
 // PublicPosts is one page of a live site's published posts, newest first. limit 0 means BlogPerPage; the RSS feed asks for 20.
 func PublicPosts(ctx context.Context, pool *pgxpool.Pool, siteID string, page, limit int) (map[string]any, error) {
+	return publicPosts(ctx, pool, siteID, nil, page, limit)
+}
+
+// PublicPostsLang is PublicPosts for one language of the site: the language must be one visitors can see, else not found.
+func PublicPostsLang(ctx context.Context, pool *pgxpool.Pool, p Public, lang string, page, limit int) (map[string]any, error) {
+	if !slices.Contains(ShownLangs(p.Data), lang) {
+		return nil, command.ErrNotFound("posts")
+	}
+	return publicPosts(ctx, pool, p.SiteID, &lang, page, limit)
+}
+
+func publicPosts(ctx context.Context, pool *pgxpool.Pool, siteID string, lang *string, page, limit int) (map[string]any, error) {
 	if limit <= 0 || limit > 20 {
 		limit = BlogPerPage
 	}
 	if page < 1 || page > 10000 {
 		page = 1
 	}
-	rows, err := pool.Query(ctx, "select slug, title, description, cover_image_id::text, og_image_id::text, published_at, updated_at, total from sites.public_posts($1::uuid, $2, $3)", siteID, limit, (page-1)*limit)
+	rows, err := pool.Query(ctx, "select slug, title, description, cover_image_id::text, og_image_id::text, published_at, updated_at, total, lang from sites.public_posts($1::uuid, $2, $3, $4)", siteID, limit, (page-1)*limit, lang)
 	if err != nil {
 		return nil, command.DB(err)
 	}
@@ -409,7 +438,7 @@ func PublicPosts(ctx context.Context, pool *pgxpool.Pool, siteID string, page, l
 	var total int64
 	for rows.Next() {
 		var p PostSummary
-		if err := rows.Scan(&p.Slug, &p.Title, &p.Description, &p.CoverImageID, &p.OGImageID, &p.PublishedAt, &p.UpdatedAt, &total); err != nil {
+		if err := rows.Scan(&p.Slug, &p.Title, &p.Description, &p.CoverImageID, &p.OGImageID, &p.PublishedAt, &p.UpdatedAt, &total, &p.Lang); err != nil {
 			rows.Close()
 			return nil, command.DB(err)
 		}
@@ -426,12 +455,25 @@ func PublicPosts(ctx context.Context, pool *pgxpool.Pool, siteID string, page, l
 
 // PublicPost is one published post with its body, checked against the grammar again before it is served.
 func PublicPost(ctx context.Context, pool *pgxpool.Pool, siteID, slug string) (map[string]any, error) {
+	return publicPost(ctx, pool, siteID, slug, nil)
+}
+
+// PublicPostIn is PublicPost for the language in the address (/<lang>/blog/<slug>): the post must be written in that
+// language and the language must be one visitors can see.
+func PublicPostIn(ctx context.Context, pool *pgxpool.Pool, p Public, lang, slug string) (map[string]any, error) {
+	if !slices.Contains(ShownLangs(p.Data), lang) {
+		return nil, command.ErrNotFound("post")
+	}
+	return publicPost(ctx, pool, p.SiteID, slug, &lang)
+}
+
+func publicPost(ctx context.Context, pool *pgxpool.Pool, siteID, slug string, lang *string) (map[string]any, error) {
 	var p PostSummary
 	var id string
 	var body []byte
-	err := pool.QueryRow(ctx, "select id::text, slug, title, description, cover_image_id::text, og_image_id::text, body, published_at, updated_at from sites.public_post($1::uuid, $2)", siteID, slug).
-		Scan(&id, &p.Slug, &p.Title, &p.Description, &p.CoverImageID, &p.OGImageID, &body, &p.PublishedAt, &p.UpdatedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
+	err := pool.QueryRow(ctx, "select id::text, slug, title, description, cover_image_id::text, og_image_id::text, body, published_at, updated_at, lang from sites.public_post($1::uuid, $2)", siteID, slug).
+		Scan(&id, &p.Slug, &p.Title, &p.Description, &p.CoverImageID, &p.OGImageID, &body, &p.PublishedAt, &p.UpdatedAt, &p.Lang)
+	if errors.Is(err, pgx.ErrNoRows) || (err == nil && lang != nil && p.Lang != *lang) {
 		return nil, command.ErrNotFound("post")
 	}
 	if err != nil {
@@ -441,5 +483,12 @@ func PublicPost(ctx context.Context, pool *pgxpool.Pool, siteID, slug string) (m
 		return nil, command.ErrNotFound("post")
 	}
 	return map[string]any{"slug": p.Slug, "title": p.Title, "description": p.Description, "cover_image_id": p.CoverImageID, "og_image_id": p.OGImageID,
-		"body": json.RawMessage(body), "published_at": p.PublishedAt, "updated_at": p.UpdatedAt}, nil
+		"body": json.RawMessage(body), "published_at": p.PublishedAt, "updated_at": p.UpdatedAt, "lang": p.Lang}, nil
+}
+
+func blockedOr(l []string) []string {
+	if l == nil {
+		return []string{}
+	}
+	return l
 }

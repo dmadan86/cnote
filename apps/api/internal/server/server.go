@@ -73,6 +73,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.ticketMail(w, r)
 	case strings.HasPrefix(r.URL.Path, portalPrefix):
 		s.portal(w, r)
+	case r.Method == http.MethodPost && regexp.MustCompile(`^/api/sites/report/[^/]+$`).MatchString(r.URL.Path):
+		s.siteReport(w, r)
 	case r.Method == http.MethodPost && regexp.MustCompile(`^/api/sites/hit/[^/]+$`).MatchString(r.URL.Path):
 		s.siteHit(w, r)
 	case r.Method == http.MethodGet && regexp.MustCompile(`^/api/w/[^/]+/sites/[^/]+/export$`).MatchString(r.URL.Path):

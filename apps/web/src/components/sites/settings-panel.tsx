@@ -13,6 +13,7 @@ import {
   siteSummary,
 } from '@/lib/sites'
 import { DomainSheet } from './domain-sheet'
+import { LanguagesPanel } from './languages-panel'
 import { CopyButton, ShareCard } from './publish-modal'
 import { StatsCard } from './stats-card'
 
@@ -238,6 +239,8 @@ export function SettingsPanel({
             Upgrade (coming soon).
           </p>
         </section>
+
+        <LanguagesPanel ws={ws} site={site} data={data} canAdmin={canAdmin} onReload={onReload} />
 
         {(domainsAvailable || (live && canAdmin)) && (
           <section className="space-y-2">
