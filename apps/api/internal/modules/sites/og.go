@@ -128,6 +128,7 @@ func renderOG(ctx context.Context, req ogRequest) ([]byte, error) {
 }
 
 type ogTarget struct {
+	rev         int
 	key, postID string // key is "" for Home or a page address for a page; postID for a post
 	req         ogRequest
 }
@@ -188,7 +189,7 @@ func ogTargets(c *command.Ctx, siteID, version, postID string) ([]ogTarget, bool
 			out = append(out, ogTarget{key: p.Slug, req: req("page", p.Title, hero)})
 		}
 	}
-	rows, err := c.Tx.Query(c.Context, `select id::text, title, coalesce(cover_image_id::text, '') from sites.posts where workspace_id = $1::uuid and site_id = $2::uuid and status = 'published'
+	rows, err := c.Tx.Query(c.Context, `select id::text, title, coalesce(cover_image_id::text, ''), rev from sites.posts where workspace_id = $1::uuid and site_id = $2::uuid and status = 'published'
 		and (($3 = '' and og_image_id is null) or id::text = $3) order by published_at desc, id limit $4`, c.WorkspaceID(), siteID, postID, ogPostsMax)
 	if err != nil {
 		return nil, false, command.DB(err)
@@ -196,10 +197,11 @@ func ogTargets(c *command.Ctx, siteID, version, postID string) ([]ogTarget, bool
 	defer rows.Close()
 	for rows.Next() {
 		var id, title, cover string
-		if err := rows.Scan(&id, &title, &cover); err != nil {
+		var rev int
+		if err := rows.Scan(&id, &title, &cover, &rev); err != nil {
 			return nil, false, command.DB(err)
 		}
-		out = append(out, ogTarget{postID: id, req: req("post", title, firstNonEmpty(cover, hero))})
+		out = append(out, ogTarget{postID: id, rev: rev, req: req("post", title, firstNonEmpty(cover, hero))})
 	}
 	return out, true, command.DB(rows.Err())
 }
@@ -269,6 +271,16 @@ func storeOG(c *command.Ctx, siteID, version string, t ogTarget, png []byte) err
 	}
 	if pub == nil || (t.postID == "" && *pub != version) {
 		return errStaleOG
+	}
+	if t.postID != "" {
+		var rev int
+		err := c.Tx.QueryRow(c.Context, "select rev from sites.posts where workspace_id = $1::uuid and site_id = $2::uuid and id = $3::uuid and status = 'published' for update", c.WorkspaceID(), siteID, t.postID).Scan(&rev)
+		if errors.Is(err, pgx.ErrNoRows) || (err == nil && rev != t.rev) {
+			return errStaleOG
+		}
+		if err != nil {
+			return command.DB(err)
+		}
 	}
 	id := ""
 	if png != nil {

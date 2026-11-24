@@ -407,7 +407,7 @@ func checkPostFields(c *command.Ctx, siteID string, f *postFields) error {
 	if f.Slug = strings.ToLower(strings.TrimSpace(f.Slug)); f.Slug == "" {
 		f.Slug = slugifyPost(f.Title)
 	}
-	if len(f.Slug) > 60 || !postSlugRe.MatchString(f.Slug) || f.Slug == "page" {
+	if len(f.Slug) > 60 || !postSlugRe.MatchString(f.Slug) {
 		return command.ErrInvalid("the address may use only a-z, 0-9 and hyphens, up to 60 characters")
 	}
 	owned, err := siteImages(c, siteID)
@@ -494,6 +494,9 @@ func savePostDraft(c *command.Ctx, site siteOut, postID string, expectedRev *int
 		if !explicitSlug {
 			f.Slug = cur.Slug // an edit never renames the address by itself
 		}
+	}
+	if explicitSlug && strings.EqualFold(strings.TrimSpace(f.Slug), "page") {
+		return postOut{}, command.ErrInvalid("the address page is reserved")
 	}
 	if err := checkPostFields(c, site.ID, &f); err != nil {
 		return postOut{}, err

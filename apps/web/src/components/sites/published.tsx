@@ -116,6 +116,11 @@ export function Published({ site, slug = '' }: { site: PublicSite; slug?: string
 }
 
 const load = cache(publicGet)
+
+export async function hasPublishedBlogPage(host: string) {
+  const site = await load(host)
+  return !!site?.data.pages?.some((page) => page.slug === 'blog')
+}
 const originOf = (site: PublicSite) => new URL(site.url).origin
 const pathOf = (slug: string) => (slug ? `/${slug}` : '/')
 const img = (site: PublicSite, id: string) => `${site.url}/api/sites/img/${site.site_id}/${id}`

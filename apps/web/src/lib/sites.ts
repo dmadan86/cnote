@@ -68,6 +68,8 @@ export type SiteMeta = {
 }
 export type TurnStep = { tool: string; input: Record<string, unknown>; ok: boolean; error?: string }
 export type Turn = {
+  kind?: string
+  post_id?: string | null
   id: string
   message: string
   block_id: string | null
@@ -168,6 +170,7 @@ export const siteApi = {
     block_id?: string,
     image_ids?: string[],
     page?: string,
+    post?: string,
   ) =>
     cmd<{ turn_id: string }>(ws, 'site.chat', {
       id,
@@ -176,6 +179,7 @@ export const siteApi = {
       block_id,
       image_ids,
       page,
+      post,
     }),
   turn: (ws: string, id: string) => cmd<{ turn: Turn; data?: SiteData }>(ws, 'site.turn_get', { id }),
   cancel: (ws: string, id: string) => cmd<{ status: string }>(ws, 'site.turn_cancel', { id }),

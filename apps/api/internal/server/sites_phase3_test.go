@@ -214,6 +214,17 @@ func TestSiteBlog(t *testing.T) {
 	eq(t, p.sql("select count(*)::text from sites.posts"), "31") // nothing was added past the limit
 }
 
+func TestSitePostDefaultReservedSlug(t *testing.T) {
+	p := newPubEnv(t)
+	save := func(fields map[string]any) resp {
+		fields["id"] = p.site
+		return p.call(p.owner, "site.post_save", fields)
+	}
+	eq(t, adminOK(t, save(map[string]any{"title": "Page"}))["slug"], "page-2")
+	eq(t, adminOK(t, save(map[string]any{"title": "Page"}))["slug"], "page-3")
+	eq(t, save(map[string]any{"title": "Reserved", "slug": "page"}).status, 400)
+}
+
 func TestSitePostImagesAndShareImages(t *testing.T) {
 	p := newPubEnv(t)
 	sub := uniq()
@@ -280,6 +291,17 @@ func TestSitePostImagesAndShareImages(t *testing.T) {
 	}
 	eq(t, last["kind"], "post")
 	eq(t, img(home), 200)
+	// A post changed while its image was rendering must retain its previous image.
+	previous := p.sql("select og_image_id::text from sites.posts where id = $1::uuid", post)
+	web.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		adminSQL(p.env, p.owner.ws, "update sites.posts set rev = rev + 1 where id = $1::uuid", post)
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write(png)
+	})
+	if err := run(`{"site_id":"` + p.site + `","post_id":"` + post + `"}`); err != nil {
+		t.Fatal(err)
+	}
+	eq(t, p.sql("select og_image_id::text from sites.posts where id = $1::uuid", post), previous)
 	// a stale job (an older version) renders nothing; a failing web app leaves no image
 	n := calls
 	if err := run(`{"site_id":"` + p.site + `","version_id":"00000000-0000-4000-8000-000000000000"}`); err != nil || calls != n {

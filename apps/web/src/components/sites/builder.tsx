@@ -228,6 +228,10 @@ export function Builder({
         if (!isActive(turn)) {
           if (turn.version_id) setRedo([])
           load()
+          if (turn.kind === 'post') {
+            setBlogTick((n) => n + 1)
+            setOpenPost((p) => (p && p.id === turn.post_id ? { ...p, key: `${p.id}:${Date.now()}` } : p))
+          }
         }
       } catch {
         // a failed poll is retried on the next tick
@@ -253,6 +257,11 @@ export function Builder({
     if (!site || !message.trim() || active || uploading || preview) return
     setErr(undefined)
     const ids = attach.flatMap((a) => (a.id ? [a.id] : []))
+    const post = message.trim().startsWith('Write a post about')
+      ? 'new'
+      : blog && openPost
+        ? openPost.id
+        : undefined
     try {
       await siteApi.chat(
         ws,
@@ -261,7 +270,8 @@ export function Builder({
         message.trim(),
         blockId,
         ids.length ? ids : undefined,
-        page || undefined,
+        post ? undefined : page || undefined,
+        post,
       )
       setText('')
       setAttach([])
