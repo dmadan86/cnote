@@ -1,0 +1,160 @@
+{
+  "key": "fitness",
+  "name": "Pulse",
+  "order": 11,
+  "description": "Dark and high-energy, with classes and membership up top.",
+  "vertical": "Fitness",
+  "style": "Bold",
+  "data": {
+    "root": {
+      "props": {
+        "title": "{{name}}",
+        "theme": {
+          "primary": "#a3e635",
+          "background": "#0a0a0a",
+          "text": "#fafafa",
+          "font": "sans",
+          "radius": "none"
+        }
+      }
+    },
+    "content": [
+      {
+        "type": "Header",
+        "props": {
+          "id": "Header-00000001",
+          "brand": "{{name}}",
+          "links": [
+            {
+              "label": "Classes",
+              "href": "#Services-00000003"
+            },
+            {
+              "label": "Membership",
+              "href": "#Pricing-00000004"
+            },
+            {
+              "label": "Gallery",
+              "href": "#Gallery-00000005"
+            },
+            {
+              "label": "Find us",
+              "href": "#MapHours-00000009"
+            }
+          ],
+          "cta_label": "Join now",
+          "cta_href": "#ContactForm-0000000a",
+          "variant": "left"
+        }
+      },
+      {
+        "type": "Hero",
+        "props": {
+          "id": "Hero-00000002",
+          "title": "{{name}}",
+          "cta_label": "Join now",
+          "cta_href": "#ContactForm-0000000a",
+          "align": "center",
+          "variant": "cover"
+        }
+      },
+      {
+        "type": "Services",
+        "props": {
+          "id": "Services-00000003",
+          "title": "Classes",
+          "items": [],
+          "variant": "cards"
+        }
+      },
+      {
+        "type": "Pricing",
+        "props": {
+          "id": "Pricing-00000004",
+          "title": "Membership",
+          "items": [],
+          "variant": "cards"
+        }
+      },
+      {
+        "type": "Gallery",
+        "props": {
+          "id": "Gallery-00000005",
+          "title": "Gallery",
+          "items": [],
+          "variant": "strip"
+        }
+      },
+      {
+        "type": "Testimonials",
+        "props": {
+          "id": "Testimonials-00000006",
+          "title": "What members say",
+          "items": [],
+          "variant": "cards"
+        }
+      },
+      {
+        "type": "FAQ",
+        "props": {
+          "id": "FAQ-00000007",
+          "title": "Questions we get asked",
+          "items": [],
+          "variant": "accordion"
+        }
+      },
+      {
+        "type": "CallToAction",
+        "props": {
+          "id": "CallToAction-00000008",
+          "title": "Try a free class",
+          "cta_label": "Join now",
+          "cta_href": "#ContactForm-0000000a",
+          "variant": "banner"
+        }
+      },
+      {
+        "type": "MapHours",
+        "props": {
+          "id": "MapHours-00000009",
+          "title": "Find us",
+          "address": "{{address}}",
+          "hours": [],
+          "variant": "side"
+        }
+      },
+      {
+        "type": "ContactForm",
+        "props": {
+          "id": "ContactForm-0000000a",
+          "title": "Contact us",
+          "phone": "{{phone}}",
+          "email": "{{email}}",
+          "address": "{{address}}",
+          "submit_label": "Send",
+          "variant": "stacked"
+        }
+      },
+      {
+        "type": "Footer",
+        "props": {
+          "id": "Footer-0000000b",
+          "text": "{{name}}",
+          "phone": "{{phone}}",
+          "email": "{{email}}",
+          "address": "{{address}}",
+          "links": [],
+          "variant": "simple"
+        }
+      },
+      {
+        "type": "WhatsAppButton",
+        "props": {
+          "id": "WhatsAppButton-0000000c",
+          "phone": "{{phone}}",
+          "label": "WhatsApp"
+        }
+      }
+    ]
+  }
+}

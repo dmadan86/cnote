@@ -73,7 +73,8 @@ export default function SitePreview() {
   const select = (id: string | null) =>
     window.parent.postMessage({ type: 'site:select', id }, location.origin)
   // ?readonly=1 (template preview, thumbnails): no outlines, nothing selectable.
-  const readonly = new URLSearchParams(location.search).has('readonly')
+  const query = new URLSearchParams(location.search)
+  const readonly = query.has('readonly')
   return (
     <Renderer
       data={data}
@@ -83,6 +84,7 @@ export default function SitePreview() {
       assetBase={ctx.assetBase}
       pro={ctx.pro}
       catalog={ctx.catalog}
+      hints={query.has('hints')}
     />
   )
 }

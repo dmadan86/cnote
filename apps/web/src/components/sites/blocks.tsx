@@ -5,6 +5,7 @@ import {
   embedLinks,
   imageId,
   mapsHref,
+  type SiteBlock,
   safeHref,
   telHref,
   waHref,
@@ -61,7 +62,60 @@ const ghostCls =
 const linkCls =
   'rounded-sm underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--site-primary)]'
 const sec = 'mx-auto w-full max-w-[1120px] px-5 py-14 md:px-8 md:py-24'
-const h2 = 'text-2xl font-bold leading-tight md:text-4xl'
+/** Headings use the theme's heading face (--site-font-heading), which falls back to the body font. */
+const hf = '[font-family:var(--site-font-heading)]'
+const h2 = `text-2xl font-bold leading-tight md:text-4xl ${hf}`
+
+const has = (v: unknown, ...keys: string[]) => list(v).some((i) => keys.every((k) => str(i[k])))
+/** A section with nothing substantive to show. The published page leaves it out; the builder shows a hint. */
+export function isEmptySection(b: SiteBlock, catalog?: CatalogueData): boolean {
+  const p = b.props
+  switch (b.type) {
+    case 'Services':
+      return !has(p.items, 'name')
+    case 'Pricing':
+      return !has(p.items, 'name', 'price')
+    case 'FAQ':
+      return !has(p.items, 'question', 'answer')
+    case 'Testimonials':
+      return !has(p.items, 'quote', 'name')
+    case 'Gallery':
+      return !list(p.items).some((i) => imageId(i.image))
+    case 'MapHours':
+      return !str(p.address) && !has(p.hours, 'days', 'time')
+    case 'Text':
+      return !str(p.body)
+    case 'Catalogue':
+      return !catalog?.items.length
+    default:
+      return false
+  }
+}
+/** Ids of every empty section across the given block lists (all pages), for link pruning. */
+export function hiddenIds(lists: SiteBlock[][], catalog?: CatalogueData) {
+  return new Set(
+    lists
+      .flat()
+      .filter((b) => isEmptySection(b, catalog))
+      .map((b) => String(b.props?.id ?? '')),
+  )
+}
+const anchorOf = (href: unknown) =>
+  typeof href === 'string' ? (href.match(/#([A-Za-z]+-[0-9a-f]{8})$/)?.[1] ?? '') : ''
+/** What visitors get: empty sections dropped, and header and footer links to them omitted. */
+export function visibleBlocks(blocks: SiteBlock[], hidden: ReadonlySet<string>): SiteBlock[] {
+  if (!hidden.size) return blocks
+  return blocks
+    .filter((b) => !hidden.has(String(b.props?.id ?? '')))
+    .map((b) =>
+      (b.type === 'Header' || b.type === 'Footer') && Array.isArray(b.props.links)
+        ? {
+            ...b,
+            props: { ...b.props, links: list(b.props.links).filter((l) => !hidden.has(anchorOf(l.href))) },
+          }
+        : b,
+    )
+}
 const card = 'rounded-[var(--site-radius)] border border-[var(--site-border)]'
 
 /** A link only for a safe href; anything else stays inert text. */
@@ -153,7 +207,7 @@ function Header(p: P) {
     <header
       className={`mx-auto flex w-full max-w-[1120px] flex-wrap items-center gap-x-6 gap-y-2 px-5 py-3 md:px-8 md:py-4 ${str(p.variant) === 'centered' ? 'flex-col justify-center text-center' : 'justify-between'}`}
     >
-      <p className="flex items-center gap-2.5 text-lg font-bold">
+      <p className="flex min-w-0 items-center gap-2.5 break-words text-lg font-bold [overflow-wrap:anywhere]">
         <Img id={p.logo} p={p} alt={brand} className="h-9 w-auto max-w-[140px] object-contain" />
         {brand}
       </p>
@@ -199,7 +253,9 @@ function Hero(p: P) {
         />
         <div aria-hidden="true" className="absolute inset-0 -z-10 bg-black/55" />
         <div className="mx-auto flex w-full max-w-[1120px] flex-col items-center gap-4 px-5 py-20 text-center md:px-8 md:py-32">
-          <h1 className="max-w-[20ch] text-[32px] font-bold leading-[38px] md:text-[56px] md:leading-[60px]">
+          <h1
+            className={`max-w-[20ch] text-[32px] font-bold leading-[38px] md:text-[56px] md:leading-[60px] ${hf}`}
+          >
             {str(p.title)}
           </h1>
           {str(p.subtitle) && <p className="max-w-[56ch] text-lg opacity-90">{str(p.subtitle)}</p>}
@@ -216,7 +272,9 @@ function Hero(p: P) {
       className={`mx-auto grid w-full max-w-[1120px] gap-8 px-5 py-14 md:px-8 md:py-24 ${hasImg && !center && v !== 'centered' ? 'md:grid-cols-2 md:items-center' : ''}`}
     >
       <div className={`flex flex-col gap-4 ${center ? 'items-center text-center' : 'items-start'}`}>
-        <h1 className="max-w-[20ch] text-[32px] font-bold leading-[38px] md:text-[56px] md:leading-[60px]">
+        <h1
+          className={`max-w-[20ch] text-[32px] font-bold leading-[38px] md:text-[56px] md:leading-[60px] ${hf}`}
+        >
           {str(p.title)}
         </h1>
         {str(p.subtitle) && (
@@ -243,6 +301,13 @@ function Hero(p: P) {
 
 function Services(p: P) {
   const items = list(p.items).filter((i) => str(i.name))
+  if (!items.length)
+    return p.editing ? (
+      <section className={sec}>
+        {str(p.title) && <h2 className={`${h2} mb-8`}>{str(p.title)}</h2>}
+        <Empty label="Add your services: tell the chat what you offer" className="min-h-32" />
+      </section>
+    ) : null
   return (
     <section className={sec}>
       {str(p.title) && <h2 className={`${h2} mb-8`}>{str(p.title)}</h2>}
@@ -257,7 +322,7 @@ function Services(p: P) {
           {items.map((it, i) => (
             // biome-ignore lint/suspicious/noArrayIndexKey: list items have no ids
             <li key={i} className={str(p.variant) === 'list' ? 'py-4' : `${card} p-5`}>
-              <h3 className="text-lg font-semibold">{str(it.name)}</h3>
+              <h3 className={`text-lg font-semibold ${hf}`}>{str(it.name)}</h3>
               {str(it.description) && (
                 <p className="mt-1 text-[15px] text-[var(--site-muted)]">{str(it.description)}</p>
               )}
@@ -340,6 +405,13 @@ function Gallery(p: P) {
 
 function Pricing(p: P) {
   const items = list(p.items).filter((i) => str(i.name) && str(i.price))
+  if (!items.length)
+    return p.editing ? (
+      <section className={sec}>
+        {str(p.title) && <h2 className={`${h2} mb-8`}>{str(p.title)}</h2>}
+        <Empty label="Add your prices: tell the chat each item and its price" className="min-h-32" />
+      </section>
+    ) : null
   return (
     <section className={sec}>
       {str(p.title) && <h2 className={`${h2} mb-8`}>{str(p.title)}</h2>}
@@ -376,6 +448,16 @@ function Pricing(p: P) {
 
 function FAQ(p: P) {
   const items = list(p.items).filter((i) => str(i.question) && str(i.answer))
+  if (!items.length)
+    return p.editing ? (
+      <section className={sec}>
+        {str(p.title) && <h2 className={`${h2} mb-8`}>{str(p.title)}</h2>}
+        <Empty
+          label="Add your questions and answers: tell the chat what customers ask"
+          className="min-h-32"
+        />
+      </section>
+    ) : null
   return (
     <section className={sec}>
       <div className="max-w-[720px]">
@@ -413,7 +495,7 @@ function CallToAction(p: P) {
         className={`mx-auto flex w-full max-w-[1120px] flex-col items-center gap-4 px-5 py-12 text-center md:flex-row md:justify-between md:px-8 md:text-left ${str(p.variant) === 'card' ? 'rounded-[var(--site-radius)] bg-[var(--site-primary)] text-[var(--site-on-primary)]' : ''}`}
       >
         <div>
-          <h2 className="text-2xl font-bold md:text-3xl">{str(p.title)}</h2>
+          <h2 className={`text-2xl font-bold md:text-3xl ${hf}`}>{str(p.title)}</h2>
           {str(p.text) && <p className="mt-1 opacity-90">{str(p.text)}</p>}
         </div>
         {label && (
@@ -435,6 +517,15 @@ function MapHours(p: P) {
   const hours = list(p.hours).filter((h) => str(h.days) && str(h.time))
   const maps =
     safeHref(p.map_url, p.blocked) ?? (address ? safeHref(mapsHref(address), p.blocked) : undefined)
+  if (!address && !hours.length)
+    return p.editing ? (
+      <section className="bg-[var(--site-tint)]">
+        <div className={sec}>
+          {str(p.title) && <h2 className={`${h2} mb-8`}>{str(p.title)}</h2>}
+          <Empty label="Add your address and opening hours" className="min-h-32" />
+        </div>
+      </section>
+    ) : null
   return (
     <section className="bg-[var(--site-tint)]">
       <div className={sec}>
@@ -442,7 +533,7 @@ function MapHours(p: P) {
         <div className={`grid gap-8 ${str(p.variant) === 'stacked' ? '' : 'md:grid-cols-2'}`}>
           {address && (
             <div>
-              <h3 className="mb-2 text-lg font-semibold">{t(langOf(p), 'find_us')}</h3>
+              <h3 className={`mb-2 text-lg font-semibold ${hf}`}>{t(langOf(p), 'find_us')}</h3>
               <p className="mb-4 whitespace-pre-line text-[var(--site-muted)]">{address}</p>
               {maps && (
                 <a href={maps} rel="noopener noreferrer" className={ghostCls}>
@@ -453,7 +544,7 @@ function MapHours(p: P) {
           )}
           {hours.length > 0 && (
             <div>
-              <h3 className="mb-2 text-lg font-semibold">{t(langOf(p), 'opening_hours')}</h3>
+              <h3 className={`mb-2 text-lg font-semibold ${hf}`}>{t(langOf(p), 'opening_hours')}</h3>
               <table className="w-full max-w-sm text-[15px]">
                 <tbody>
                   {hours.map((h, i) => (
@@ -516,23 +607,48 @@ function Testimonials(p: P) {
     <section className="bg-[var(--site-tint)]">
       <div className={sec}>
         {str(p.title) && <h2 className={`${h2} mb-8`}>{str(p.title)}</h2>}
-        <ul className="flex snap-x gap-4 overflow-x-auto pb-2 md:grid md:grid-cols-2 md:overflow-visible lg:grid-cols-3">
-          {items.map((it, i) => (
-            // biome-ignore lint/suspicious/noArrayIndexKey: list items have no ids
-            <li key={i} className={`${card} min-w-[85%] snap-start bg-[var(--site-bg)] p-5 md:min-w-0`}>
-              <blockquote>
-                <p aria-hidden="true" className="text-3xl font-bold leading-none text-[var(--site-primary)]">
-                  “
-                </p>
-                <p className="mt-1 whitespace-pre-line">{str(it.quote)}</p>
-                <footer className="mt-4 text-[14px]">
-                  <span className="font-semibold">{str(it.name)}</span>
-                  {str(it.role) && <span className="text-[var(--site-muted)]">, {str(it.role)}</span>}
-                </footer>
-              </blockquote>
-            </li>
-          ))}
-        </ul>
+        {str(p.variant) === 'single' ? (
+          // every item, one per row, as a large quote
+          <ul className="mx-auto max-w-[720px] space-y-12 text-center">
+            {items.map((it, i) => (
+              // biome-ignore lint/suspicious/noArrayIndexKey: list items have no ids
+              <li key={i}>
+                <blockquote>
+                  <p
+                    className={`whitespace-pre-line text-2xl font-semibold leading-snug md:text-[32px] md:leading-tight ${hf}`}
+                  >
+                    “{str(it.quote)}”
+                  </p>
+                  <footer className="mt-4 text-[15px]">
+                    <span className="font-semibold">{str(it.name)}</span>
+                    {str(it.role) && <span className="text-[var(--site-muted)]">, {str(it.role)}</span>}
+                  </footer>
+                </blockquote>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <ul className="flex snap-x gap-4 overflow-x-auto pb-2 md:grid md:grid-cols-2 md:overflow-visible lg:grid-cols-3">
+            {items.map((it, i) => (
+              // biome-ignore lint/suspicious/noArrayIndexKey: list items have no ids
+              <li key={i} className={`${card} min-w-[85%] snap-start bg-[var(--site-bg)] p-5 md:min-w-0`}>
+                <blockquote>
+                  <p
+                    aria-hidden="true"
+                    className="text-3xl font-bold leading-none text-[var(--site-primary)]"
+                  >
+                    “
+                  </p>
+                  <p className="mt-1 whitespace-pre-line">{str(it.quote)}</p>
+                  <footer className="mt-4 text-[14px]">
+                    <span className="font-semibold">{str(it.name)}</span>
+                    {str(it.role) && <span className="text-[var(--site-muted)]">, {str(it.role)}</span>}
+                  </footer>
+                </blockquote>
+              </li>
+            ))}
+          </ul>
+        )}
       </div>
     </section>
   )
@@ -667,7 +783,7 @@ export function SiteBadge({
 }
 
 export function Text(p: P) {
-  if (!str(p.title) && !str(p.body))
+  if (!str(p.body))
     return p.editing ? (
       <section className={sec}>
         <Empty label="Add a title and some text" />
@@ -721,7 +837,7 @@ export function Catalogue(p: P) {
     return p.editing ? (
       <section className={sec}>
         <div className="rounded-[var(--site-radius)] border border-dashed border-[var(--site-border)] p-10 text-center text-[var(--site-muted)]">
-          Your products will appear here
+          Choose items: pick which products appear here
         </div>
       </section>
     ) : null

@@ -30,7 +30,7 @@ import {
   waHref,
 } from '@/lib/sites'
 import { Beacon } from './beacon'
-import { BLOCKS, SiteBadge } from './blocks'
+import { BLOCKS, hiddenIds, SiteBadge, visibleBlocks } from './blocks'
 import { ContactFormLive } from './contact-form'
 import { LangSwitcher } from './lang-switcher'
 import { PostBody } from './post-body'
@@ -81,7 +81,10 @@ function Blocks({
   blocks: SiteBlock[]
   lang?: string
 }) {
-  const blocks = localizeBlocks(source, lang, overlayOf(site, lang), fingerprint)
+  const blocks = visibleBlocks(
+    localizeBlocks(source, lang, overlayOf(site, lang), fingerprint),
+    hiddenIds(allBlocks(site), catalogOf(site) ?? undefined),
+  )
   const sum = siteSummary(site.data)
   const assetBase = `/api/sites/img/${site.site_id}`
   const blocked = blockedOf(site)
@@ -403,7 +406,7 @@ function PostRow({ site, p, lang }: { site: PublicSite; p: PublicPostSummary; la
         />
       )}
       <div className="min-w-0">
-        <h2 className="text-xl font-bold leading-snug">
+        <h2 className="text-xl font-bold leading-snug [font-family:var(--site-font-heading)]">
           <a href={langPath(lang, `/blog/${p.slug}`)} className="underline-offset-4 hover:underline">
             {p.title}
           </a>
@@ -439,7 +442,9 @@ export async function PublishedBlog({ host, n, lang = 'en' }: { host: string; n:
     <Frame site={site} lang={lang} alts={alts}>
       <Blocks site={site} blocks={top} lang={lang} />
       <main className="mx-auto w-full max-w-[760px] px-5 py-12 md:py-16">
-        <h1 className="mb-4 text-3xl font-bold md:text-4xl">{t(lang, 'blog_title')}</h1>
+        <h1 className="mb-4 text-3xl font-bold md:text-4xl [font-family:var(--site-font-heading)]">
+          {t(lang, 'blog_title')}
+        </h1>
         <ul className="divide-y divide-[var(--site-border)]">
           {list.posts.map((p) => (
             <PostRow key={p.slug} site={site} p={p} lang={lang} />
@@ -543,7 +548,9 @@ export async function PublishedPost({
               className="mb-6 aspect-video w-full rounded-[var(--site-radius)] object-cover"
             />
           )}
-          <h1 className="text-3xl font-bold leading-tight md:text-4xl">{post.title}</h1>
+          <h1 className="text-3xl font-bold leading-tight md:text-4xl [font-family:var(--site-font-heading)]">
+            {post.title}
+          </h1>
           <p className="mt-2 text-[14px] text-[var(--site-muted)]">
             <time dateTime={post.published_at}>{dateLabel(post.published_at)}</time> ·{' '}
             {t(lang, 'blog_min_read', { count: readingMinutes(post.body) })}
@@ -553,7 +560,9 @@ export async function PublishedPost({
         {form && <Blocks site={site} blocks={[form]} lang={lang} />}
         {more.length > 0 && (
           <section className="mx-auto w-full max-w-[680px] px-5 pb-10">
-            <h2 className="text-2xl font-bold">{t(lang, 'blog_more_posts')}</h2>
+            <h2 className="text-2xl font-bold [font-family:var(--site-font-heading)]">
+              {t(lang, 'blog_more_posts')}
+            </h2>
             <ul className="divide-y divide-[var(--site-border)]">
               {more.map((p) => (
                 <PostRow key={p.slug} site={site} p={p} lang={lang} />

@@ -184,6 +184,8 @@ func TestSiteLangWebCommands(t *testing.T) {
 	eq(t, len(l), 1)
 	eq(t, l[0].(map[string]any)["hidden"], true)
 	eq(t, l[0].(map[string]any)["checked"], false)
+	svc := blockOf(p.get(p.mia, p.site)["data"], "Services")
+	adminOK(t, p.editOps(p.mia, p.site, p.draft(), map[string]any{"tool": "update_block_props", "input": map[string]any{"id": svc, "props": map[string]any{"items": []any{map[string]any{"name": "Cleaning"}}}}}))
 	rv := p.ok(p.mia, "site.lang_review", map[string]any{"id": p.site, "lang": "hi"})
 	var item map[string]any
 	for _, pg := range rv["pages"].([]any) {

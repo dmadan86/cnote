@@ -1,14 +1,16 @@
 {
   "key": "restaurant",
   "name": "Tadka",
-  "description": "A website for your restaurant business.",
-  "vertical": "Restaurant",
+  "order": 4,
+  "description": "A warm menu-first page for places people sit down to eat.",
+  "vertical": "Food",
+  "style": "Warm",
   "data": {
     "root": {
       "props": {
         "title": "{{name}}",
         "theme": {
-          "primary": "#b4532a",
+          "primary": "#9a4423",
           "background": "#faf3e7",
           "text": "#2b1a12",
           "font": "sans",
@@ -23,7 +25,27 @@
         "props": {
           "id": "Header-00000001",
           "brand": "{{name}}",
-          "links": []
+          "links": [
+            {
+              "label": "Menu",
+              "href": "#Pricing-00000003"
+            },
+            {
+              "label": "Gallery",
+              "href": "#Gallery-00000004"
+            },
+            {
+              "label": "What guests say",
+              "href": "#Testimonials-00000005"
+            },
+            {
+              "label": "Find us",
+              "href": "#MapHours-00000006"
+            }
+          ],
+          "cta_label": "Book a table",
+          "cta_href": "#ContactForm-00000008",
+          "variant": "centered"
         }
       },
       {
@@ -31,7 +53,10 @@
         "props": {
           "id": "Hero-00000002",
           "title": "{{name}}",
-          "align": "center"
+          "cta_label": "Book a table",
+          "cta_href": "#ContactForm-00000008",
+          "align": "center",
+          "variant": "cover"
         }
       },
       {
@@ -39,7 +64,8 @@
         "props": {
           "id": "Pricing-00000003",
           "title": "Menu",
-          "items": []
+          "items": [],
+          "variant": "list"
         }
       },
       {
@@ -47,69 +73,67 @@
         "props": {
           "id": "Gallery-00000004",
           "title": "Gallery",
-          "items": []
-        }
-      },
-      {
-        "type": "About",
-        "props": {
-          "id": "About-00000005",
-          "title": "About us",
-          "body": "Add your story here."
+          "items": [],
+          "variant": "grid"
         }
       },
       {
         "type": "Testimonials",
         "props": {
-          "id": "Testimonials-00000006",
-          "title": "Testimonials",
-          "items": []
+          "id": "Testimonials-00000005",
+          "title": "What guests say",
+          "items": [],
+          "variant": "cards"
         }
       },
       {
         "type": "MapHours",
         "props": {
-          "id": "MapHours-00000007",
+          "id": "MapHours-00000006",
           "title": "Find us",
           "address": "{{address}}",
-          "hours": []
+          "hours": [],
+          "variant": "side"
         }
       },
       {
         "type": "CallToAction",
         "props": {
-          "id": "CallToAction-00000008",
-          "title": "Get in touch",
-          "cta_label": "Contact us",
-          "cta_href": "#ContactForm-00000009"
+          "id": "CallToAction-00000007",
+          "title": "Come hungry",
+          "cta_label": "Book a table",
+          "cta_href": "#ContactForm-00000008",
+          "variant": "card"
         }
       },
       {
         "type": "ContactForm",
         "props": {
-          "id": "ContactForm-00000009",
+          "id": "ContactForm-00000008",
           "title": "Reservations",
           "phone": "{{phone}}",
           "email": "{{email}}",
           "address": "{{address}}",
-          "submit_label": "Send"
+          "submit_label": "Send",
+          "variant": "stacked"
         }
       },
       {
         "type": "Footer",
         "props": {
-          "id": "Footer-0000000a",
+          "id": "Footer-00000009",
           "text": "{{name}}",
           "phone": "{{phone}}",
           "email": "{{email}}",
           "address": "{{address}}",
-          "links": []
+          "links": [],
+          "variant": "simple"
         }
       },
       {
         "type": "WhatsAppButton",
         "props": {
-          "id": "WhatsAppButton-0000000b",
+          "id": "WhatsAppButton-0000000a",
           "phone": "{{phone}}",
           "label": "WhatsApp"
         }

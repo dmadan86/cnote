@@ -1,0 +1,136 @@
+{
+  "key": "ngo",
+  "name": "Seva",
+  "order": 14,
+  "description": "Warm and plain-spoken, for causes that need people to join in.",
+  "vertical": "NGO",
+  "style": "Warm",
+  "data": {
+    "root": {
+      "props": {
+        "title": "{{name}}",
+        "theme": {
+          "primary": "#047857",
+          "background": "#fffbeb",
+          "text": "#1f2937",
+          "font": "rounded",
+          "radius": "lg"
+        }
+      }
+    },
+    "content": [
+      {
+        "type": "Header",
+        "props": {
+          "id": "Header-00000001",
+          "brand": "{{name}}",
+          "links": [
+            {
+              "label": "Programmes",
+              "href": "#Services-00000003"
+            },
+            {
+              "label": "Gallery",
+              "href": "#Gallery-00000004"
+            },
+            {
+              "label": "Find us",
+              "href": "#MapHours-00000008"
+            }
+          ],
+          "cta_label": "Get involved",
+          "cta_href": "#ContactForm-00000007",
+          "variant": "left"
+        }
+      },
+      {
+        "type": "Hero",
+        "props": {
+          "id": "Hero-00000002",
+          "title": "{{name}}",
+          "cta_label": "Get involved",
+          "cta_href": "#ContactForm-00000007",
+          "align": "left",
+          "variant": "split"
+        }
+      },
+      {
+        "type": "Services",
+        "props": {
+          "id": "Services-00000003",
+          "title": "Programmes",
+          "items": [],
+          "variant": "cards"
+        }
+      },
+      {
+        "type": "Gallery",
+        "props": {
+          "id": "Gallery-00000004",
+          "title": "Gallery",
+          "items": [],
+          "variant": "grid"
+        }
+      },
+      {
+        "type": "Text",
+        "props": {
+          "id": "Text-00000005",
+          "title": "How to help"
+        }
+      },
+      {
+        "type": "CallToAction",
+        "props": {
+          "id": "CallToAction-00000006",
+          "title": "Join us",
+          "cta_label": "Get involved",
+          "cta_href": "#ContactForm-00000007",
+          "variant": "banner"
+        }
+      },
+      {
+        "type": "ContactForm",
+        "props": {
+          "id": "ContactForm-00000007",
+          "title": "Contact us",
+          "phone": "{{phone}}",
+          "email": "{{email}}",
+          "address": "{{address}}",
+          "submit_label": "Send",
+          "variant": "side"
+        }
+      },
+      {
+        "type": "MapHours",
+        "props": {
+          "id": "MapHours-00000008",
+          "title": "Find us",
+          "address": "{{address}}",
+          "hours": [],
+          "variant": "stacked"
+        }
+      },
+      {
+        "type": "Footer",
+        "props": {
+          "id": "Footer-00000009",
+          "text": "{{name}}",
+          "phone": "{{phone}}",
+          "email": "{{email}}",
+          "address": "{{address}}",
+          "links": [],
+          "variant": "columns"
+        }
+      },
+      {
+        "type": "WhatsAppButton",
+        "props": {
+          "id": "WhatsAppButton-0000000a",
+          "phone": "{{phone}}",
+          "label": "WhatsApp"
+        }
+      }
+    ]
+  }
+}

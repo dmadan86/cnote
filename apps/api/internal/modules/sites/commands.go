@@ -20,7 +20,6 @@ const (
 	busyMsg       = "A change is already being made. Wait for it to finish."
 	dailyTurns    = 200
 	fallbackName  = "My website"
-	templateKey   = "services"
 	maxEditOps    = 20
 	maxTurnsShown = 50
 )
@@ -127,10 +126,10 @@ func Commands() []command.Command {
 	R, W, M := command.GroupRead, command.GroupWriteItems, command.Member
 	id, ver := str("site id"), str("the draft version the person is looking at; a stale one is a conflict")
 	commands := append([]command.Command{
-		mk("site.templates", R, M, false, "List the website templates, each filled from the company profile. too_long names profile fields left empty because they do not fit the site.", obj(nil, props{}), templates),
+		mk("site.templates", R, M, false, "List the website templates, each filled from the company profile. too_long names profile fields left empty because they do not fit the site.", obj(nil, props{"brand": props{"type": "boolean", "description": "use the company colour as the primary where it is readable"}, "theme": props{"type": "object", "description": "a palette to restyle the designs with"}, "key": str("only this template")}), templates),
 		mk("site.list", R, M, false, "List the workspace's websites (at most one in this version).", obj(nil, props{}), list),
 		mk("site.create", W, command.Admin, false, "Create the workspace's website from a template (admins only; one per workspace). brief queues a first AI edit.",
-			obj([]string{"template"}, props{"template": str("template key: services"), "name": str("site name"), "brief": str("optional first request for the AI")}), create),
+			obj([]string{"template"}, props{"template": str("template key, as listed by site.templates"), "brand": props{"type": "boolean", "description": "use the company colour as the primary where it is readable"}, "theme": props{"type": "object", "description": "the palette chosen in the picker (theme fields)"}, "name": str("site name"), "brief": str("optional first request for the AI")}), create),
 		mk("site.get", R, M, false, "Open a website: the site, its draft (or one version's) page data and the recent chat turns, oldest first.",
 			obj([]string{"id"}, props{"id": id, "version_id": str("a version of this site; default the draft")}), get),
 		mk("site.chat", W, M, true, "Ask the AI to change the page. Starts a turn that runs in the background; poll site.turn_get.",
@@ -281,6 +280,8 @@ func list(c *command.Ctx, raw json.RawMessage) (any, error) {
 func create(c *command.Ctx, raw json.RawMessage) (any, error) {
 	var in struct {
 		Template, Name, Brief string
+		Brand                 bool
+		Theme                 map[string]any
 	}
 	if err := decode(raw, &in); err != nil {
 		return nil, err
@@ -300,10 +301,11 @@ func create(c *command.Ctx, raw json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	data, tooLong, err := fillTemplate(b, in.Template)
+	f, err := fillTemplate(b, in.Template, fillOpts{Brand: in.Brand, Theme: in.Theme})
 	if err != nil {
 		return nil, err
 	}
+	data, tooLong := f.Data, f.TooLong
 	name := strings.TrimSpace(in.Name)
 	if name == "" {
 		name = b["name"]

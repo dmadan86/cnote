@@ -1,0 +1,129 @@
+{
+  "key": "cafe",
+  "name": "Brew",
+  "order": 7,
+  "description": "Friendly and fresh, for cafes, bakeries and kitchens that deliver.",
+  "vertical": "Food",
+  "style": "Playful",
+  "data": {
+    "root": {
+      "props": {
+        "title": "{{name}}",
+        "theme": {
+          "primary": "#14532d",
+          "background": "#f4f1e6",
+          "text": "#14352a",
+          "font": "rounded",
+          "radius": "lg"
+        }
+      }
+    },
+    "content": [
+      {
+        "type": "Header",
+        "props": {
+          "id": "Header-00000001",
+          "brand": "{{name}}",
+          "links": [
+            {
+              "label": "Menu",
+              "href": "#Pricing-00000003"
+            },
+            {
+              "label": "Gallery",
+              "href": "#Gallery-00000004"
+            },
+            {
+              "label": "Find us",
+              "href": "#MapHours-00000005"
+            }
+          ],
+          "cta_label": "Order now",
+          "cta_href": "#ContactForm-00000007",
+          "variant": "left"
+        }
+      },
+      {
+        "type": "Hero",
+        "props": {
+          "id": "Hero-00000002",
+          "title": "{{name}}",
+          "cta_label": "See the menu",
+          "cta_href": "#ContactForm-00000007",
+          "align": "left",
+          "variant": "split"
+        }
+      },
+      {
+        "type": "Pricing",
+        "props": {
+          "id": "Pricing-00000003",
+          "title": "Menu",
+          "items": [],
+          "variant": "cards"
+        }
+      },
+      {
+        "type": "Gallery",
+        "props": {
+          "id": "Gallery-00000004",
+          "title": "Gallery",
+          "items": [],
+          "variant": "grid"
+        }
+      },
+      {
+        "type": "MapHours",
+        "props": {
+          "id": "MapHours-00000005",
+          "title": "Find us",
+          "address": "{{address}}",
+          "hours": [],
+          "variant": "side"
+        }
+      },
+      {
+        "type": "CallToAction",
+        "props": {
+          "id": "CallToAction-00000006",
+          "title": "Order for your office or event",
+          "cta_label": "Order now",
+          "cta_href": "#ContactForm-00000007",
+          "variant": "banner"
+        }
+      },
+      {
+        "type": "ContactForm",
+        "props": {
+          "id": "ContactForm-00000007",
+          "title": "Bulk orders",
+          "phone": "{{phone}}",
+          "email": "{{email}}",
+          "address": "{{address}}",
+          "submit_label": "Send",
+          "variant": "stacked"
+        }
+      },
+      {
+        "type": "Footer",
+        "props": {
+          "id": "Footer-00000008",
+          "text": "{{name}}",
+          "phone": "{{phone}}",
+          "email": "{{email}}",
+          "address": "{{address}}",
+          "links": [],
+          "variant": "columns"
+        }
+      },
+      {
+        "type": "WhatsAppButton",
+        "props": {
+          "id": "WhatsAppButton-00000009",
+          "phone": "{{phone}}",
+          "label": "WhatsApp"
+        }
+      }
+    ]
+  }
+}
