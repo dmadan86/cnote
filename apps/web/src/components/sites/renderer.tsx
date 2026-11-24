@@ -52,7 +52,10 @@ export function Renderer({
   }
   // Keyboard activation of a link or a form control (Enter, Space, browser shortcuts) is cancelled too.
   const stopKey = (e: React.KeyboardEvent) => {
-    if ((e.target as HTMLElement).closest('a, button, input, select, textarea') && (e.key === 'Enter' || e.key === ' '))
+    if (
+      (e.target as HTMLElement).closest('a, button, input, select, textarea') &&
+      (e.key === 'Enter' || e.key === ' ')
+    )
       e.preventDefault()
   }
   return (
