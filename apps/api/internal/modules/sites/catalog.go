@@ -14,13 +14,14 @@ import (
 	"unicode/utf8"
 )
 
-//go:embed catalog.json template_services.json
+//go:embed catalog.json templates/*.json
 var assets embed.FS
 
 type field struct {
 	Kind     string           `json:"kind"`
 	Max      int              `json:"max"`
 	Required bool             `json:"required"`
+	Optional bool             `json:"optional"`
 	Values   []string         `json:"values"`
 	Props    map[string]field `json:"props"`
 }
@@ -41,6 +42,7 @@ func init() {
 	}
 }
 
+var imageIDPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 var idPattern = regexp.MustCompile(`^[A-Za-z]+-[0-9a-f]{8}$`)
 var colorPattern = regexp.MustCompile(`^#[0-9a-f]{6}$`)
 var phonePattern = regexp.MustCompile(`^\+?[0-9 ()-]{3,30}$`)
@@ -122,8 +124,8 @@ func validateField(path string, v any, f field) error {
 			}
 		}
 	case "image":
-		if s != "" {
-			return fmt.Errorf("%s: images are not supported", path)
+		if s != "" && !imageIDPattern.MatchString(s) {
+			return fmt.Errorf("%s: invalid image id", path)
 		}
 	case "link":
 		if len(s) > 300 {
@@ -189,7 +191,7 @@ func Validate(data json.RawMessage) error {
 		return fmt.Errorf("at most 30 blocks")
 	}
 	for k := range d.Root.Props {
-		if k != "title" && k != "theme" {
+		if k != "title" && k != "description" && k != "theme" {
 			return fmt.Errorf("root: unknown property %s", k)
 		}
 	}
@@ -200,6 +202,11 @@ func Validate(data json.RawMessage) error {
 	if err := validateField("root.title", title, field{Kind: "text", Max: 120}); err != nil {
 		return err
 	}
+	if v, exists := d.Root.Props["description"]; exists {
+		if err := validateField("root.description", v, field{Kind: "longtext", Max: 160}); err != nil {
+			return err
+		}
+	}
 	theme, ok := d.Root.Props["theme"].(map[string]any)
 	if !ok {
 		return fmt.Errorf("theme: expected object")
@@ -207,8 +214,8 @@ func Validate(data json.RawMessage) error {
 	if err := validateFields("theme", theme, catalog.Theme); err != nil {
 		return err
 	}
-	for k := range catalog.Theme {
-		if _, ok := theme[k]; !ok {
+	for k, f := range catalog.Theme {
+		if _, ok := theme[k]; !ok && !f.Optional {
 			return fmt.Errorf("theme.%s: required", k)
 		}
 	}
@@ -246,4 +253,80 @@ func Validate(data json.RawMessage) error {
 		}
 	}
 	return nil
+}
+
+// ImageIDs returns the distinct uploaded image IDs referenced by the page.
+func ImageIDs(data json.RawMessage) []string {
+	var d struct {
+		Content []struct {
+			Type  string         `json:"type"`
+			Props map[string]any `json:"props"`
+		} `json:"content"`
+	}
+	if json.Unmarshal(data, &d) != nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	var out []string
+	var walk func(map[string]any, map[string]field)
+	walk = func(values map[string]any, defs map[string]field) {
+		for k, f := range defs {
+			v := values[k]
+			if f.Kind == "image" {
+				if id, ok := v.(string); ok && imageIDPattern.MatchString(id) && !seen[id] {
+					seen[id] = true
+					out = append(out, id)
+				}
+			}
+			if f.Kind == "list" {
+				if list, ok := v.([]any); ok {
+					for _, item := range list {
+						if obj, ok := item.(map[string]any); ok {
+							walk(obj, f.Props)
+						}
+					}
+				}
+			}
+		}
+	}
+	for _, block := range d.Content {
+		walk(block.Props, catalog.Blocks[block.Type].Props)
+	}
+	return out
+}
+func HasBlock(data json.RawMessage, typ string) bool {
+	var d struct {
+		Content []struct {
+			Type string `json:"type"`
+		} `json:"content"`
+	}
+	if json.Unmarshal(data, &d) != nil {
+		return false
+	}
+	for _, b := range d.Content {
+		if b.Type == typ {
+			return true
+		}
+	}
+	return false
+}
+
+// WaDigits converts a phone number to the digits used by WhatsApp links.
+func WaDigits(phone string) string {
+	var b strings.Builder
+	for _, r := range phone {
+		if r >= '0' && r <= '9' {
+			b.WriteRune(r)
+		} else if !strings.ContainsRune("+ -()", r) {
+			return ""
+		}
+	}
+	digits := b.String()
+	if len(digits) == 10 {
+		digits = "91" + digits
+	}
+	if len(digits) < 8 || len(digits) > 15 {
+		return ""
+	}
+	return digits
 }

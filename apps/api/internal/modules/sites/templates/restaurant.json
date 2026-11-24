@@ -1,0 +1,119 @@
+{
+  "key": "restaurant",
+  "name": "Tadka",
+  "description": "A website for your restaurant business.",
+  "vertical": "Restaurant",
+  "data": {
+    "root": {
+      "props": {
+        "title": "{{name}}",
+        "theme": {
+          "primary": "#b4532a",
+          "background": "#faf3e7",
+          "text": "#2b1a12",
+          "font": "sans",
+          "radius": "sm",
+          "font_heading": "serif"
+        }
+      }
+    },
+    "content": [
+      {
+        "type": "Header",
+        "props": {
+          "id": "Header-00000001",
+          "brand": "{{name}}",
+          "links": []
+        }
+      },
+      {
+        "type": "Hero",
+        "props": {
+          "id": "Hero-00000002",
+          "title": "{{name}}",
+          "align": "center"
+        }
+      },
+      {
+        "type": "Pricing",
+        "props": {
+          "id": "Pricing-00000003",
+          "title": "Menu",
+          "items": []
+        }
+      },
+      {
+        "type": "Gallery",
+        "props": {
+          "id": "Gallery-00000004",
+          "title": "Gallery",
+          "items": []
+        }
+      },
+      {
+        "type": "About",
+        "props": {
+          "id": "About-00000005",
+          "title": "About us",
+          "body": "Add your story here."
+        }
+      },
+      {
+        "type": "Testimonials",
+        "props": {
+          "id": "Testimonials-00000006",
+          "title": "Testimonials",
+          "items": []
+        }
+      },
+      {
+        "type": "MapHours",
+        "props": {
+          "id": "MapHours-00000007",
+          "title": "Find us",
+          "address": "{{address}}",
+          "hours": []
+        }
+      },
+      {
+        "type": "CallToAction",
+        "props": {
+          "id": "CallToAction-00000008",
+          "title": "Get in touch",
+          "cta_label": "Contact us",
+          "cta_href": "#ContactForm-00000009"
+        }
+      },
+      {
+        "type": "ContactForm",
+        "props": {
+          "id": "ContactForm-00000009",
+          "title": "Reservations",
+          "phone": "{{phone}}",
+          "email": "{{email}}",
+          "address": "{{address}}",
+          "submit_label": "Send"
+        }
+      },
+      {
+        "type": "Footer",
+        "props": {
+          "id": "Footer-0000000a",
+          "text": "{{name}}",
+          "phone": "{{phone}}",
+          "email": "{{email}}",
+          "address": "{{address}}",
+          "links": []
+        }
+      },
+      {
+        "type": "WhatsAppButton",
+        "props": {
+          "id": "WhatsAppButton-0000000b",
+          "phone": "{{phone}}",
+          "label": "WhatsApp"
+        }
+      }
+    ]
+  }
+}

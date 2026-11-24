@@ -141,6 +141,17 @@ func Apply(data json.RawMessage, tool string, input json.RawMessage) (json.RawMe
 		content = append(content, nil)
 		copy(content[pos+1:], content[pos:])
 		content[pos] = b
+	case "set_page":
+		root := d["root"].(map[string]any)["props"].(map[string]any)
+		for k, v := range in {
+			if k != "title" && k != "description" {
+				return nil, fmt.Errorf("unknown page property")
+			}
+			if !reflect.DeepEqual(root[k], v) && hasMask(v) {
+				return nil, fmt.Errorf("%s", maskReply)
+			}
+			root[k] = v
+		}
 	case "set_theme":
 		theme := d["root"].(map[string]any)["props"].(map[string]any)["theme"].(map[string]any)
 		for k, v := range in {

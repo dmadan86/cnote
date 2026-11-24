@@ -196,105 +196,6 @@ func activeTurn(c *command.Ctx, siteID string) (bool, error) {
 	return busy, command.DB(err)
 }
 
-// ---------- templates ----------
-
-// business reads the company profile into the four template slots (plus the accent colour).
-func business(c *command.Ctx) (map[string]string, error) {
-	raw, err := c.Call("company.get", props{})
-	if err != nil {
-		return nil, err
-	}
-	var p map[string]any
-	if err := json.Unmarshal(raw, &p); err != nil {
-		return nil, command.ErrInvalid("company profile unreadable")
-	}
-	s := func(k string) string { v, _ := p[k].(string); return strings.TrimSpace(v) }
-	name := s("trade_name")
-	if name == "" {
-		name = s("legal_name")
-	}
-	if name == "" {
-		name = s("name")
-	}
-	address := s("address")
-	if pin := s("pincode"); pin != "" {
-		if address != "" {
-			address += ", "
-		}
-		address += pin
-	}
-	return map[string]string{"name": name, "phone": s("phone"), "email": s("email"), "address": address, "accent": s("email_accent")}, nil
-}
-
-var accentRe = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
-
-// fillTemplate fills the slots, never truncating: a value that does not validate in its place is left empty and
-// reported in tooLong (the name falls back to a placeholder because the page needs one).
-func fillTemplate(slots map[string]string) (json.RawMessage, []string, error) {
-	tpl, err := assets.ReadFile("template_services.json")
-	if err != nil {
-		return nil, nil, err
-	}
-	keys := []string{"name", "phone", "email", "address"}
-	build := func(use map[string]bool) json.RawMessage {
-		s := string(tpl)
-		for _, k := range keys {
-			v := ""
-			if use[k] {
-				v = slots[k]
-			} else if k == "name" {
-				v = fallbackName
-			}
-			b, _ := json.Marshal(v)
-			s = strings.ReplaceAll(s, "{{"+k+"}}", string(b[1:len(b)-1]))
-		}
-		return json.RawMessage(s)
-	}
-	use := map[string]bool{}
-	for _, k := range keys {
-		use[k] = slots[k] != ""
-	}
-	tooLong := []string{}
-	if Validate(build(use)) != nil {
-		for _, k := range keys {
-			if !use[k] {
-				continue
-			}
-			if Validate(build(map[string]bool{k: true})) != nil {
-				use[k] = false
-				tooLong = append(tooLong, k)
-			}
-		}
-	}
-	doc := build(use)
-	if accent := slots["accent"]; accentRe.MatchString(accent) {
-		var d map[string]any
-		if json.Unmarshal(doc, &d) == nil {
-			d["root"].(map[string]any)["props"].(map[string]any)["theme"].(map[string]any)["primary"] = strings.ToLower(accent)
-			if b, err := json.Marshal(d); err == nil && Validate(b) == nil {
-				doc = b
-			}
-		}
-	}
-	if err := Validate(doc); err != nil {
-		return nil, nil, command.ErrInvalid("the template could not be filled: " + err.Error())
-	}
-	return doc, tooLong, nil
-}
-
-func templates(c *command.Ctx, raw json.RawMessage) (any, error) {
-	b, err := business(c)
-	if err != nil {
-		return nil, err
-	}
-	data, tooLong, err := fillTemplate(b)
-	if err != nil {
-		return nil, err
-	}
-	return []props{{"key": templateKey, "name": "Services", "description": "A page for a business that sells services: header, hero, services list, contact form and footer.",
-		"data": data, "too_long": tooLong}}, nil
-}
-
 // ---------- sites ----------
 
 func list(c *command.Ctx, raw json.RawMessage) (any, error) {
@@ -321,7 +222,7 @@ func create(c *command.Ctx, raw json.RawMessage) (any, error) {
 	if err := decode(raw, &in); err != nil {
 		return nil, err
 	}
-	if in.Template != templateKey {
+	if !hasTemplate(in.Template) {
 		return nil, command.ErrInvalid("unknown template")
 	}
 	user, err := userID(c)
@@ -336,7 +237,7 @@ func create(c *command.Ctx, raw json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	data, tooLong, err := fillTemplate(b)
+	data, tooLong, err := fillTemplate(b, in.Template)
 	if err != nil {
 		return nil, err
 	}
@@ -349,7 +250,7 @@ func create(c *command.Ctx, raw json.RawMessage) (any, error) {
 	}
 	var siteID string
 	err = c.Tx.QueryRow(c.Context, `insert into sites.sites (workspace_id, name, template, created_by) values ($1::uuid, $2, $3, $4::uuid)
-		on conflict do nothing returning id::text`, c.WorkspaceID(), name, templateKey, user).Scan(&siteID)
+		on conflict do nothing returning id::text`, c.WorkspaceID(), name, in.Template, user).Scan(&siteID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, command.ErrConflict("This workspace already has a website.")
 	}
