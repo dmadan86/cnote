@@ -27,6 +27,7 @@ func (s *Server) sitePublicPosts(w http.ResponseWriter, r *http.Request, one boo
 		Slug  string `json:"slug"`
 		Page  int    `json:"page"`
 		Limit int    `json:"limit"`
+		Lang  string `json:"lang"`
 	}
 	if json.NewDecoder(io.LimitReader(r.Body, 2048)).Decode(&in) != nil {
 		notFound(w)
@@ -37,14 +38,20 @@ func (s *Server) sitePublicPosts(w http.ResponseWriter, r *http.Request, one boo
 		notFound(w)
 		return
 	}
+	if in.Lang == "" { // no language means the site's main one (18.6)
+		in.Lang = "en"
+		if shown := sites.ShownLangs(pub.Data); len(shown) > 0 {
+			in.Lang = shown[0]
+		}
+	}
 	var out map[string]any
 	if one {
-		out, err = sites.PublicPost(r.Context(), s.Pool, pub.SiteID, in.Slug)
+		out, err = sites.PublicPostIn(r.Context(), s.Pool, pub, in.Lang, in.Slug)
 		if err == nil {
 			out = map[string]any{"post": out}
 		}
 	} else {
-		out, err = sites.PublicPosts(r.Context(), s.Pool, pub.SiteID, in.Page, in.Limit)
+		out, err = sites.PublicPostsLang(r.Context(), s.Pool, pub, in.Lang, in.Page, in.Limit)
 	}
 	if err != nil {
 		notFound(w)

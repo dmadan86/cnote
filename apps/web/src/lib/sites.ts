@@ -404,6 +404,7 @@ const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
 const IMG = new RegExp(`^/api/sites/img/${UUID}/${UUID}$`)
 const FORM = new RegExp(`^/api/sites/form/${UUID}$`)
 const HIT = new RegExp(`^/api/sites/hit/${UUID}$`)
+const REPORT = new RegExp(`^/api/sites/report/${UUID}$`)
 /** A page address: the same rule as Go (design 17.10). Reserved names never match a page, so they 404. */
 export const PAGE_SLUG = /^[a-z0-9]+(-[a-z0-9]+)*$/
 export const RESERVED_SLUGS = [
@@ -462,7 +463,8 @@ export function route(
     return site(`/published/${host}${pathname}`)
   if (read && validSlug(pathname.slice(1))) return site(`/published/${host}${pathname}`)
   if (read && IMG.test(pathname)) return site(null)
-  if (method === 'POST' && (FORM.test(pathname) || HIT.test(pathname))) return site(null)
+  if (method === 'POST' && (FORM.test(pathname) || HIT.test(pathname) || REPORT.test(pathname)))
+    return site(null)
   return { kind: 'notfound' }
 }
 
@@ -1014,7 +1016,7 @@ export const siteApi3b = {
     cmd<{ ok: boolean }>(ws, 'site.lang_mark_checked', { id, lang, page }),
   /** A whole-site translation is one chat turn of kind 'translate': same turn polling as any chat turn. */
   chatTranslate: (ws: string, id: string, expected_version_id: string, translate: string) =>
-    cmd<{ turn_id: string }>(ws, 'site.chat', { id, expected_version_id, message: '', translate }),
+    cmd<{ turn_id: string }>(ws, 'site.translate', { id, expected_version_id, lang: translate }),
 
   /** Visitor report: public, same-origin, no cookie (POST /api/sites/report/{site_id}). */
   abuseReport: (
@@ -1032,3 +1034,132 @@ export const siteApi3b = {
     cmd<{ ok: boolean }>(ws, 'site.abuse_appeal', { id, note }),
 }
 // ======== end Phase 3b types ========
+
+// ======== Phase 3b languages web (L2): published routing, overlays, builder helpers ========
+
+/** Assumed public_get additions: `langs` = the shown non-default languages in order (hidden ones are left out by the server). */
+export type PublicLangSite = PublicSite & { langs?: string[] }
+export const shownLangs = (site: PublicSite): string[] =>
+  ((site as PublicLangSite).langs ?? []).filter((c) => LANG_PREFIX.test(`/${c}`) && c !== 'en')
+// pa and or are in the pattern even when the API refuses them: the server's list decides what is shown.
+const LANG_PREFIX = /^\/(hi|ta|te|kn|mr|bn|gu|ml|pa|or)(?=\/|$)/
+/** `/hi/about` -> {lang 'hi', rest '/about'}; any other path is English. Page slugs are never two letters, so this is unambiguous. */
+export function splitLang(pathname: string): { lang: string; rest: string } {
+  const m = LANG_PREFIX.exec(pathname)
+  return m ? { lang: m[1], rest: pathname.slice(m[0].length) || '/' } : { lang: 'en', rest: pathname }
+}
+/** The path a visitor in `lang` uses for a site path ('/', '/about', '/blog'); an in-page `#id` is kept. */
+export const langPath = (lang: string, path: string) =>
+  lang === 'en' ? path : `/${lang}${path === '/' ? '' : path}`
+export const langNative = (code: string) => SUPPORTED_LANGS.find((l) => l.code === code)?.native ?? code
+export const langName = (code: string) => SUPPORTED_LANGS.find((l) => l.code === code)?.name ?? code
+
+type OverlayDef = { kind: string; translatable?: boolean; props?: Record<string, OverlayDef> }
+const defsOf = (type: string) =>
+  (blockDefs[type] as { props?: Record<string, OverlayDef> } | undefined)?.props ?? {}
+const PAGE_LINK = /^\/([a-z0-9]+(-[a-z0-9]+)*)?(#[A-Za-z]+-[0-9a-f]{8})?$/
+/**
+ * Assumed overlay shape (design 18.1/18.2): `i18n[lang][blockId][prop]` = {text, fp} (fp = Fingerprint of the source
+ * string); list sub-props sit under `"items.name"` (or `items`) keyed by item index. An entry whose fp does not match
+ * the current source is ignored, so the source text shows. An entry without fp is trusted (the server marks stale).
+ */
+function pick(src: unknown, e: unknown, fp: (s: string) => string): string | undefined {
+  if (typeof src !== 'string' || !src || e == null) return undefined
+  const o =
+    typeof e === 'string' ? { text: e } : (e as { text?: unknown; t?: unknown; fp?: unknown; f?: unknown })
+  const text = o.text ?? o.t
+  const sum = o.fp ?? o.f
+  if (typeof text !== 'string' || !text.trim()) return undefined
+  if (typeof sum === 'string' && sum !== fp(src)) return undefined
+  return text
+}
+const at = (v: unknown, k: string | number) =>
+  v && typeof v === 'object' ? (v as Record<string | number, unknown>)[k] : undefined
+
+/**
+ * Translated copy of `blocks` for `lang`: overlay text where the fingerprint still matches, and page links
+ * (`/about`, `/blog`) pointing at that language's paths. English returns the blocks untouched.
+ */
+export function localizeBlocks(
+  blocks: SiteBlock[],
+  lang: string,
+  overlay: Record<string, Record<string, unknown>> | undefined,
+  fp: (s: string) => string,
+): SiteBlock[] {
+  if (lang === 'en') return blocks
+  const link = (v: unknown) =>
+    typeof v === 'string' && PAGE_LINK.test(v) ? v.replace(/^\/[^#]*/, (p) => langPath(lang, p)) : v
+  return blocks.map((b) => {
+    const id = String(b.props?.id ?? '')
+    const o = overlay?.[id]
+    const props: Record<string, unknown> = { ...b.props }
+    for (const [k, d] of Object.entries(defsOf(b.type))) {
+      if (d.kind === 'link') props[k] = link(props[k])
+      else if (d.translatable) props[k] = pick(props[k], at(o, k), fp) ?? props[k]
+      else if (d.kind === 'list' && Array.isArray(props[k]))
+        props[k] = (props[k] as Record<string, unknown>[]).map((item, i) => {
+          const next = { ...item }
+          for (const [s, sd] of Object.entries(d.props ?? {})) {
+            if (sd.kind === 'link') next[s] = link(next[s])
+            else if (sd.translatable)
+              next[s] =
+                pick(
+                  next[s],
+                  at(at(o, `${k}.${s}`), i) ?? at(at(at(o, k), i), s) ?? at(at(o, k), `${i}.${s}`),
+                  fp,
+                ) ?? next[s]
+          }
+          return next
+        })
+    }
+    return { ...b, props } as SiteBlock
+  })
+}
+
+/** Review status of one entry: nothing yet = missing; the source changed = needs-update. */
+export type EntryStatus = 'ok' | 'needs-update' | 'missing'
+export const entryStatus = (e: LangEntry): EntryStatus =>
+  !e.text?.trim() ? 'missing' : e.stale ? 'needs-update' : 'ok'
+/** Languages besides English a plan includes (design section 0): 1 free, 3 on Pro. */
+export const langLimit = (pro?: boolean) => (pro ? 3 : 1)
+/** The source text of an entry, from the draft: `e.source` when the API sends it, else read from the page's block. */
+export function entrySource(data: SiteData, page: string, e: LangEntry & { source?: string }): string {
+  if (typeof e.source === 'string') return e.source
+  const blocks = page ? (data.pages?.find((p) => p.slug === page)?.content ?? []) : (data.content ?? [])
+  const b = [...blocks, ...(data.content ?? [])].find((x) => x.props?.id === e.block_id)
+  const [list, sub] = e.prop.split('.')
+  const v = sub
+    ? (b?.props?.[list] as Record<string, unknown>[] | undefined)?.[e.index ?? 0]?.[sub]
+    : b?.props?.[e.prop]
+  return typeof v === 'string' ? v : ''
+}
+/** Assumed command for the hidden-until-checked switch; the shape is the one in the hand-off notes. */
+export const setLangHidden = (ws: string, id: string, lang: string, hidden: boolean) =>
+  cmd<{ langs: SiteLangInfo[] }>(ws, 'site.lang_set_hidden', { id, lang, hidden })
+/** Server only: published posts of one language (public_posts with `lang`; English when omitted). */
+export async function publicPostsIn(host: string, page: number, lang: string): Promise<PublicPosts | null> {
+  if (lang === 'en') return publicPosts(host, page)
+  const j = (await sitesPostLang('public_posts', { host, page, lang })) as Partial<PublicPosts> | null
+  if (!j || !Array.isArray(j.posts) || j.posts.length === 0) return null
+  return {
+    posts: j.posts,
+    total: j.total ?? j.posts.length,
+    page: j.page ?? page,
+    per_page: j.per_page ?? BLOG_PER_PAGE,
+  }
+}
+async function sitesPostLang(path: string, body: Record<string, unknown>) {
+  const domain = process.env.SITES_DOMAIN
+  const host = String(body.host ?? '')
+  if (!domain || !DNS_HOST.test(host)) return null
+  const [dHost, dPort] = domain.toLowerCase().split(':')
+  const sent = host.endsWith(`.${dHost}`) ? `${host}${dPort ? `:${dPort}` : ''}` : host
+  const r = await fetch(`${process.env.API_URL ?? 'http://localhost:4000'}/api/sites/${path}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-sites-token': process.env.SITES_SERVER_TOKEN ?? '' },
+    body: JSON.stringify({ ...body, host: sent }),
+    cache: 'no-store',
+  }).catch(() => null)
+  return r?.ok ? ((await r.json().catch(() => null)) as unknown) : null
+}
+// ======== end Phase 3b languages web ========

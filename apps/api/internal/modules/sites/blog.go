@@ -340,6 +340,7 @@ type postOut struct {
 	UpdatedAt    time.Time       `json:"updated_at"`
 	HasPending   bool            `json:"has_pending"`
 	AI           bool            `json:"ai"`
+	Lang         string          `json:"lang"`
 }
 
 // postFields is what a save writes: the live fields of a draft, or the pending copy of a published post.
@@ -349,16 +350,17 @@ type postFields struct {
 	Description  string          `json:"description"`
 	CoverImageID *string         `json:"cover_image_id"`
 	Body         json.RawMessage `json:"body"`
+	Lang         string          `json:"-"` // the post's language; "" keeps it (a new post gets the site's main language)
 }
 
 const postCols = `id::text, site_id::text, workspace_id::text, slug, title, description, cover_image_id::text, og_image_id::text, body, pending,
-	status, published_at, rev, created_by::text, created_at, updated_at, ai`
+	status, published_at, rev, created_by::text, created_at, updated_at, ai, lang`
 
 func scanPost(r pgx.Row, withBody bool) (postOut, error) {
 	var p postOut
 	var body, pending []byte
 	err := r.Scan(&p.ID, &p.SiteID, &p.WorkspaceID, &p.Slug, &p.Title, &p.Description, &p.CoverImageID, &p.OGImageID, &body, &pending,
-		&p.Status, &p.PublishedAt, &p.Rev, &p.CreatedBy, &p.CreatedAt, &p.UpdatedAt, &p.AI)
+		&p.Status, &p.PublishedAt, &p.Rev, &p.CreatedBy, &p.CreatedAt, &p.UpdatedAt, &p.AI, &p.Lang)
 	if err != nil {
 		return p, err
 	}
@@ -501,6 +503,9 @@ func savePostDraft(c *command.Ctx, site siteOut, postID string, expectedRev *int
 	if err := checkPostFields(c, site.ID, &f); err != nil {
 		return postOut{}, err
 	}
+	if f.Lang, err = checkPostLang(c, site, cur, f.Lang); err != nil {
+		return postOut{}, err
+	}
 	if postID == "" {
 		_, all := postLimits(site.Pro)
 		var n int
@@ -515,9 +520,9 @@ func savePostDraft(c *command.Ctx, site siteOut, postID string, expectedRev *int
 				return postOut{}, err
 			}
 		}
-		p, err := scanPost(c.Tx.QueryRow(c.Context, `insert into sites.posts (workspace_id, site_id, slug, title, description, cover_image_id, body, created_by)
-			values ($1::uuid, $2::uuid, $3, $4, $5, $6::uuid, $7, $8::uuid) returning `+postCols,
-			c.WorkspaceID(), site.ID, f.Slug, f.Title, f.Description, f.CoverImageID, []byte(f.Body), user), true)
+		p, err := scanPost(c.Tx.QueryRow(c.Context, `insert into sites.posts (workspace_id, site_id, slug, title, description, cover_image_id, body, created_by, lang)
+			values ($1::uuid, $2::uuid, $3, $4, $5, $6::uuid, $7, $8::uuid, $9) returning `+postCols,
+			c.WorkspaceID(), site.ID, f.Slug, f.Title, f.Description, f.CoverImageID, []byte(f.Body), user, f.Lang), true)
 		if isUniqueViolation(err) {
 			return postOut{}, command.ErrConflict("Another post already uses that address.")
 		}
@@ -529,9 +534,9 @@ func savePostDraft(c *command.Ctx, site siteOut, postID string, expectedRev *int
 		row = c.Tx.QueryRow(c.Context, `update sites.posts set pending = $4, rev = rev + 1, updated_at = now()
 			where workspace_id = $1::uuid and site_id = $2::uuid and id = $3::uuid and rev = $5 returning `+postCols, c.WorkspaceID(), site.ID, postID, pend, *expectedRev)
 	} else {
-		row = c.Tx.QueryRow(c.Context, `update sites.posts set slug = $4, title = $5, description = $6, cover_image_id = $7::uuid, body = $8, pending = null, rev = rev + 1, updated_at = now()
+		row = c.Tx.QueryRow(c.Context, `update sites.posts set slug = $4, title = $5, description = $6, cover_image_id = $7::uuid, body = $8, pending = null, lang = $10, rev = rev + 1, updated_at = now()
 			where workspace_id = $1::uuid and site_id = $2::uuid and id = $3::uuid and rev = $9 returning `+postCols,
-			c.WorkspaceID(), site.ID, postID, f.Slug, f.Title, f.Description, f.CoverImageID, []byte(f.Body), *expectedRev)
+			c.WorkspaceID(), site.ID, postID, f.Slug, f.Title, f.Description, f.CoverImageID, []byte(f.Body), *expectedRev, f.Lang)
 	}
 	p, err := scanPost(row, true)
 	if isUniqueViolation(err) {
@@ -563,7 +568,7 @@ func BlogCommands() []command.Command {
 		mk("site.post_get", R, command.Member, false, "One post with its body. A published post with changes waiting shows those changes and has_pending set.",
 			obj([]string{"id", "post_id"}, props{"id": id, "post_id": post}), postGet),
 		mk("site.post_save", W, command.Member, false, "Create a post, or save one. A draft is updated in place; a published post's change waits as a pending copy until it is published again.",
-			obj([]string{"id", "title", "body"}, props{"id": id, "post_id": post, "expected_rev": rev, "title": str("1 to 120 characters"), "slug": str("a-z, 0-9, hyphens"), "description": str("up to 160 characters"), "cover_image_id": str("a photo of this website"), "body": body}), postSave),
+			obj([]string{"id", "title", "body"}, props{"id": id, "post_id": post, "expected_rev": rev, "title": str("1 to 120 characters"), "slug": str("a-z, 0-9, hyphens"), "description": str("up to 160 characters"), "cover_image_id": str("a photo of this website"), "body": body, "lang": str("the post's language, one of the site's languages; default the main language")}), postSave),
 		mk("site.post_publish", W, command.Admin, true, "Publish a post, put it live with its pending changes, or move it back to drafts.",
 			obj([]string{"id", "post_id", "expected_rev", "publish"}, props{"id": id, "post_id": post, "expected_rev": rev, "publish": props{"type": "boolean"}, "published_at": str("RFC 3339; now or in the past")}), postPublish),
 		mk("site.post_delete", W, command.Admin, false, "Delete a post. A published post leaves the website at once.",
@@ -631,6 +636,7 @@ func postSave(c *command.Ctx, raw json.RawMessage) (any, error) {
 		ExpectedRev                  *int            `json:"expected_rev"`
 		CoverImageID                 *string         `json:"cover_image_id"`
 		Body                         json.RawMessage `json:"body"`
+		Lang                         string          `json:"lang"`
 	}
 	if err := decode(raw, &in); err != nil {
 		return nil, err
@@ -639,7 +645,7 @@ func postSave(c *command.Ctx, raw json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	return savePostDraft(c, site, in.PostID, in.ExpectedRev, postFields{Slug: in.Slug, Title: in.Title, Description: in.Description, CoverImageID: in.CoverImageID, Body: in.Body})
+	return savePostDraft(c, site, in.PostID, in.ExpectedRev, postFields{Slug: in.Slug, Title: in.Title, Description: in.Description, CoverImageID: in.CoverImageID, Body: in.Body, Lang: in.Lang})
 }
 
 func postPublish(c *command.Ctx, raw json.RawMessage) (any, error) {

@@ -12,6 +12,7 @@ import {
 import type catalog from './catalog.json'
 import { CatalogueView } from './catalogue-sheet'
 import { EmbedFrame } from './embed'
+import { t } from './strings'
 
 /**
  * Block context (design section 8): every block gets `assetBase` (an image renders as `${assetBase}/${id}`),
@@ -19,9 +20,17 @@ import { EmbedFrame } from './embed'
  * ContactForm, `form` (the published page's live form; the preview keeps the inert one).
  * Props are typed loosely on purpose: the catalog is the source of truth and is validated in Go before render.
  */
-type Ctx = { assetBase?: string; editing?: boolean; form?: ReactNode; blocked?: ReadonlySet<string> }
+type Ctx = {
+  assetBase?: string
+  editing?: boolean
+  form?: ReactNode
+  blocked?: ReadonlySet<string>
+  /** The page's language for the block's own visitor text (strings.json); English when absent. */
+  lang?: string
+}
 type P = Record<string, unknown> & Ctx
 type Obj = Record<string, unknown>
+const langOf = (p: P) => (typeof p.lang === 'string' ? p.lang : 'en')
 
 export type BlockType = keyof typeof catalog.blocks
 const ALL = [
@@ -150,7 +159,7 @@ function Header(p: P) {
       </p>
       <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
         {links.length > 0 && (
-          <nav aria-label="Site">
+          <nav aria-label={t(langOf(p), 'nav_site')}>
             <ul className="flex flex-wrap gap-x-5 gap-y-1 text-[15px]">
               {links.map((l, i) => (
                 // biome-ignore lint/suspicious/noArrayIndexKey: list items have no ids
@@ -433,18 +442,18 @@ function MapHours(p: P) {
         <div className={`grid gap-8 ${str(p.variant) === 'stacked' ? '' : 'md:grid-cols-2'}`}>
           {address && (
             <div>
-              <h3 className="mb-2 text-lg font-semibold">Find us</h3>
+              <h3 className="mb-2 text-lg font-semibold">{t(langOf(p), 'find_us')}</h3>
               <p className="mb-4 whitespace-pre-line text-[var(--site-muted)]">{address}</p>
               {maps && (
                 <a href={maps} rel="noopener noreferrer" className={ghostCls}>
-                  Get directions
+                  {t(langOf(p), 'get_directions')}
                 </a>
               )}
             </div>
           )}
           {hours.length > 0 && (
             <div>
-              <h3 className="mb-2 text-lg font-semibold">Opening hours</h3>
+              <h3 className="mb-2 text-lg font-semibold">{t(langOf(p), 'opening_hours')}</h3>
               <table className="w-full max-w-sm text-[15px]">
                 <tbody>
                   {hours.map((h, i) => (
@@ -467,14 +476,17 @@ function MapHours(p: P) {
 }
 
 function WhatsAppButton(p: P) {
-  const href = safeHref(waHref(p.phone, str(p.message) || 'Hi, I found you on your website'), p.blocked)
+  const href = safeHref(
+    waHref(p.phone, str(p.message) || t(langOf(p), 'whatsapp_default_message')),
+    p.blocked,
+  )
   if (!href)
     return p.editing ? (
       <div className="px-5 py-4 md:px-8">
         <Empty label="Add your WhatsApp number to show the chat button" />
       </div>
     ) : null
-  const label = str(p.label) || 'Chat on WhatsApp'
+  const label = str(p.label) || t(langOf(p), 'chat_on_whatsapp')
   return (
     <a
       href={href}
@@ -573,7 +585,7 @@ function ContactForm(p: P) {
             {wa && (
               <li>
                 <a href={wa} rel="noopener noreferrer" className={linkCls}>
-                  Chat on WhatsApp
+                  {t(langOf(p), 'chat_on_whatsapp')}
                 </a>
               </li>
             )}
@@ -581,7 +593,7 @@ function ContactForm(p: P) {
         )}
       </div>
       <div className={`${card} p-5 md:p-6`}>
-        {p.form ?? <InertForm label={str(p.submit_label) || 'Send enquiry'} />}
+        {p.form ?? <InertForm label={str(p.submit_label) || t(langOf(p), 'form_submit')} />}
       </div>
     </section>
   )
@@ -619,7 +631,20 @@ function Footer(p: P) {
 }
 
 /** The plan badge and the abuse link. Not in the document, so chat cannot remove them. */
-export function SiteBadge({ pro, home, report }: { pro: boolean; home: string; report?: string }) {
+export function SiteBadge({
+  pro,
+  home,
+  report,
+  reportSlot,
+  lang = 'en',
+}: {
+  pro: boolean
+  home: string
+  report?: string
+  /** Replaces the plain report link (the interactive dialog). */
+  reportSlot?: ReactNode
+  lang?: string
+}) {
   return (
     <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1 border-t border-[var(--site-border)] px-5 py-4 pb-20 text-[12px] text-[var(--site-muted)]">
       {!pro && (
@@ -628,12 +653,13 @@ export function SiteBadge({ pro, home, report }: { pro: boolean; home: string; r
           rel="noopener noreferrer"
           className="rounded-full border border-[var(--site-border)] px-2.5 py-1"
         >
-          Made with C Note
+          {t(lang, 'made_with')}
         </a>
       )}
-      {report && (
+      {reportSlot}
+      {!reportSlot && report && (
         <a href={report} rel="noopener noreferrer" className="underline-offset-4 hover:underline">
-          Report this site
+          {t(lang, 'report_site')}
         </a>
       )}
     </div>
@@ -673,7 +699,13 @@ export function Embed(p: P) {
   return (
     <section className={sec}>
       {str(p.title) && <h2 className={`${h2} mb-6`}>{str(p.title)}</h2>}
-      <EmbedFrame provider={provider} href={href.page} src={href.frame} title={str(p.title)} />
+      <EmbedFrame
+        provider={provider}
+        href={href.page}
+        src={href.frame}
+        title={str(p.title)}
+        lang={langOf(p)}
+      />
     </section>
   )
 }
@@ -704,6 +736,7 @@ export function Catalogue(p: P) {
         enquire={str(p.enquire)}
         assetBase={p.assetBase}
         blocked={p.blocked}
+        lang={langOf(p)}
         phone={str(p.phone) || undefined}
         askPath={str(p.askPath) || undefined}
         formId={str(p.formId) || undefined}

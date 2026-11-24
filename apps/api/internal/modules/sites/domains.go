@@ -105,6 +105,7 @@ type dnsResult struct {
 	txt, routing         []string
 	txtOK, routeOK       bool
 	txtKnown, routeKnown bool
+	cfVerdict            int // provider mode: cfOK, cfPending, cfFailure or cfLost for this hostname (cloudflare.go)
 }
 
 func definite(err error) bool {
@@ -145,7 +146,7 @@ func lookup(ctx context.Context, r Resolver, cl claim, sub string) dnsResult {
 		cname = strings.ToLower(strings.TrimSuffix(cname, "."))
 		if cname != "" && cname != cl.Hostname {
 			res.routing = []string{cname}
-			res.routeOK = cname == sub+"."+SitesDomain()
+			res.routeOK = cname == routeTarget(sub)
 		}
 	}
 	return res
@@ -163,7 +164,7 @@ func containsAddr(l []netip.Addr, a netip.Addr) bool {
 // view is what the commands return for one hostname: the claim and the exact records to show.
 func view(cl claim, sub string, res dnsResult) props {
 	txt := props{"type": "TXT", "name": txtPrefix + cl.Hostname, "value": txtValue + cl.Token, "found": nonNil(res.txt), "ok": res.txtOK}
-	route := props{"type": "CNAME", "name": cl.Hostname, "value": sub + "." + SitesDomain(), "found": nonNil(res.routing), "ok": res.routeOK}
+	route := props{"type": "CNAME", "name": cl.Hostname, "value": routeTarget(sub), "found": nonNil(res.routing), "ok": res.routeOK}
 	if isApex(cl.Hostname) {
 		ips := []string{}
 		for _, a := range apexIPs() {
@@ -256,7 +257,11 @@ func domainSet(c *command.Ctx, raw json.RawMessage) (any, error) {
 			return nil, command.ErrInvalid("That is not a domain you can connect. Use something like www.yourbusiness.in.")
 		}
 	}
-	if isApex(host) && len(apexIPs()) == 0 {
+	if CloudflareOn() { // provider mode: subdomains only, within the provider's budgets
+		if err := cfAllowSet(c, host); err != nil {
+			return nil, err
+		}
+	} else if isApex(host) && len(apexIPs()) == 0 {
 		return nil, command.ErrInvalid("Connect the www address instead; the address without www is not available.")
 	}
 	b := make([]byte, 16)
@@ -329,6 +334,11 @@ func domainCheck(c *command.Ctx, raw json.RawMessage) (any, error) {
 		}()
 	}
 	wg.Wait()
+	if CloudflareOn() { // the provider, not DNS, says whether a verified hostname is routed
+		for i := range claims {
+			cfOverlay(c.Context, c.Tx, claims[i], &results[i])
+		}
+	}
 	views := make([]props, len(claims))
 	for i := range claims {
 		cl, res := &claims[i], results[i]
@@ -346,13 +356,13 @@ func domainCheck(c *command.Ctx, raw json.RawMessage) (any, error) {
 		if res.routeKnown {
 			cl.Routing = res.routeOK
 		}
-		failed := res.txtKnown && !res.txtOK && cl.Status == "verified"
-		if res.txtKnown && cl.Status == "verified" {
-			if res.txtOK {
+		failed := (res.txtKnown && !res.txtOK || res.cfVerdict == cfFailure || res.cfVerdict == cfLost) && cl.Status == "verified"
+		if (res.txtKnown || failed) && cl.Status == "verified" {
+			if !failed {
 				cl.Failures = 0
 			} else {
 				cl.Failures++
-				if cl.Failures >= failuresToLose {
+				if res.cfVerdict == cfLost || cl.Failures >= failuresToLose {
 					cl.Status = "lost"
 					cl.Routing = false
 				}
@@ -492,6 +502,9 @@ func sweepOne(ctx context.Context, pool *pgxpool.Pool, ws, id string) error {
 		return err
 	}
 	res := lookup(ctx, dns(), cl, *sub)
+	if CloudflareOn() {
+		res.routeKnown = false // routing comes from the provider (CloudflareSweep)
+	}
 	if !res.txtKnown && !res.routeKnown {
 		return nil
 	}

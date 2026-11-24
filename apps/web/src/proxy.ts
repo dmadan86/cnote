@@ -1,6 +1,6 @@
 import { type NextRequest, NextResponse } from 'next/server'
 import catalog from '@/components/sites/catalog.json'
-import { blogRewrite, route } from '@/lib/sites'
+import { blogRewrite, route, splitLang } from '@/lib/sites'
 
 // Host routing for published sites (design 17.2). SITES_DOMAIN is read per request, never frozen at build.
 // Never read X-Forwarded-Host: only the Host the server itself received counts.
@@ -40,16 +40,36 @@ export function proxy(req: NextRequest) {
   const domain = process.env.SITES_DOMAIN
   // The blog's paths (design 17.4) are decided here: route() gets Home's path, so every host, port and RSC rule
   // still applies, and the rewrite is then pointed at the blog path.
-  const blog = req.method === 'GET' || req.method === 'HEAD' ? blogRewrite(req.nextUrl.pathname) : null
-  let r = route(
-    req.headers.get('host'),
-    blog ? '/' : req.nextUrl.pathname,
-    req.method,
-    domain,
-    req.headers.has('rsc') || req.nextUrl.searchParams.has('_rsc'),
-    process.env.SITES_CUSTOM_DOMAINS === '1' ? { appHosts: appHosts() } : undefined,
-  )
+  // With SITES_LANGUAGES=1 a language prefix (/hi/about) is peeled off first (design 18.6) and put back as the `l-/<lang>`
+  // segment of the rewrite; `l-` is not a valid slug, so no page can shadow it. Off, /hi is an ordinary page slug.
+  const { lang, rest } =
+    process.env.SITES_LANGUAGES === '1'
+      ? splitLang(req.nextUrl.pathname)
+      : { lang: 'en', rest: req.nextUrl.pathname }
+  const read = req.method === 'GET' || req.method === 'HEAD'
+  const blog = read ? blogRewrite(rest) : null
+  const check = (path: string) =>
+    route(
+      req.headers.get('host'),
+      path,
+      req.method,
+      domain,
+      req.headers.has('rsc') || req.nextUrl.searchParams.has('_rsc'),
+      process.env.SITES_CUSTOM_DOMAINS === '1' ? { appHosts: appHosts() } : undefined,
+    )
+  let r = check(blog ? '/' : rest)
   if (blog && r.kind === 'site' && r.rewrite) r = { ...r, rewrite: `/published/${r.host}${blog}` }
+  if (lang !== 'en') {
+    // Not a site host: the app's own path, untouched. On a site host only pages and the blog exist per language.
+    if (r.kind === 'next') r = check(req.nextUrl.pathname)
+    else if (r.kind === 'site') {
+      const to =
+        r.rewrite && !/\/(robots\.txt|sitemap\.xml|blog\/rss\.xml)$/.test(r.rewrite) ? r.rewrite : null
+      r = to
+        ? { ...r, rewrite: to.replace(`/published/${r.host}`, `/published/${r.host}/l-/${lang}`) }
+        : { kind: 'notfound' }
+    }
+  }
   if (r.kind === 'next') return NextResponse.next()
   const https = !/^localhost(:|$)/i.test(domain ?? '')
   const sec = headersFor(https, r.kind === 'site' && r.custom)

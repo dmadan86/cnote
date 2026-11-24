@@ -1,0 +1,494 @@
+{
+  "version": "1",
+  "threshold": 50,
+  "note_d10": "No automatic takedown (design 18.14). A Web Risk match hides the matching outbound link at render time and puts the site at the top of the review queue. Only a person takes a site down.",
+  "rules": [
+    {
+      "id": "R1",
+      "name": "Credential words",
+      "base_points": 15,
+      "elevated_points": 40,
+      "elevated_when": "page_has_form_or_embed_or_external_link",
+      "patterns": [
+        {
+          "lang": "en",
+          "terms": [
+            "login",
+            "log in",
+            "password",
+            "otp",
+            "one-time password",
+            "one time password",
+            "pin",
+            "cvv",
+            "card number",
+            "credit card number",
+            "debit card number",
+            "net banking",
+            "netbanking",
+            "internet banking",
+            "kyc",
+            "know your customer",
+            "verify your account",
+            "account verification",
+            "bank account number",
+            "ifsc code",
+            "aadhaar number",
+            "pan number",
+            "pan card",
+            "upi pin",
+            "mpin"
+          ]
+        },
+        {
+          "lang": "hi",
+          "terms": [
+            "लॉगिन",
+            "लॉग इन",
+            "पासवर्ड",
+            "ओटीपी",
+            "पिन",
+            "सीवीवी",
+            "कार्ड नंबर",
+            "नेट बैंकिंग",
+            "केवाईसी",
+            "खाता सत्यापन",
+            "बैंक खाता नंबर",
+            "आधार नंबर",
+            "पैन कार्ड",
+            "यूपीआई पिन"
+          ]
+        },
+        {
+          "lang": "hi_transliteration",
+          "terms": [
+            "login karein",
+            "password dalein",
+            "otp daalein",
+            "bank khata number",
+            "kyc karein",
+            "khata satyapan",
+            "net banking",
+            "upi pin dalein",
+            "aadhar number",
+            "pan card number"
+          ]
+        },
+        {
+          "lang": "ta",
+          "terms": [
+            "உள்நுழைய",
+            "கடவுச்சொல்",
+            "ஓடிபி",
+            "பிஐஎன்",
+            "வங்கி கணக்கு எண்",
+            "கேஒய்சி",
+            "கணக்கு சரிபார்ப்பு",
+            "நெட் பேங்கிங்",
+            "ஆதார் எண்"
+          ]
+        },
+        {
+          "lang": "te",
+          "terms": ["లాగిన్", "పాస్‌వర్డ్", "ఓటీపీ", "పిన్", "బ్యాంక్ ఖాతా నంబర్", "కేవైసీ", "ఖాతా ధృవీకరణ", "నెట్ బ్యాంకింగ్", "ఆధార్ నంబర్"]
+        },
+        {
+          "lang": "kn",
+          "terms": [
+            "ಲಾಗಿನ್",
+            "ಪಾಸ್‌ವರ್ಡ್",
+            "ಒಟಿಪಿ",
+            "ಪಿನ್",
+            "ಬ್ಯಾಂಕ್ ಖಾತೆ ಸಂಖ್ಯೆ",
+            "ಕೆವೈಸಿ",
+            "ಖಾತೆ ಪರಿಶೀಲನೆ",
+            "ನೆಟ್ ಬ್ಯಾಂಕಿಂಗ್",
+            "ಆಧಾರ್ ಸಂಖ್ಯೆ"
+          ]
+        },
+        {
+          "lang": "mr",
+          "terms": [
+            "लॉगिन",
+            "पासवर्ड",
+            "ओटीपी",
+            "पिन",
+            "बँक खाते क्रमांक",
+            "केवायसी",
+            "खाते सत्यापन",
+            "नेट बँकिंग",
+            "आधार क्रमांक"
+          ]
+        },
+        {
+          "lang": "bn",
+          "terms": [
+            "লগইন",
+            "পাসওয়ার্ড",
+            "ওটিপি",
+            "পিন",
+            "ব্যাংক অ্যাকাউন্ট নম্বর",
+            "কেওয়াইসি",
+            "অ্যাকাউন্ট যাচাই",
+            "নেট ব্যাংকিং",
+            "আধার নম্বর"
+          ]
+        },
+        {
+          "lang": "gu",
+          "terms": [
+            "લૉગઇન",
+            "પાસવર્ડ",
+            "ઓટીપી",
+            "પિન",
+            "બૅંક ખાતા નંબર",
+            "કેવાયસી",
+            "ખાતું ચકાસણી",
+            "નેટ બૅન્કિંગ",
+            "આધાર નંબર"
+          ]
+        },
+        {
+          "lang": "ml",
+          "terms": [
+            "ലോഗിൻ",
+            "പാസ്‌വേഡ്",
+            "ഒടിപി",
+            "പിൻ",
+            "ബാങ്ക് അക്കൗണ്ട് നമ്പർ",
+            "കെവൈസി",
+            "അക്കൗണ്ട് സ്ഥിരീകരണം",
+            "നെറ്റ് ബാങ്കിംഗ്",
+            "ആധാർ നമ്പർ"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "R2",
+      "name": "Brand impersonation",
+      "base_points": 30,
+      "elevated_points": 40,
+      "elevated_when": "brand_in_link_host_not_own_domain",
+      "brands": [
+        {
+          "token": "google",
+          "own_domains": [
+            "google.com",
+            "google.co.in",
+            "googleapis.com",
+            "pay.google.com",
+            "accounts.google.com"
+          ]
+        },
+        {
+          "token": "facebook",
+          "own_domains": ["facebook.com", "fb.com", "messenger.com"]
+        },
+        {
+          "token": "instagram",
+          "own_domains": ["instagram.com"]
+        },
+        {
+          "token": "whatsapp",
+          "own_domains": ["whatsapp.com", "wa.me"]
+        },
+        {
+          "token": "amazon",
+          "own_domains": ["amazon.com", "amazon.in", "amzn.in", "amzn.to"]
+        },
+        {
+          "token": "flipkart",
+          "own_domains": ["flipkart.com"]
+        },
+        {
+          "token": "paytm",
+          "own_domains": ["paytm.com", "paytmbank.com"]
+        },
+        {
+          "token": "phonepe",
+          "own_domains": ["phonepe.com"]
+        },
+        {
+          "token": "gpay",
+          "own_domains": ["pay.google.com", "gpay.app"]
+        },
+        {
+          "token": "upi",
+          "own_domains": ["npci.org.in", "bhimupi.org.in"]
+        },
+        {
+          "token": "npci",
+          "own_domains": ["npci.org.in"]
+        },
+        {
+          "token": "sbi",
+          "own_domains": ["sbi.co.in", "onlinesbi.sbi"]
+        },
+        {
+          "token": "hdfc",
+          "own_domains": ["hdfcbank.com", "hdfc.com"]
+        },
+        {
+          "token": "icici",
+          "own_domains": ["icicibank.com"]
+        },
+        {
+          "token": "axis",
+          "own_domains": ["axisbank.com"]
+        },
+        {
+          "token": "rbi",
+          "own_domains": ["rbi.org.in"]
+        },
+        {
+          "token": "irctc",
+          "own_domains": ["irctc.co.in"]
+        },
+        {
+          "token": "aadhaar",
+          "own_domains": ["uidai.gov.in"]
+        },
+        {
+          "token": "uidai",
+          "own_domains": ["uidai.gov.in"]
+        },
+        {
+          "token": "incometax",
+          "own_domains": ["incometaxindia.gov.in", "incometax.gov.in"]
+        },
+        {
+          "token": "microsoft",
+          "own_domains": ["microsoft.com", "live.com", "outlook.com", "office.com"]
+        },
+        {
+          "token": "apple",
+          "own_domains": ["apple.com", "icloud.com"]
+        },
+        {
+          "token": "netflix",
+          "own_domains": ["netflix.com"]
+        }
+      ]
+    },
+    {
+      "id": "R3",
+      "name": "Link shorteners",
+      "points_each": 25,
+      "max_points": 50,
+      "shortener_hosts": [
+        "bit.ly",
+        "tinyurl.com",
+        "t.co",
+        "cutt.ly",
+        "rb.gy",
+        "is.gd",
+        "ow.ly",
+        "buff.ly",
+        "goo.gl",
+        "short.io",
+        "tiny.cc",
+        "x.gd",
+        "lnkd.in",
+        "adf.ly",
+        "shorte.st",
+        "shrtco.de",
+        "v.gd",
+        "clck.ru",
+        "qr.ae",
+        "shorturl.at",
+        "bl.ink",
+        "bom.so",
+        "smarturl.it",
+        "po.st",
+        "dlvr.it",
+        "ift.tt",
+        "zpr.io",
+        "git.io",
+        "tiny.one",
+        "clickme.to"
+      ]
+    },
+    {
+      "id": "R4",
+      "name": "External domain count + high-risk TLDs",
+      "excess_domains_threshold": 10,
+      "excess_domains_points": 15,
+      "per_high_risk_tld_points": 10,
+      "high_risk_tlds": [
+        ".tk",
+        ".ml",
+        ".ga",
+        ".cf",
+        ".gq",
+        ".top",
+        ".xyz",
+        ".win",
+        ".loan",
+        ".click",
+        ".work",
+        ".link",
+        ".party",
+        ".bid",
+        ".racing",
+        ".date",
+        ".review",
+        ".faith",
+        ".science",
+        ".stream",
+        ".download",
+        ".accountant",
+        ".trade",
+        ".cricket",
+        ".webcam",
+        ".christmas",
+        ".kim",
+        ".country",
+        ".nagoya",
+        ".rocks",
+        ".uno",
+        ".pw",
+        ".adult",
+        ".porn",
+        ".sex",
+        ".cam",
+        ".tube"
+      ],
+      "max_tld_points": 60
+    },
+    {
+      "id": "R5",
+      "name": "Crypto/investment wording",
+      "points": 25,
+      "patterns": [
+        {
+          "lang": "en",
+          "terms": [
+            "guaranteed returns",
+            "guaranteed profit",
+            "double your money",
+            "double your investment",
+            "10x returns",
+            "100% returns",
+            "usdt",
+            "forex signals",
+            "daily profit",
+            "weekly profit",
+            "crypto investment",
+            "bitcoin investment",
+            "ethereum investment",
+            "mlm",
+            "multi level marketing",
+            "multi-level marketing",
+            "ponzi",
+            "pyramid scheme",
+            "risk free returns",
+            "passive income guaranteed",
+            "referral bonus",
+            "join our network",
+            "downline"
+          ]
+        },
+        {
+          "lang": "hi",
+          "terms": [
+            "गारंटीड रिटर्न",
+            "गारंटीड मुनाफा",
+            "पैसा दोगुना",
+            "रोज़ कमाएं",
+            "बिटकॉइन निवेश",
+            "क्रिप्टो निवेश",
+            "फॉरेक्स सिग्नल",
+            "नेटवर्क मार्केटिंग",
+            "डेली प्रॉफिट"
+          ]
+        },
+        {
+          "lang": "hi_transliteration",
+          "terms": [
+            "guaranteed return",
+            "paisa doguna",
+            "roz kamayen",
+            "bitcoin nivesh",
+            "crypto nivesh",
+            "forex signal",
+            "network marketing",
+            "daily profit"
+          ]
+        },
+        {
+          "lang": "ta",
+          "terms": [
+            "உத்தரவாதமான வருமானம்",
+            "பணம் இரட்டிப்பாகும்",
+            "கிரிப்டோ முதலீடு",
+            "பிட்காயின் முதலீடு",
+            "பாரம்பரிய சந்தைப்படுத்தல்"
+          ]
+        },
+        {
+          "lang": "te",
+          "terms": ["హామీ రాబడి", "డబ్బు రెట్టింపు", "క్రిప్టో పెట్టుబడి", "బిట్‌కాయిన్ పెట్టుబడి", "నెట్‌వర్క్ మార్కెటింగ్"]
+        },
+        {
+          "lang": "kn",
+          "terms": ["ಖಾತರಿ ಆದಾಯ", "ಹಣ ದ್ವಿಗುಣ", "ಕ್ರಿಪ್ಟೋ ಹೂಡಿಕೆ", "ಬಿಟ್‌ಕಾಯಿನ್ ಹೂಡಿಕೆ", "ನೆಟ್‌ವರ್ಕ್ ಮಾರ್ಕೆಟಿಂಗ್"]
+        },
+        {
+          "lang": "mr",
+          "terms": ["हमी परतावा", "पैसे दुप्पट", "क्रिप्टो गुंतवणूक", "बिटकॉइन गुंतवणूक", "नेटवर्क मार्केटिंग"]
+        },
+        {
+          "lang": "bn",
+          "terms": ["নিশ্চিত রিটার্ন", "টাকা দ্বিগুণ", "ক্রিপ্টো বিনিয়োগ", "বিটকয়েন বিনিয়োগ", "নেটওয়ার্ক মার্কেটিং"]
+        },
+        {
+          "lang": "gu",
+          "terms": ["ગેરંટીડ રિટર્ન", "પૈસા બમણા", "ક્રિપ્ટો રોકાણ", "બિટકોઈન રોકાણ", "નેટવર્ક માર્કેટિંગ"]
+        },
+        {
+          "lang": "ml",
+          "terms": [
+            "ഉറപ്പ് വരുമാനം",
+            "പണം ഇരട്ടിക്കും",
+            "ക്രിപ്റ്റോ നിക്ഷേപം",
+            "ബിറ്റ്‌കോയിൻ നിക്ഷേപം",
+            "നെറ്റ്‌വർക്ക് മാർക്കറ്റിംഗ്"
+          ]
+        }
+      ],
+      "max_points": 75,
+      "description": "Points for each block (or post, or catalogue entry) that has investment or crypto wording, up to the maximum."
+    },
+    {
+      "id": "R6",
+      "name": "Name mismatch + new workspace",
+      "name_mismatch_points": 15,
+      "new_workspace_bonus": 10,
+      "new_workspace_threshold_days": 7,
+      "description": "The site's name shares no word with the business name, and the workspace is under 7 days old. Both points apply only when the workspace is new."
+    },
+    {
+      "id": "R7",
+      "name": "Punycode or IP link host",
+      "points": 30,
+      "description": "A link host with a punycode (xn--) label or an IP address. Another 20 points when the workspace is under 7 days old.",
+      "detection": "punycode: host label contains 'xn--'; IPv4: matches /^\\d{1,3}(\\.\\d{1,3}){3}$/; IPv6: host wrapped in [ ]",
+      "new_workspace_points": 20
+    },
+    {
+      "id": "R8",
+      "name": "Visitor reports",
+      "points_each": 10,
+      "max_points": 20,
+      "window_days": 30,
+      "description": "Visitor reports from distinct addresses in the window. Capped at 20 points (design 18.13); reports are shown apart from verified evidence."
+    },
+    {
+      "id": "R9",
+      "name": "Web Risk match",
+      "points": 100,
+      "description": "A link matched Google Web Risk (malware, social engineering, unwanted software). The link is hidden at render time; the site goes to the top of the review queue. No automatic takedown."
+    }
+  ]
+}

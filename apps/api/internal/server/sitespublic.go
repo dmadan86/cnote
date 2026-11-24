@@ -175,6 +175,7 @@ func (s *Server) siteForm(w http.ResponseWriter, r *http.Request, siteID string)
 		ConsentText string `json:"consent_text"` // ignored: the server states the consent (17.8)
 		ConsentID   string `json:"consent_id"`
 		ItemID      string `json:"item_id"`
+		Lang        string `json:"lang"`
 		Honeypot    string `json:"company_website"`
 	}
 	pub, lerr := sites.LookupID(r.Context(), s.Pool, siteID)
@@ -195,7 +196,10 @@ func (s *Server) siteForm(w http.ResponseWriter, r *http.Request, siteID string)
 		s.siteFail(w, command.ErrInvalid("the message is too long"))
 		return
 	}
-	consent, _, okConsent := sites.ConsentFor(in.ConsentID, pub.Name)
+	if len(in.Lang) > 8 {
+		in.Lang = ""
+	}
+	consent, version, okConsent := sites.ConsentForLang(in.ConsentID, in.Lang, pub.Name)
 	if !okConsent {
 		s.siteFail(w, command.ErrInvalid("unknown consent text"))
 		return
@@ -205,7 +209,7 @@ func (s *Server) siteForm(w http.ResponseWriter, r *http.Request, siteID string)
 		err = sites.FormAllowed(r.Context(), s.Pool, siteID, sites.ClientIP(r, sites.TrustedProxies()))
 	}
 	if err == nil {
-		err = sites.Submit(r.Context(), s.Pool, s.Registry, pub, sites.Submission{Name: q.Name, Phone: in.Phone, Email: q.Email, Message: q.Message, ConsentText: consent, ItemID: in.ItemID})
+		err = sites.Submit(r.Context(), s.Pool, s.Registry, pub, sites.Submission{Name: q.Name, Phone: in.Phone, Email: q.Email, Message: q.Message, ConsentText: consent, ConsentVersion: version, ItemID: in.ItemID, Lang: in.Lang})
 	}
 	if err != nil {
 		s.siteFail(w, err)

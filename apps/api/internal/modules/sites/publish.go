@@ -121,6 +121,9 @@ func getExtras(c *command.Ctx, site siteOut, out props) error {
 		return command.DB(err)
 	}
 	out["leads_7d"] = n
+	if err := abuseExtras(c, site, out); err != nil {
+		return err
+	}
 	return domainsExtras(c, site, out)
 }
 
@@ -496,8 +499,9 @@ func publicGet(c *command.Ctx, raw json.RawMessage) (any, error) {
 
 // PublicJSON is the answer to the web server's read of a published site.
 func PublicJSON(p Public) props {
-	return props{"site_id": p.SiteID, "version_id": p.VersionID, "name": p.Name, "data": p.Data, "pro": p.Pro, "published_at": p.PublishedAt,
-		"url": p.URL, "form_paused": p.FormPaused, "canonical_host": p.CanonicalHost, "catalog": catalogPublic(p.Catalog), "page_og_images": rawOr(p.OGImages, "{}")}
+	return props{"site_id": p.SiteID, "version_id": p.VersionID, "name": p.Name, "data": PublicDoc(p.Data), "languages": PublicLanguages(p.Data), "langs": publicExtraLangs(p.Data), "pro": p.Pro, "published_at": p.PublishedAt,
+		"url": p.URL, "form_paused": p.FormPaused, "canonical_host": p.CanonicalHost, "catalog": catalogPublic(p.Catalog), "page_og_images": rawOr(p.OGImages, "{}"),
+		"blocked_links": blockedOr(p.Blocked)}
 }
 
 func rawOr(b json.RawMessage, def string) json.RawMessage {

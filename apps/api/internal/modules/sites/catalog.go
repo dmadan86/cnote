@@ -25,8 +25,12 @@ type field struct {
 	Values   []string         `json:"values"`
 	Props    map[string]field `json:"props"`
 	Verbatim bool             `json:"verbatim"` // the model may only copy it from the user's message
+	// Translatable marks the text props a translation overlay may hold (design 18.3).
+	Translatable bool   `json:"translatable"`
+	Label        string `json:"label"`
 }
 type blockDef struct {
+	Label  string           `json:"label"`
 	Max    int              `json:"max"`
 	Shared bool             `json:"shared"` // lives on Home, drawn on every page
 	Props  map[string]field `json:"props"`
@@ -207,10 +211,12 @@ type docPage struct {
 	Title       string     `json:"title"`
 	Description *string    `json:"description"`
 	Content     []docBlock `json:"content"`
+	I18n        overlays   `json:"i18n"`
 }
 type document struct {
 	Root struct {
 		Props map[string]any `json:"props"`
+		I18n  overlays       `json:"i18n"`
 	} `json:"root"`
 	Content []docBlock `json:"content"`
 	Pages   []docPage  `json:"pages"`
@@ -244,7 +250,7 @@ func Validate(data json.RawMessage) error {
 		slugs[p.Slug] = true
 	}
 	for k := range d.Root.Props {
-		if k != "title" && k != "description" && k != "theme" {
+		if k != "title" && k != "description" && k != "theme" && k != "langs" && k != "langs_hidden" {
 			return fmt.Errorf("root: unknown property %s", k)
 		}
 	}
@@ -282,6 +288,18 @@ func Validate(data json.RawMessage) error {
 	ids := map[string]bool{}
 	if err := validateBlocks(d.Content, true, slugs, ids); err != nil {
 		return err
+	}
+	langs, err := validateLangs(d.Root.Props)
+	if err != nil {
+		return err
+	}
+	if err := validateOverlays("root", d.Root.I18n, langs, d.Content, field{Kind: "text", Max: 120}); err != nil {
+		return err
+	}
+	for _, p := range d.Pages {
+		if err := validateOverlays("page "+p.Slug, p.I18n, langs, p.Content, field{Kind: "text", Max: 80}); err != nil {
+			return err
+		}
 	}
 	for _, p := range d.Pages {
 		if p.Title == "" {

@@ -117,3 +117,60 @@ CNAME; the edge's IPv4 and IPv6 addresses in `SITES_APEX_IP`.
 
 Your domain stays yours. You keep it at your registrar; C Note never registers, transfers or locks it. Disconnect at any
 time: your website goes back to `<name>.<SITES_DOMAIN>` and you can point the domain anywhere.
+
+### Custom domains through Cloudflare for SaaS (self-hosted, optional)
+
+An alternative to Caddy's on-demand certificates: Cloudflare terminates TLS for each customer hostname and proxies to your
+origin. Off unless `SITES_DOMAIN_PROVIDER=cloudflare` **and** `SITES_CUSTOM_DOMAINS=1`; with the provider off, nothing in
+this section runs. Subdomains only: the address without `www` is refused in this mode (apex proxying is an Enterprise add-on).
+
+How it works: ownership is still proved by the TXT record. Once a claim is verified, the worker's reconciler
+(`sites.cloudflare` sweep) creates a custom hostname in your zone, validated over HTTP, tagged with this installation's id
+in its custom metadata. A hostname is routed (and approved for the site's public lookup) only while Cloudflare reports both
+`status` and `ssl.status` as `active`. Customers point a CNAME at the proxied record you publish (`SITES_CF_CNAME_TARGET`).
+A hostname Cloudflare blocks is lost at once; a moved, deleted, expired or timed-out one costs a strike (two strikes about an
+hour apart lose it); Cloudflare deleting a hostname that never validated (it gives up after seven days) counts as a strike
+and the hostname is created again.
+
+Environment (API and worker):
+- `SITES_DOMAIN_PROVIDER=cloudflare` - the switch.
+- `SITES_CF_API_TOKEN` - a token scoped to the one zone with "SSL and Certificates: Edit" and nothing else. Sent only in the
+  `Authorization` header; never logged, never sent to the browser.
+- `SITES_CF_ZONE_ID` - the zone that holds the proxied fallback and CNAME target records.
+- `SITES_CF_INSTALLATION_ID` - any stable unique string for this installation (for example a UUID). Written into every
+  hostname's custom metadata; the reconciler deletes only hostnames that carry it. **Never change it** after hostnames exist,
+  and give a staging installation another id if it shares the zone.
+- `SITES_CF_CNAME_TARGET` - the name customers CNAME to (the proxied record below). Unset, it is `<name>.<SITES_DOMAIN>`.
+- `SITES_CF_MAX_HOSTNAMES` - the most hostnames held at Cloudflare, default 90 (Cloudflare includes 100 on Free, Pro and
+  Business, then charges $0.10 each; every hostname counts until deleted, pending ones too). New claims are refused and
+  creates wait at this number, counting hostnames in the zone that are not ours. At 80% the API logs a warning once a day.
+- `SITES_CF_PAUSED=1` - the stop switch: no sweep call is made (no create, poll or delete) and new domains are refused. Routing
+  here keeps working from what is stored. Hostnames of sites that go offline while paused are deleted once you unpause.
+- Also a workspace can hold 5 hostnames, a site 5 per 30 days, 50 hostnames can verify per hour platform-wide, and 120
+  checks per site per hour (as for every domain).
+- The worker must run the sweep (`WITH_WORKER=1`, `sites.cloudflare`, every minute or two is cheap: it makes no call when
+  nothing is due).
+
+When a site is unpublished, taken down, loses Pro, or a hostname is disconnected or lost, routing stops at once (the proxy
+lookup no longer finds it) and the reconciler deletes the Cloudflare hostname on its next run (within an hour even after
+failures; a failed delete stays on a tombstone row and is retried with backoff, 429s and bad tokens stop the sweep). The
+certificate may still be served by Cloudflare until that delete completes. Requests are retried twice on 5xx and network
+errors and never on 429 (Cloudflare blocks the token for five minutes).
+
+Real-zone checklist, once, before you set the switch (the API shapes are in `docs/design/site-builder-phase3-facts.md`
+section 1; the delete permission, the `Host` header and Full (strict) there were not checked against a live zone):
+1. Zone plan has Cloudflare for SaaS enabled and its hostname quota covers `SITES_CF_MAX_HOSTNAMES`.
+2. Create the token above and check it can create, read and **delete** a custom hostname (the delete permission was not
+   confirmed in the docs):
+   `curl -X DELETE -H "Authorization: Bearer $T" https://api.cloudflare.com/client/v4/zones/$ZONE/custom_hostnames/$ID`.
+3. Check custom metadata round-trips on your plan: create a test hostname with `"custom_metadata":{"cnote_installation":"x"}`
+   and read it back with `GET .../custom_hostnames/$ID`. If it comes back empty, **do not enable the provider**: the
+   reconciler would never delete anything (it refuses to delete a hostname without our id).
+4. Publish a proxied `A`/`AAAA`/`CNAME` record for the origin (the VPS or the Caddy edge), then set it as the fallback origin:
+   `PUT .../custom_hostnames/fallback_origin` with `{"origin":"<that record's name>"}`, and wait until it reads `active`.
+5. Publish the proxied CNAME target customers will use (for example `customers.<zone>`, pointing at the fallback record) and
+   put its name in `SITES_CF_CNAME_TARGET`.
+6. The origin must accept the customer's name in the `Host` header and answer for it (the web app picks the site from `Host`),
+   and its certificate must satisfy SSL mode **Full (strict)** (use a Cloudflare Origin CA certificate on the origin).
+7. Connect one real test subdomain end to end (claim, TXT, CNAME to the target, wait for `active`), open it over https, then
+   disconnect it and confirm the hostname disappears from the Cloudflare dashboard within a few minutes.

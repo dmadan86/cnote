@@ -87,6 +87,9 @@ func (e *turnExec) execute(ctx context.Context) error {
 	if e.kind == "post" {
 		return e.runPost(ctx)
 	}
+	if e.kind == "translate" {
+		return e.runTranslate(ctx, data)
+	}
 	begun := time.Now()
 	res := RunTurn(ctx, e.step, data, in)
 	if res.Err == "" {
@@ -202,7 +205,7 @@ func (e *turnExec) start(ctx context.Context) (data json.RawMessage, in TurnInpu
 
 // step is the Model RunTurn calls: reserve, call and record, settle, each in its own transaction (agents/loop.go).
 func (e *turnExec) step(ctx context.Context, req StepReq) (StepRes, error) {
-	if e.calls >= maxCalls || e.tokens >= maxTokens {
+	if e.calls >= e.callCap() || e.tokens >= e.tokenCap() {
 		e.fatal = errTurnLimit
 		return StepRes{}, e.fatal
 	}
@@ -227,7 +230,7 @@ func (e *turnExec) step(ctx context.Context, req StepReq) (StepRes, error) {
 		if err != nil {
 			return command.DB(err)
 		}
-		if calls > maxCalls || tokens >= maxTokens {
+		if calls > int64(e.callCap()) || tokens >= e.tokenCap() {
 			return errTurnLimit // rolls the increment back with the reservation
 		}
 		out, err := c.Call("agent.budget_reserve", props{"tokens": n})

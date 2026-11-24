@@ -2,6 +2,7 @@
 import { Check } from 'lucide-react'
 import { useEffect, useId, useState } from 'react'
 import { siteBtn, siteField } from './blocks'
+import { t } from './strings'
 
 /** The approved consent wording the server stores with a submission; the server keeps the text, never this client. */
 const CONSENT_ID = 'enquiry-v1'
@@ -18,6 +19,7 @@ export function ContactFormLive({
   submitLabel,
   paused,
   items,
+  lang = 'en',
 }: {
   siteId: string
   business: string
@@ -27,6 +29,8 @@ export function ContactFormLive({
   paused?: boolean
   /** Catalogue item id -> name, from the server; the form only shows the name for an id it knows (design 2). */
   items?: Record<string, string>
+  /** The page's language: the visible text and the consent sentence are in it; the server stores its own text for it. */
+  lang?: string
 }) {
   const id = useId()
   // `?item=` is read only on the client; an id that is not in the server's map is ignored.
@@ -39,14 +43,14 @@ export function ContactFormLive({
   const [err, setErr] = useState('')
   const [fieldErr, setFieldErr] = useState<Record<string, string>>({})
   const [sentName, setSentName] = useState('')
-  const who = business || 'this business'
-  const consentText = `I agree that ${who} may use these details to reply to my enquiry.`
-  const callUs = phone ? `, or call ${phone}` : ''
+  const who = business || t(lang, 'form_business_fallback')
+  const consentText = t(lang, 'form_consent', { business: who })
+  const callUs = phone ? t(lang, 'form_call_suffix', { phone }) : ''
 
   if (paused)
     return (
       <p role="status" className="text-[15px]">
-        This form is paused right now. {phone ? `Please call ${phone}.` : 'Please check back soon.'}
+        {phone ? t(lang, 'form_paused_call', { phone }) : t(lang, 'form_paused')}
       </p>
     )
   if (state === 'done')
@@ -54,12 +58,14 @@ export function ContactFormLive({
       <div role="status" className="space-y-3">
         <p className="flex items-center gap-2 font-semibold">
           <Check size={18} aria-hidden="true" className="text-[var(--site-primary)]" />
-          Thanks{sentName ? `, ${sentName}` : ''}. We've got your message.
+          {sentName ? t(lang, 'form_thanks_name', { name: sentName }) : t(lang, 'form_thanks')}
         </p>
-        <p className="text-[15px] text-[var(--site-muted)]">{who} usually replies within a day.</p>
+        <p className="text-[15px] text-[var(--site-muted)]">
+          {t(lang, 'form_reply_soon', { business: who })}
+        </p>
         {whatsapp && (
           <a href={whatsapp} rel="noopener noreferrer" className={`${siteBtn} w-full`}>
-            Chat on WhatsApp
+            {t(lang, 'chat_on_whatsapp')}
           </a>
         )}
       </div>
@@ -70,10 +76,10 @@ export function ContactFormLive({
     const f = new FormData(e.currentTarget)
     const v = (k: string) => String(f.get(k) ?? '').trim()
     const fe: Record<string, string> = {}
-    if (!v('name')) fe.name = 'Enter your name'
-    if (v('phone').replace(/\D/g, '').length < 10) fe.phone = 'Enter a 10-digit mobile number'
-    if (v('email') && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v('email'))) fe.email = 'Enter a valid email'
-    if (f.get('consent') !== 'on') fe.consent = 'Tick the box to send your enquiry'
+    if (!v('name')) fe.name = t(lang, 'form_err_name')
+    if (v('phone').replace(/\D/g, '').length < 10) fe.phone = t(lang, 'form_err_phone')
+    if (v('email') && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v('email'))) fe.email = t(lang, 'form_err_email')
+    if (f.get('consent') !== 'on') fe.consent = t(lang, 'form_err_consent')
     setFieldErr(fe)
     if (Object.keys(fe).length) return
     setState('sending')
@@ -89,8 +95,8 @@ export function ContactFormLive({
           email: v('email'),
           message: v('message'),
           consent: f.get('consent') === 'on',
-          consent_text: consentText,
           consent_id: CONSENT_ID,
+          lang,
           ...(item ? { item_id: item } : {}),
           company_website: v('company_website'),
         }),
@@ -99,8 +105,8 @@ export function ContactFormLive({
         const j = (await r.json().catch(() => ({}))) as { error?: { message?: string } }
         setErr(
           r.status === 429
-            ? `Too many messages right now. Please try again later${callUs}.`
-            : (j.error?.message ?? `Couldn't send. Please try again${callUs}.`),
+            ? t(lang, 'form_err_rate', { call: callUs })
+            : (j.error?.message ?? t(lang, 'form_err_send', { call: callUs })),
         )
         setState('idle') // the typed values stay in the fields
         return
@@ -108,7 +114,7 @@ export function ContactFormLive({
       setSentName(v('name'))
       setState('done')
     } catch {
-      setErr(`Couldn't send. Please try again${callUs}.`)
+      setErr(t(lang, 'form_err_send', { call: callUs }))
       setState('idle')
     }
   }
@@ -141,23 +147,27 @@ export function ContactFormLive({
     <form className="space-y-3" onSubmit={submit} noValidate>
       {item && items && (
         <p className="rounded-[var(--site-radius)] bg-[var(--site-tint)] px-3 py-2 text-[14px]">
-          About: <strong>{items[item]}</strong>
+          {t(lang, 'form_about')} <strong>{items[item]}</strong>
         </p>
       )}
-      {row('name', 'Your name', inp('name', { required: true, maxLength: 100, autoComplete: 'name' }))}
+      {row(
+        'name',
+        t(lang, 'form_label_name'),
+        inp('name', { required: true, maxLength: 100, autoComplete: 'name' }),
+      )}
       {row(
         'phone',
-        'Mobile number',
+        t(lang, 'form_label_phone'),
         inp('phone', { required: true, type: 'tel', inputMode: 'tel', maxLength: 20, autoComplete: 'tel' }),
       )}
       {row(
         'email',
-        'Email (optional)',
+        t(lang, 'form_label_email'),
         inp('email', { type: 'email', maxLength: 120, autoComplete: 'email' }),
       )}
       {row(
         'message',
-        'Message (optional)',
+        t(lang, 'form_label_message'),
         <textarea id={`${id}-message`} name="message" rows={3} maxLength={1000} className={siteField} />,
       )}
       {/* honeypot: off-screen, out of tab order and hidden from screen readers */}
@@ -169,10 +179,7 @@ export function ContactFormLive({
         <span>{consentText}</span>
       </label>
       {fieldErr.consent && <p className="text-[13px] text-[#b91c1c]">{fieldErr.consent}</p>}
-      <p className="text-[13px] text-[var(--site-muted)]">
-        Your details go to {who} and are stored by C Note, which hosts this site. Ask {who} to correct or
-        delete them at any time.
-      </p>
+      <p className="text-[13px] text-[var(--site-muted)]">{t(lang, 'form_privacy', { business: who })}</p>
       {err && (
         <p
           role="alert"
@@ -186,7 +193,7 @@ export function ContactFormLive({
         disabled={state === 'sending'}
         className={`${siteBtn} w-full disabled:opacity-60`}
       >
-        {state === 'sending' ? 'Sending…' : submitLabel || 'Send enquiry'}
+        {state === 'sending' ? t(lang, 'form_sending') : submitLabel || t(lang, 'form_submit')}
       </button>
     </form>
   )
