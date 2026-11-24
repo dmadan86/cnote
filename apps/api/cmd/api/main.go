@@ -89,6 +89,7 @@ func main() {
 	if *withWorker {
 		go worker.New(pool, registry).Run(ctx)
 	}
+	server.StartSitesAsk(ctx, pool, env("SITES_ASK_ADDR", "127.0.0.1:4199"))
 	front := server.New(pool, registry)
 	if u := os.Getenv("COLLAB_URL"); u != "" { // the TypeScript collab service
 		if front.Collab, err = proxy.New(u); err != nil {

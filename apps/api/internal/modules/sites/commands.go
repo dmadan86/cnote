@@ -124,7 +124,7 @@ func obj(req []string, p props) json.RawMessage {
 func Commands() []command.Command {
 	R, W, M := command.GroupRead, command.GroupWriteItems, command.Member
 	id, ver := str("site id"), str("the draft version the person is looking at; a stale one is a conflict")
-	return append([]command.Command{
+	commands := append([]command.Command{
 		mk("site.templates", R, M, false, "List the website templates, each filled from the company profile. too_long names profile fields left empty because they do not fit the site.", obj(nil, props{}), templates),
 		mk("site.list", R, M, false, "List the workspace's websites (at most one in this version).", obj(nil, props{}), list),
 		mk("site.create", W, command.Admin, false, "Create the workspace's website from a template (admins only; one per workspace). brief queues a first AI edit.",
@@ -140,6 +140,10 @@ func Commands() []command.Command {
 		mk("site.restore", W, M, false, "Make an older version of this site the draft (undo, redo, restore to here). Moves the draft pointer; nothing is deleted.",
 			obj([]string{"id", "expected_version_id", "version_id"}, props{"id": id, "expected_version_id": ver, "version_id": str("the version to make the draft")}), restore),
 	}, publishCommands(id, ver)...)
+	for _, group := range [][]command.Command{PagesCommands(), EditorCommands(), DomainsCommands(), StatsCommands(), ExportCommands()} {
+		commands = append(commands, group...)
+	}
+	return commands
 }
 
 func uid(what, s string) error {

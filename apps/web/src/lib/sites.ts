@@ -8,7 +8,37 @@ export type SiteBlock = { type: string; props: Record<string, unknown> }
 export type SiteData = {
   root: { props: { title?: string; description?: string; theme?: Theme } }
   content: SiteBlock[]
+  pages?: SitePage[]
 }
+export type SitePage = { slug: string; title: string; description?: string; content: SiteBlock[] }
+export type SiteVersion = {
+  id: string
+  seq: number
+  source: 'template' | 'chat' | 'edit' | 'editor' | 'restore'
+  summary: string
+  created_by: { id: string; name: string }
+  created_at: string
+  is_draft: boolean
+  is_published: boolean
+}
+export type SiteDomain = {
+  hostname: string
+  status: 'pending' | 'verified' | 'lost'
+  txt_token: string
+  verified_at?: string | null
+}
+export type SiteDomainCheck = {
+  domain: SiteDomain
+  records: { type: string; name: string; value: string; found: string[]; ok: boolean }[]
+  verified: boolean
+}
+export type SiteStats = {
+  days: { day: string; visits: number; views: number }[]
+  pages: { slug: string; views: number }[]
+  referrers: { domain: string; views: number }[]
+  enquiries: number
+}
+export type SetContentOp = { tool: 'set_content'; input: { page: string; content: SiteBlock[] } }
 export type Site = {
   id: string
   name: string
@@ -55,6 +85,53 @@ export type EditOp = { tool: string; input: Record<string, unknown> }
 
 /** Every write carries expected_version_id, the draft the person is looking at; a stale one answers `conflict`. */
 export const siteApi = {
+  addPage: (
+    ws: string,
+    id: string,
+    expected_version_id: string,
+    title: string,
+    slug?: string,
+    template?: string,
+  ) =>
+    cmd<{ site: Site; data: SiteData }>(ws, 'site.edit', {
+      id,
+      expected_version_id,
+      ops: [{ tool: 'add_page', input: { title, slug, template } }],
+    }),
+  removePage: (ws: string, id: string, expected_version_id: string, page: string) =>
+    cmd<{ site: Site; data: SiteData }>(ws, 'site.edit', {
+      id,
+      expected_version_id,
+      ops: [{ tool: 'remove_page', input: { page } }],
+    }),
+  setPage: (
+    ws: string,
+    id: string,
+    expected_version_id: string,
+    input: { page?: string; title?: string; description?: string; slug?: string },
+  ) =>
+    cmd<{ site: Site; data: SiteData }>(ws, 'site.edit', {
+      id,
+      expected_version_id,
+      ops: [{ tool: 'set_page', input }],
+    }),
+  setContent: (ws: string, id: string, expected_version_id: string, page: string, content: SiteBlock[]) =>
+    cmd<{ site: Site; data: SiteData }>(ws, 'site.edit', {
+      id,
+      expected_version_id,
+      source: 'editor',
+      ops: [{ tool: 'set_content', input: { page, content } }],
+    }),
+  versions: (ws: string, id: string, before_seq?: number, limit?: number) =>
+    cmd<SiteVersion[]>(ws, 'site.versions', { id, before_seq, limit }),
+  domainAdd: (ws: string, id: string, domain: string) =>
+    cmd<SiteDomainCheck>(ws, 'site.domain_set', { id, domain }),
+  domainCheck: (ws: string, id: string) => cmd<SiteDomainCheck>(ws, 'site.domain_check', { id }),
+  domainRemove: (ws: string, id: string, domain: string) =>
+    cmd<{ site: Site }>(ws, 'site.domain_remove', { id, domain }),
+  stats: (ws: string, id: string) => cmd<SiteStats>(ws, 'site.stats', { id }),
+  exportUrl: (ws: string, id: string) =>
+    `/api/w/${encodeURIComponent(ws)}/sites/${encodeURIComponent(id)}/export`,
   templates: (ws: string) => cmd<Template[]>(ws, 'site.templates'),
   list: (ws: string) => cmd<Site[]>(ws, 'site.list'),
   create: (ws: string, template: string) =>

@@ -544,6 +544,13 @@ export function SiteBadge({ pro, home, report }: { pro: boolean; home: string; r
   )
 }
 
+export function Text(_props: P) {
+  return null
+}
+export function Embed(_props: P) {
+  return null
+}
+
 /** A block added to the catalog without a component fails tsc (BlockType is the catalog's keys). */
 export const BLOCKS: Record<BlockType | (typeof ALL)[number], ComponentType<P>> = {
   Header,
@@ -559,4 +566,6 @@ export const BLOCKS: Record<BlockType | (typeof ALL)[number], ComponentType<P>> 
   Testimonials,
   ContactForm,
   Footer,
+  Text,
+  Embed,
 }
