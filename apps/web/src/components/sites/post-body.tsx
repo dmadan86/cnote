@@ -58,9 +58,9 @@ function Node({
     case 'heading': {
       const lvl = n.attrs?.level
       return lvl === 3 ? (
-        <h3 className="mb-2 mt-6 text-xl font-bold">{kids}</h3>
+        <h3 className="mb-2 mt-6 text-xl font-bold [font-family:var(--site-font-heading)]">{kids}</h3>
       ) : lvl === 2 ? (
-        <h2 className="mb-3 mt-8 text-2xl font-bold">{kids}</h2>
+        <h2 className="mb-3 mt-8 text-2xl font-bold [font-family:var(--site-font-heading)]">{kids}</h2>
       ) : null
     }
     case 'bulletList':

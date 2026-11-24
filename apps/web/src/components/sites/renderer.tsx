@@ -2,7 +2,7 @@
 import { Monitor, Smartphone } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { type CatalogueView, type SiteData, themeStyle } from '@/lib/sites'
-import { BLOCKS, SiteBadge } from './blocks'
+import { BLOCKS, hiddenIds, SiteBadge, visibleBlocks } from './blocks'
 import catalog from './catalog.json'
 
 /** The page. No raw HTML anywhere: every value is a React text child. Without onSelect it is read-only. */
@@ -15,6 +15,7 @@ export function Renderer({
   pro,
   catalog: items,
   lang,
+  hints,
 }: {
   data: SiteData
   selectedId?: string | null
@@ -27,9 +28,14 @@ export function Renderer({
   pro?: boolean
   /** The language of the blocks' own visitor text (strings.json); English when absent. */
   lang?: string
+  /** Show the builder's "Add your ..." hints for empty sections without making blocks selectable (template picker). */
+  hints?: boolean
 }) {
   const style = themeStyle(data.root?.props?.theme)
-  const known = (data.content ?? []).filter((b) => b.type in BLOCKS)
+  const editing = !!onSelect || !!hints
+  const all = (data.content ?? []).filter((b) => b.type in BLOCKS)
+  // Visitors never see an empty section or a link to one; the builder keeps them with a hint.
+  const known = editing ? all : visibleBlocks(all, hiddenIds([all], items ?? undefined))
   // The preview never navigates (design 14.9): every click (modifier and middle too) and submit is cancelled;
   // in-page anchors scroll. Capture phase, so block selection's stopPropagation cannot let a link through.
   const stop = (e: React.SyntheticEvent) => {
@@ -102,7 +108,7 @@ export function Renderer({
               {...b.props}
               assetBase={assetBase}
               lang={lang}
-              editing={!!onSelect}
+              editing={editing}
               catalog={b.type === 'Catalogue' ? items : undefined}
             />
           </div>
@@ -127,6 +133,7 @@ export function PreviewFrame({
   assetBase,
   pro,
   catalog: items,
+  hints,
 }: {
   data: SiteData
   selected?: string | null
@@ -138,6 +145,8 @@ export function PreviewFrame({
   pro?: boolean
   /** The draft catalogue the Catalogue block shows in the preview. */
   catalog?: CatalogueView | null
+  /** Template picker: a read-only preview that still shows the "Add your ..." hints. */
+  hints?: boolean
 }) {
   const ref = useRef<HTMLIFrameElement>(null)
   const [ready, setReady] = useState(false)
@@ -165,7 +174,7 @@ export function PreviewFrame({
     <iframe
       ref={ref}
       onLoad={() => setReady(false)} // a new document must announce itself again
-      src={onSelect ? '/site-preview' : '/site-preview?readonly=1'}
+      src={onSelect ? '/site-preview' : `/site-preview?readonly=1${hints ? '&hints=1' : ''}`}
       title={decorative ? '' : 'Site preview'}
       aria-hidden={decorative || undefined}
       tabIndex={decorative ? -1 : undefined}

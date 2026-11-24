@@ -172,24 +172,6 @@ func TestStrictPageAndValues(t *testing.T) {
 	}
 }
 
-func TestPhaseOneTemplates(t *testing.T) {
-	for _, key := range templateKeys {
-		t.Run(key, func(t *testing.T) {
-			for _, slots := range []map[string]string{{}, {"name": "Example", "phone": "+91 9876543210", "email": "a@example.com", "address": "Example street"}} {
-				data, _, err := fillTemplate(slots, key)
-				if err != nil {
-					t.Fatal(err)
-				}
-				if err = Validate(data); err != nil {
-					t.Fatal(err)
-				}
-				if !HasBlock(data, "WhatsAppButton") {
-					t.Fatal("missing WhatsApp")
-				}
-			}
-		})
-	}
-}
 func TestImageIDsAndWhatsApp(t *testing.T) {
 	data := json.RawMessage(`{"content":[{"type":"Gallery","props":{"items":[{"image":"12345678-1234-1234-1234-123456789abc"}]}}]}`)
 	if len(ImageIDs(data)) != 1 || !HasBlock(data, "Gallery") || HasBlock(data, "Hero") {

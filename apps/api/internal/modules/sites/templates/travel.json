@@ -1,0 +1,137 @@
+{
+  "key": "travel",
+  "name": "Voyage",
+  "order": 13,
+  "description": "Bright and open, for trips people want to picture.",
+  "vertical": "Travel",
+  "style": "Playful",
+  "data": {
+    "root": {
+      "props": {
+        "title": "{{name}}",
+        "theme": {
+          "primary": "#0369a1",
+          "background": "#f5fbff",
+          "text": "#0c2d48",
+          "font": "rounded",
+          "radius": "lg"
+        }
+      }
+    },
+    "content": [
+      {
+        "type": "Header",
+        "props": {
+          "id": "Header-00000001",
+          "brand": "{{name}}",
+          "links": [
+            {
+              "label": "Trips",
+              "href": "#Services-00000003"
+            },
+            {
+              "label": "Gallery",
+              "href": "#Gallery-00000004"
+            },
+            {
+              "label": "What travellers say",
+              "href": "#Testimonials-00000005"
+            }
+          ],
+          "cta_label": "Plan a trip",
+          "cta_href": "#ContactForm-00000008",
+          "variant": "left"
+        }
+      },
+      {
+        "type": "Hero",
+        "props": {
+          "id": "Hero-00000002",
+          "title": "{{name}}",
+          "cta_label": "Plan a trip",
+          "cta_href": "#ContactForm-00000008",
+          "align": "center",
+          "variant": "cover"
+        }
+      },
+      {
+        "type": "Services",
+        "props": {
+          "id": "Services-00000003",
+          "title": "Trips",
+          "items": [],
+          "variant": "cards"
+        }
+      },
+      {
+        "type": "Gallery",
+        "props": {
+          "id": "Gallery-00000004",
+          "title": "Gallery",
+          "items": [],
+          "variant": "strip"
+        }
+      },
+      {
+        "type": "Testimonials",
+        "props": {
+          "id": "Testimonials-00000005",
+          "title": "What travellers say",
+          "items": [],
+          "variant": "cards"
+        }
+      },
+      {
+        "type": "FAQ",
+        "props": {
+          "id": "FAQ-00000006",
+          "title": "Questions we get asked",
+          "items": [],
+          "variant": "accordion"
+        }
+      },
+      {
+        "type": "CallToAction",
+        "props": {
+          "id": "CallToAction-00000007",
+          "title": "Plan your next trip",
+          "cta_label": "Plan a trip",
+          "cta_href": "#ContactForm-00000008",
+          "variant": "banner"
+        }
+      },
+      {
+        "type": "ContactForm",
+        "props": {
+          "id": "ContactForm-00000008",
+          "title": "Contact us",
+          "phone": "{{phone}}",
+          "email": "{{email}}",
+          "address": "{{address}}",
+          "submit_label": "Send",
+          "variant": "side"
+        }
+      },
+      {
+        "type": "Footer",
+        "props": {
+          "id": "Footer-00000009",
+          "text": "{{name}}",
+          "phone": "{{phone}}",
+          "email": "{{email}}",
+          "address": "{{address}}",
+          "links": [],
+          "variant": "columns"
+        }
+      },
+      {
+        "type": "WhatsAppButton",
+        "props": {
+          "id": "WhatsAppButton-0000000a",
+          "phone": "{{phone}}",
+          "label": "WhatsApp"
+        }
+      }
+    ]
+  }
+}

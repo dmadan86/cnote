@@ -3,7 +3,14 @@ import type { CSSProperties } from 'react'
 import catalog from '@/components/sites/catalog.json'
 import { api, cmd } from './api'
 
-export type Theme = { primary?: string; background?: string; text?: string; font?: string; radius?: string }
+export type Theme = {
+  primary?: string
+  background?: string
+  text?: string
+  font?: string
+  radius?: string
+  font_heading?: string
+}
 export type SiteBlock = { type: string; props: Record<string, unknown> }
 export type SiteData = {
   root: { props: { title?: string; description?: string; theme?: Theme } }
@@ -83,7 +90,22 @@ export type Turn = {
   created_at: string
 }
 /** too_long: contact fields whose company value did not fit the site and were left empty (never truncated). */
-export type Template = { key: string; name: string; description: string; data: SiteData; too_long?: string[] }
+export type Template = {
+  key: string
+  name: string
+  description: string
+  /** The picker's category chip (Services, Clinic, Food ...) and style filter (Minimal, Bold, Warm ...). */
+  vertical: string
+  style: string
+  data: SiteData
+  too_long?: string[]
+  /** The template's own colours, before the brand colour or a chosen palette. */
+  palette: Pick<Theme, 'primary' | 'background' | 'text'>
+  /** The company has a brand colour; brand_used says it was readable on this design and applied. */
+  brand_available: boolean
+  brand_used: boolean
+}
+export type TemplateChoice = { brand?: boolean; theme?: Pick<Theme, 'primary' | 'background' | 'text'> }
 export type EditOp = { tool: string; input: Record<string, unknown> }
 
 /** Every write carries expected_version_id, the draft the person is looking at; a stale one answers `conflict`. */
@@ -156,10 +178,11 @@ export const siteApi = {
   stats: (ws: string, id: string) => cmd<SiteStats>(ws, 'site.stats', { id }),
   exportUrl: (ws: string, id: string) =>
     `/api/w/${encodeURIComponent(ws)}/sites/${encodeURIComponent(id)}/export`,
-  templates: (ws: string) => cmd<Template[]>(ws, 'site.templates'),
+  templates: (ws: string, choice: TemplateChoice & { key?: string } = {}) =>
+    cmd<Template[]>(ws, 'site.templates', choice),
   list: (ws: string) => cmd<Site[]>(ws, 'site.list'),
-  create: (ws: string, template: string) =>
-    cmd<{ site: Site; data: SiteData }>(ws, 'site.create', { template }),
+  create: (ws: string, template: string, choice: TemplateChoice = {}) =>
+    cmd<{ site: Site; data: SiteData }>(ws, 'site.create', { template, ...choice }),
   get: (ws: string, id: string) =>
     cmd<{ site: Site; data: SiteData; turns: Turn[] } & SiteMeta>(ws, 'site.get', { id }),
   chat: (
@@ -304,6 +327,8 @@ export function themeStyle(theme?: Theme): CSSProperties {
     '--site-muted': `color-mix(in srgb, ${text} 70%, transparent)`,
     '--site-radius': RADII[t.radius ?? ''] ?? RADII.md,
     '--site-font': FONTS[t.font ?? ''] ?? FONTS.sans,
+    // Headings use their own face when the theme names one; otherwise they follow the body font.
+    '--site-font-heading': FONTS[t.font_heading ?? ''] ?? 'var(--site-font)',
     background: 'var(--site-bg)',
     color: 'var(--site-text)',
     fontFamily: 'var(--site-font)',

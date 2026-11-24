@@ -125,10 +125,17 @@ func TestSiteTemplateFilledFromCompany(t *testing.T) {
 	s.ok(s.owner, "company.update", map[string]any{"trade_name": "Sharma Dental", "phone": "+919876543210", "email": "hello@sharma.example.test",
 		"address": "12 MG Road, Pune", "pincode": "411001", "email_accent": "#0f766e"})
 	tpl := s.call(s.mia, "site.templates", map[string]any{}).jsonList()
-	if len(tpl) != 5 || tpl[0]["key"] != "services" || len(tpl[0]["too_long"].([]any)) != 0 {
+	if len(tpl) != 15 || tpl[0]["key"] != "services" || len(tpl[0]["too_long"].([]any)) != 0 {
 		t.Fatalf("templates: %v", tpl)
 	}
 	eq(t, propOf(tpl[0]["data"], "Hero", "title"), "Sharma Dental")
+	eq(t, tpl[0]["style"], "Corporate")
+	eq(t, tpl[0]["brand_available"], true)
+	eq(t, tpl[0]["brand_used"], false)
+	opt := s.call(s.mia, "site.templates", map[string]any{"brand": true, "key": "services"}).jsonList()
+	if len(opt) != 1 || opt[0]["brand_used"] != true {
+		t.Fatalf("brand colour opt-in: %v", opt)
+	}
 
 	s.fail(s.mia, "site.create", map[string]any{"template": "services"}, 403) // admins only
 	s.fail(s.owner, "site.create", map[string]any{"template": "nope"}, 400)
@@ -138,7 +145,8 @@ func TestSiteTemplateFilledFromCompany(t *testing.T) {
 	eq(t, propOf(data, "ContactForm", "phone"), "+919876543210")
 	eq(t, propOf(data, "ContactForm", "email"), "hello@sharma.example.test")
 	eq(t, propOf(data, "Footer", "address"), "12 MG Road, Pune, 411001")
-	eq(t, data.(map[string]any)["root"].(map[string]any)["props"].(map[string]any)["theme"].(map[string]any)["primary"], "#0f766e")
+	theme := data.(map[string]any)["root"].(map[string]any)["props"].(map[string]any)["theme"].(map[string]any)
+	eq(t, theme["primary"], "#1d4ed8") // the template keeps its own colour unless the brand colour is ticked
 	site := r["site"].(map[string]any)
 	eq(t, site["draft_version_id"], s.draft())
 	eq(t, s.versions(), "1")
@@ -223,19 +231,19 @@ func TestSiteEditRestoreAndConflicts(t *testing.T) {
 	site := s.create()["site"].(map[string]any)
 	id, v1 := site["id"].(string), site["draft_version_id"].(string)
 	d := s.get(s.mia, id)["data"]
-	eq(t, order(d), "Header,Hero,Services,About,Testimonials,FAQ,CallToAction,ContactForm,MapHours,Footer,WhatsAppButton")
+	eq(t, order(d), "Header,Hero,Services,Testimonials,FAQ,CallToAction,ContactForm,MapHours,Footer,WhatsAppButton")
 	hero, services := blockOf(d, "Hero"), blockOf(d, "Services")
 
 	r := s.editOps(s.mia, id, v1, map[string]any{"tool": "move_block", "input": map[string]any{"id": hero, "index": 0}}).json()
 	v2 := r["site"].(map[string]any)["draft_version_id"].(string)
-	eq(t, order(r["data"]), "Hero,Header,Services,About,Testimonials,FAQ,CallToAction,ContactForm,MapHours,Footer,WhatsAppButton")
+	eq(t, order(r["data"]), "Hero,Header,Services,Testimonials,FAQ,CallToAction,ContactForm,MapHours,Footer,WhatsAppButton")
 	eq(t, r["site"].(map[string]any)["parent_version_id"], v1)
 	r = s.editOps(s.mia, id, v2, map[string]any{"tool": "duplicate_block", "input": map[string]any{"id": services}}).json()
 	v3 := r["site"].(map[string]any)["draft_version_id"].(string)
-	eq(t, order(r["data"]), "Hero,Header,Services,Services,About,Testimonials,FAQ,CallToAction,ContactForm,MapHours,Footer,WhatsAppButton")
+	eq(t, order(r["data"]), "Hero,Header,Services,Services,Testimonials,FAQ,CallToAction,ContactForm,MapHours,Footer,WhatsAppButton")
 	r = s.editOps(s.mia, id, v3, map[string]any{"tool": "remove_block", "input": map[string]any{"id": services}}).json()
 	v4 := r["site"].(map[string]any)["draft_version_id"].(string)
-	eq(t, order(r["data"]), "Hero,Header,Services,About,Testimonials,FAQ,CallToAction,ContactForm,MapHours,Footer,WhatsAppButton")
+	eq(t, order(r["data"]), "Hero,Header,Services,Testimonials,FAQ,CallToAction,ContactForm,MapHours,Footer,WhatsAppButton")
 	eq(t, s.versions(), "4")
 	eq(t, s.sql("select string_agg(summary, '|' order by seq) from sites.site_versions"), "Started from the template|Moved Hero|Duplicated Services|Deleted Services")
 
@@ -268,12 +276,12 @@ func TestSiteEditRestoreAndConflicts(t *testing.T) {
 		return s.ok(s.mia, "site.restore", map[string]any{"id": id, "expected_version_id": expected, "version_id": to})
 	}
 	u := restore(v4, v3)
-	eq(t, order(u["data"]), "Hero,Header,Services,Services,About,Testimonials,FAQ,CallToAction,ContactForm,MapHours,Footer,WhatsAppButton")
+	eq(t, order(u["data"]), "Hero,Header,Services,Services,Testimonials,FAQ,CallToAction,ContactForm,MapHours,Footer,WhatsAppButton")
 	eq(t, s.draft(), v3)
 	restore(v3, v4)
 	eq(t, s.draft(), v4)
 	o := restore(v4, v1)
-	eq(t, order(o["data"]), "Header,Hero,Services,About,Testimonials,FAQ,CallToAction,ContactForm,MapHours,Footer,WhatsAppButton")
+	eq(t, order(o["data"]), "Header,Hero,Services,Testimonials,FAQ,CallToAction,ContactForm,MapHours,Footer,WhatsAppButton")
 	eq(t, o["site"].(map[string]any)["parent_version_id"], nil)
 	eq(t, s.versions(), "4")
 	s.fail(s.mia, "site.restore", map[string]any{"id": id, "expected_version_id": v1, "version_id": missingID}, 404)
@@ -286,7 +294,7 @@ func TestSiteEditRestoreAndConflicts(t *testing.T) {
 	restore(v5, v4)
 	// a historical version can be read without moving the draft
 	old := s.ok(s.mia, "site.get", map[string]any{"id": id, "version_id": v2})
-	eq(t, order(old["data"]), "Hero,Header,Services,About,Testimonials,FAQ,CallToAction,ContactForm,MapHours,Footer,WhatsAppButton")
+	eq(t, order(old["data"]), "Hero,Header,Services,Testimonials,FAQ,CallToAction,ContactForm,MapHours,Footer,WhatsAppButton")
 	eq(t, s.draft(), v4)
 }
 
@@ -475,4 +483,19 @@ func TestSiteCrossWorkspaceIsolation(t *testing.T) {
 		}
 		_ = tx.Rollback(context.Background())
 	}
+}
+
+// site.create takes a template, an optional palette and the brand-colour choice, and persists them with the site.
+func TestSiteCreateWithThemeAndBrand(t *testing.T) {
+	s := newSiteEnv(t)
+	s.ok(s.owner, "company.update", map[string]any{"trade_name": "Sharma Dental", "email_accent": "#7c3aed"})
+	s.fail(s.owner, "site.create", map[string]any{"template": "clinic", "theme": map[string]any{"text": "#eeeeee", "background": "#ffffff"}}, 400)
+	r := s.ok(s.owner, "site.create", map[string]any{"template": "clinic", "brand": true,
+		"theme": map[string]any{"primary": "#9d174d", "background": "#fdf6f3", "text": "#3b1f2b"}})
+	th := r["data"].(map[string]any)["root"].(map[string]any)["props"].(map[string]any)["theme"].(map[string]any)
+	eq(t, th["primary"], "#7c3aed") // the brand colour wins over the chosen palette's primary
+	eq(t, th["background"], "#fdf6f3")
+	eq(t, th["font_heading"], "serif")
+	got := s.get(s.owner, r["site"].(map[string]any)["id"].(string))
+	eq(t, got["data"].(map[string]any)["root"].(map[string]any)["props"].(map[string]any)["theme"].(map[string]any)["background"], "#fdf6f3")
 }

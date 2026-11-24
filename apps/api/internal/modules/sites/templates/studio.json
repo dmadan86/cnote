@@ -1,0 +1,129 @@
+{
+  "key": "studio",
+  "name": "Studio",
+  "order": 12,
+  "description": "Almost no decoration, so your work does the talking.",
+  "vertical": "Creative",
+  "style": "Minimal",
+  "data": {
+    "root": {
+      "props": {
+        "title": "{{name}}",
+        "theme": {
+          "primary": "#1c1917",
+          "background": "#fafaf9",
+          "text": "#1c1917",
+          "font": "sans",
+          "radius": "none",
+          "font_heading": "serif"
+        }
+      }
+    },
+    "content": [
+      {
+        "type": "Header",
+        "props": {
+          "id": "Header-00000001",
+          "brand": "{{name}}",
+          "links": [
+            {
+              "label": "Selected work",
+              "href": "#Gallery-00000003"
+            },
+            {
+              "label": "What we do",
+              "href": "#Services-00000004"
+            },
+            {
+              "label": "Kind words",
+              "href": "#Testimonials-00000005"
+            }
+          ],
+          "cta_label": "Start a project",
+          "cta_href": "#ContactForm-00000007",
+          "variant": "centered"
+        }
+      },
+      {
+        "type": "Hero",
+        "props": {
+          "id": "Hero-00000002",
+          "title": "{{name}}",
+          "cta_label": "Start a project",
+          "cta_href": "#ContactForm-00000007",
+          "align": "center",
+          "variant": "centered"
+        }
+      },
+      {
+        "type": "Gallery",
+        "props": {
+          "id": "Gallery-00000003",
+          "title": "Selected work",
+          "items": [],
+          "variant": "grid"
+        }
+      },
+      {
+        "type": "Services",
+        "props": {
+          "id": "Services-00000004",
+          "title": "What we do",
+          "items": [],
+          "variant": "list"
+        }
+      },
+      {
+        "type": "Testimonials",
+        "props": {
+          "id": "Testimonials-00000005",
+          "title": "Kind words",
+          "items": [],
+          "variant": "cards"
+        }
+      },
+      {
+        "type": "CallToAction",
+        "props": {
+          "id": "CallToAction-00000006",
+          "title": "Have a project in mind?",
+          "cta_label": "Start a project",
+          "cta_href": "#ContactForm-00000007",
+          "variant": "card"
+        }
+      },
+      {
+        "type": "ContactForm",
+        "props": {
+          "id": "ContactForm-00000007",
+          "title": "Contact us",
+          "phone": "{{phone}}",
+          "email": "{{email}}",
+          "address": "{{address}}",
+          "submit_label": "Send",
+          "variant": "stacked"
+        }
+      },
+      {
+        "type": "Footer",
+        "props": {
+          "id": "Footer-00000008",
+          "text": "{{name}}",
+          "phone": "{{phone}}",
+          "email": "{{email}}",
+          "address": "{{address}}",
+          "links": [],
+          "variant": "simple"
+        }
+      },
+      {
+        "type": "WhatsAppButton",
+        "props": {
+          "id": "WhatsAppButton-00000009",
+          "phone": "{{phone}}",
+          "label": "WhatsApp"
+        }
+      }
+    ]
+  }
+}

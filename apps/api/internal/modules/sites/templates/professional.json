@@ -1,0 +1,127 @@
+{
+  "key": "professional",
+  "name": "Ledger",
+  "order": 9,
+  "description": "Quiet and serious, for firms that sell trust.",
+  "vertical": "Professional",
+  "style": "Corporate",
+  "data": {
+    "root": {
+      "props": {
+        "title": "{{name}}",
+        "theme": {
+          "primary": "#1e3a5f",
+          "background": "#fbfaf7",
+          "text": "#1c2430",
+          "font": "sans",
+          "radius": "sm",
+          "font_heading": "serif"
+        }
+      }
+    },
+    "content": [
+      {
+        "type": "Header",
+        "props": {
+          "id": "Header-00000001",
+          "brand": "{{name}}",
+          "links": [
+            {
+              "label": "Our services",
+              "href": "#Services-00000003"
+            },
+            {
+              "label": "Questions we get asked",
+              "href": "#FAQ-00000005"
+            },
+            {
+              "label": "Find us",
+              "href": "#MapHours-00000007"
+            }
+          ],
+          "cta_label": "Book a consultation",
+          "cta_href": "#ContactForm-00000006",
+          "variant": "left"
+        }
+      },
+      {
+        "type": "Hero",
+        "props": {
+          "id": "Hero-00000002",
+          "title": "{{name}}",
+          "cta_label": "Book a consultation",
+          "cta_href": "#ContactForm-00000006",
+          "align": "center",
+          "variant": "centered"
+        }
+      },
+      {
+        "type": "Services",
+        "props": {
+          "id": "Services-00000003",
+          "title": "Our services",
+          "items": [],
+          "variant": "list"
+        }
+      },
+      {
+        "type": "Text",
+        "props": {
+          "id": "Text-00000004",
+          "title": "How we work"
+        }
+      },
+      {
+        "type": "FAQ",
+        "props": {
+          "id": "FAQ-00000005",
+          "title": "Questions we get asked",
+          "items": [],
+          "variant": "open"
+        }
+      },
+      {
+        "type": "ContactForm",
+        "props": {
+          "id": "ContactForm-00000006",
+          "title": "Book a consultation",
+          "phone": "{{phone}}",
+          "email": "{{email}}",
+          "address": "{{address}}",
+          "submit_label": "Send",
+          "variant": "side"
+        }
+      },
+      {
+        "type": "MapHours",
+        "props": {
+          "id": "MapHours-00000007",
+          "title": "Find us",
+          "address": "{{address}}",
+          "hours": [],
+          "variant": "side"
+        }
+      },
+      {
+        "type": "Footer",
+        "props": {
+          "id": "Footer-00000008",
+          "text": "{{name}}",
+          "phone": "{{phone}}",
+          "email": "{{email}}",
+          "address": "{{address}}",
+          "links": [],
+          "variant": "columns"
+        }
+      },
+      {
+        "type": "WhatsAppButton",
+        "props": {
+          "id": "WhatsAppButton-00000009",
+          "phone": "{{phone}}",
+          "label": "WhatsApp"
+        }
+      }
+    ]
+  }
+}

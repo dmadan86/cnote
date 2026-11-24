@@ -1,17 +1,19 @@
 {
   "key": "shop",
   "name": "Bazaar",
-  "description": "A website for your shop business.",
+  "order": 2,
+  "description": "Your shop's products up front, with prices from your items list. You choose which items appear.",
   "vertical": "Shop",
+  "style": "Playful",
   "data": {
     "root": {
       "props": {
         "title": "{{name}}",
         "theme": {
-          "primary": "#c2410c",
+          "primary": "#b93c0a",
           "background": "#fffbf5",
           "text": "#1c1917",
-          "font": "sans",
+          "font": "rounded",
           "radius": "lg"
         }
       }
@@ -22,7 +24,27 @@
         "props": {
           "id": "Header-00000001",
           "brand": "{{name}}",
-          "links": []
+          "links": [
+            {
+              "label": "Our products",
+              "href": "#Catalogue-00000003"
+            },
+            {
+              "label": "Gallery",
+              "href": "#Gallery-00000004"
+            },
+            {
+              "label": "What customers say",
+              "href": "#Testimonials-00000005"
+            },
+            {
+              "label": "Visit the shop",
+              "href": "#MapHours-00000006"
+            }
+          ],
+          "cta_label": "Enquire",
+          "cta_href": "#ContactForm-00000007",
+          "variant": "left"
         }
       },
       {
@@ -30,81 +52,77 @@
         "props": {
           "id": "Hero-00000002",
           "title": "{{name}}",
-          "align": "center"
+          "cta_label": "Enquire now",
+          "cta_href": "#ContactForm-00000007",
+          "align": "left",
+          "variant": "split"
+        }
+      },
+      {
+        "type": "Catalogue",
+        "props": {
+          "id": "Catalogue-00000003",
+          "title": "Our products",
+          "enquire": "both",
+          "variant": "grid"
         }
       },
       {
         "type": "Gallery",
         "props": {
-          "id": "Gallery-00000003",
+          "id": "Gallery-00000004",
           "title": "Gallery",
-          "items": []
-        }
-      },
-      {
-        "type": "Services",
-        "props": {
-          "id": "Services-00000004",
-          "title": "What we sell",
-          "items": [
-            {
-              "name": "Your first service",
-              "description": ""
-            }
-          ]
-        }
-      },
-      {
-        "type": "Pricing",
-        "props": {
-          "id": "Pricing-00000005",
-          "title": "Pricing",
-          "items": []
+          "items": [],
+          "variant": "strip"
         }
       },
       {
         "type": "Testimonials",
         "props": {
-          "id": "Testimonials-00000006",
-          "title": "Testimonials",
-          "items": []
+          "id": "Testimonials-00000005",
+          "title": "What customers say",
+          "items": [],
+          "variant": "cards"
         }
       },
       {
         "type": "MapHours",
         "props": {
-          "id": "MapHours-00000007",
-          "title": "Find us",
+          "id": "MapHours-00000006",
+          "title": "Visit the shop",
           "address": "{{address}}",
-          "hours": []
+          "hours": [],
+          "variant": "side"
         }
       },
       {
         "type": "ContactForm",
         "props": {
-          "id": "ContactForm-00000008",
+          "id": "ContactForm-00000007",
           "title": "Contact us",
           "phone": "{{phone}}",
           "email": "{{email}}",
           "address": "{{address}}",
-          "submit_label": "Send"
+          "submit_label": "Send",
+          "variant": "side"
         }
       },
       {
         "type": "Footer",
         "props": {
-          "id": "Footer-00000009",
+          "id": "Footer-00000008",
           "text": "{{name}}",
           "phone": "{{phone}}",
           "email": "{{email}}",
           "address": "{{address}}",
-          "links": []
+          "links": [],
+          "variant": "columns"
         }
       },
       {
         "type": "WhatsAppButton",
         "props": {
-          "id": "WhatsAppButton-0000000a",
+          "id": "WhatsAppButton-00000009",
           "phone": "{{phone}}",
           "label": "WhatsApp"
         }
