@@ -1,0 +1,172 @@
+{
+  "theme": {
+    "primary": {
+      "kind": "color"
+    },
+    "background": {
+      "kind": "color"
+    },
+    "text": {
+      "kind": "color"
+    },
+    "font": {
+      "kind": "enum",
+      "values": ["sans", "serif", "rounded"]
+    },
+    "radius": {
+      "kind": "enum",
+      "values": ["none", "sm", "md", "lg"]
+    }
+  },
+  "blocks": {
+    "Header": {
+      "label": "Header",
+      "max": 1,
+      "props": {
+        "brand": {
+          "kind": "text",
+          "max": 60,
+          "required": true
+        },
+        "links": {
+          "kind": "list",
+          "max": 5,
+          "props": {
+            "label": {
+              "kind": "text",
+              "max": 30
+            },
+            "href": {
+              "kind": "link"
+            }
+          }
+        },
+        "cta_label": {
+          "kind": "text",
+          "max": 30
+        },
+        "cta_href": {
+          "kind": "link"
+        }
+      }
+    },
+    "Hero": {
+      "label": "Hero",
+      "max": 1,
+      "props": {
+        "title": {
+          "kind": "text",
+          "max": 80,
+          "required": true
+        },
+        "subtitle": {
+          "kind": "longtext",
+          "max": 200
+        },
+        "cta_label": {
+          "kind": "text",
+          "max": 30
+        },
+        "cta_href": {
+          "kind": "link"
+        },
+        "image": {
+          "kind": "image"
+        },
+        "align": {
+          "kind": "enum",
+          "values": ["left", "center"]
+        }
+      }
+    },
+    "Services": {
+      "label": "Services",
+      "props": {
+        "title": {
+          "kind": "text",
+          "max": 80
+        },
+        "items": {
+          "kind": "list",
+          "max": 12,
+          "props": {
+            "name": {
+              "kind": "text",
+              "max": 60,
+              "required": true
+            },
+            "description": {
+              "kind": "longtext",
+              "max": 200
+            },
+            "price": {
+              "kind": "text",
+              "max": 30
+            }
+          }
+        }
+      }
+    },
+    "ContactForm": {
+      "label": "Contact form",
+      "max": 1,
+      "props": {
+        "title": {
+          "kind": "text",
+          "max": 80
+        },
+        "intro": {
+          "kind": "longtext",
+          "max": 200
+        },
+        "phone": {
+          "kind": "phone"
+        },
+        "email": {
+          "kind": "email"
+        },
+        "address": {
+          "kind": "longtext",
+          "max": 200
+        },
+        "submit_label": {
+          "kind": "text",
+          "max": 30
+        }
+      }
+    },
+    "Footer": {
+      "label": "Footer",
+      "max": 1,
+      "props": {
+        "text": {
+          "kind": "text",
+          "max": 120
+        },
+        "phone": {
+          "kind": "phone"
+        },
+        "email": {
+          "kind": "email"
+        },
+        "address": {
+          "kind": "longtext",
+          "max": 200
+        },
+        "links": {
+          "kind": "list",
+          "max": 5,
+          "props": {
+            "label": {
+              "kind": "text",
+              "max": 30
+            },
+            "href": {
+              "kind": "link"
+            }
+          }
+        }
+      }
+    }
+  }
+}
