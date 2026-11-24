@@ -605,22 +605,35 @@ export const homeWidgets: WidgetDef[] = [
   },
 ]
 
+// every tile the old Home showed (design section 16); each drops out when its data does not apply
+const ALL_TILES = [
+  'payments',
+  'bills',
+  'approvals',
+  'tasks',
+  'inquiries',
+  'follow_ups',
+  'tickets',
+  'low_stock',
+  'expiring',
+  'people',
+  'urgent',
+].map((k): [string, 's'] => [`tile.${k}`, 's'])
+const tiles = (...keep: string[]) => ALL_TILES.filter(([t]) => !keep.length || keep.includes(t))
+
 /** Starting layout by role; widgets whose module is off or that the person cannot use are dropped at render time. */
 export function homeDefaults(c: Pick<Ctx, 'role' | 'finance'>): [string, WidgetDef['sizes'][number]][] {
   const head: [string, 's' | 'm' | 'l'][] = [
     ['ask', 'l'],
     ['check_in', 'l'],
   ]
-  if (c.role === 'guest') return [...head, ['tile.tasks', 's'], ['list.attention', 'l']]
+  if (c.role === 'guest') return [...head, ...tiles('tile.tasks'), ['list.attention', 'l']]
   if (c.role === 'owner' || c.role === 'admin')
     return [
       ...head,
-      ['tile.payments', 's'],
+      ...tiles().slice(0, 1),
       ['kpi.sales', 's'],
-      ['tile.tasks', 's'],
-      ['tile.inquiries', 's'],
-      ['tile.approvals', 's'],
-      ['tile.urgent', 's'],
+      ...tiles().slice(1),
       ['chart.sales', 'm'],
       ['chart.ageing', 'm'],
       ['list.attention', 'l'],
@@ -629,21 +642,12 @@ export function homeDefaults(c: Pick<Ctx, 'role' | 'finance'>): [string, WidgetD
   if (c.finance)
     return [
       ...head,
-      ['tile.payments', 's'],
+      ...tiles().slice(0, 1),
       ['kpi.sales', 's'],
-      ['tile.tasks', 's'],
-      ['tile.inquiries', 's'],
+      ...tiles().slice(1),
       ['list.attention', 'l'],
       ['list.tasks', 'm'],
       ['chart.pipeline', 'm'],
     ]
-  return [
-    ...head,
-    ['tile.tasks', 's'],
-    ['tile.inquiries', 's'],
-    ['kpi.deals', 's'],
-    ['tile.follow_ups', 's'],
-    ['list.attention', 'l'],
-    ['list.tasks', 'm'],
-  ]
+  return [...head, ...tiles(), ['kpi.deals', 's'], ['list.attention', 'l'], ['list.tasks', 'm']]
 }
