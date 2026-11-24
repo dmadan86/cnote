@@ -229,3 +229,19 @@ dialog::backdrop {
   border-bottom: 2px solid #eab308;
   cursor: pointer;
 }
+
+/* Chart palette: colour-blind-safe categorical set (docs/design/dashboard-research.md); lighter steps in dark mode. */
+:root {
+  --chart-1: #12436d;
+  --chart-2: #28a197;
+  --chart-3: #801650;
+  --chart-4: #f46a25;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --chart-1: #7fb2e0;
+    --chart-2: #3cc3b6;
+    --chart-3: #d27aa8;
+    --chart-4: #f58d55;
+  }
+}

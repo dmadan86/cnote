@@ -26,6 +26,7 @@ func Commands() []command.Command {
 	return []command.Command{
 		nc("report.datasets", command.GroupRead, datasets),
 		nc("report.run", command.GroupRead, run),
+		nc("report.run_many", command.GroupRead, runMany),
 		nc("report.get", command.GroupRead, reportGet),
 		nc("report.list", command.GroupRead, reportList),
 		nc("report.save", command.GroupWriteNotes, reportSave),
@@ -263,26 +264,41 @@ func reportDelete(c *command.Ctx, input json.RawMessage) (any, error) {
 
 // ---------- run ----------
 
+type runIn struct {
+	Spec   *Spec   `json:"spec"`
+	ID     string  `json:"id"`
+	Period *Period `json:"period"`
+	Format string  `json:"format"`
+}
+
+const (
+	runBurst  = 20 // report.run bucket; report.run_many draws from the same one
+	runRefill = 2
+)
+
+func runBucket(c *command.Ctx) string { return "report.run:" + c.WorkspaceID() + ":" + uidOf(c) }
+
 func run(c *command.Ctx, input json.RawMessage) (any, error) {
-	var in struct {
-		Spec   *Spec   `json:"spec"`
-		ID     string  `json:"id"`
-		Period *Period `json:"period"`
-		Format string  `json:"format"`
-	}
+	var in runIn
 	if err := decode(input, &in); err != nil {
 		return nil, err
 	}
 	if in.Format != "" && in.Format != "csv" {
 		return nil, command.ErrInvalid("format is csv or omitted")
 	}
-	if err := command.CheckRateWith("report.run:"+c.WorkspaceID()+":"+uidOf(c), 20, 2); err != nil {
+	if err := command.CheckRateWith(runBucket(c), runBurst, runRefill); err != nil {
 		return nil, err
 	}
 	env, err := buildEnv(c)
 	if err != nil {
 		return nil, err
 	}
+	return runOne(c, env, in)
+}
+
+// runOne is the whole of report.run after the rate limit: visibility, readable spaces, module state, finance,
+// period, limits and timeout. report.run_many calls it once per run with the caller's own Env.
+func runOne(c *command.Ctx, env Env, in runIn) (any, error) {
 	var spec Spec
 	switch {
 	case in.ID != "":

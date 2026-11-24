@@ -395,5 +395,5 @@ func summary(c *command.Ctx, input json.RawMessage) (any, error) {
 	if role < command.Admin {
 		view = "personal"
 	}
-	return map[string]any{"as_of": today, "view": view, "tiles": tiles, "attention": r.items}, nil
+	return map[string]any{"as_of": today, "view": view, "finance": fin, "tiles": tiles, "attention": r.items}, nil
 }

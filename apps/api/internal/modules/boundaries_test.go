@@ -97,3 +97,22 @@ func TestModuleBoundaries(t *testing.T) {
 		t.Fatalf("new cross-module imports %v: call the other module through a registry command (c.Call) or an event instead, see docs/architecture/service-boundaries.md", added)
 	}
 }
+
+// uiconfig owns core.ui_configs and must stay movable on its own: no import of any other module.
+func TestUIConfigImportsNoModule(t *testing.T) {
+	files, _ := filepath.Glob("uiconfig/*.go")
+	if len(files) == 0 {
+		t.Fatal("uiconfig module missing")
+	}
+	for _, f := range files {
+		af, err := parser.ParseFile(token.NewFileSet(), f, nil, parser.ImportsOnly)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, im := range af.Imports {
+			if strings.Contains(im.Path.Value, "/internal/modules/") {
+				t.Errorf("%s imports %s", f, im.Path.Value)
+			}
+		}
+	}
+}
