@@ -1,0 +1,30 @@
+{
+  "valid": [
+    { "input": "sharmadental.in", "want": "sharmadental.in" },
+    { "input": "www.sharmadental.in", "want": "sharmadental.in" },
+    { "input": "SHARMADENTAL.IN", "want": "sharmadental.in" },
+    { "input": "sharmadental.in.", "want": "sharmadental.in" },
+    { "input": "www.sharmadental.in.", "want": "sharmadental.in" },
+    { "input": "example.co.uk", "want": "example.co.uk" },
+    { "input": "my-clinic.in", "want": "my-clinic.in" },
+    { "input": "a.b.c.example.com", "want": "a.b.c.example.com" },
+    { "input": "example.de", "want": "example.de" }
+  ],
+  "invalid": [
+    { "input": "192.168.1.1", "reason": "IP literal" },
+    { "input": "www.192.168.1.1", "reason": "IP literal" },
+    { "input": "mysub.cnote.site", "reason": "own domain" },
+    { "input": "localhost", "reason": "single label" },
+    { "input": "", "reason": "empty" },
+    { "input": "https://sharmadental.in", "reason": "has scheme" },
+    { "input": "xn--nxasmq6b.com", "reason": "IDN punycode" },
+    {
+      "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.com",
+      "reason": "too long"
+    },
+    { "input": "-bad.example.com", "reason": "invalid label" },
+    { "input": "bad..example.com", "reason": "invalid" },
+    { "input": "app.cnote.site", "reason": "app host" },
+    { "input": "bad-.example.com", "reason": "invalid label" }
+  ]
+}

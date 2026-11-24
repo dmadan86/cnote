@@ -1,0 +1,86 @@
+{
+  "slug": "terms",
+  "title": "Terms of Use",
+  "blocks": [
+    {
+      "type": "Text",
+      "props": {
+        "id": "Text-terms-0001",
+        "title": "Notice",
+        "body": "Template — not legal advice. Read it and have it checked before you publish."
+      }
+    },
+    {
+      "type": "Text",
+      "props": {
+        "id": "Text-terms-0002",
+        "title": "About This Website",
+        "body": "This website is owned and operated by {{name}}, located at {{address}}. By accessing or using this website, you agree to be bound by these Terms of Use. If you do not agree with any part of these terms, please do not use this website."
+      }
+    },
+    {
+      "type": "Text",
+      "props": {
+        "id": "Text-terms-0003",
+        "title": "Use of This Website",
+        "body": "This website is provided for general information purposes only. The content on this website does not constitute professional advice of any kind, including medical or dental advice, and no professional or advisory relationship is created between you and {{name}} by your use of this website. You should always consult a qualified professional before making decisions based on information found here."
+      }
+    },
+    {
+      "type": "Text",
+      "props": {
+        "id": "Text-terms-0004",
+        "title": "Accuracy of Information",
+        "body": "We make every effort to ensure the information on this website is accurate and up to date. However, information including service descriptions, prices, availability, and opening hours may change without notice. Please contact us directly at {{phone}} or {{email}} to confirm current details before making any decisions or bookings."
+      }
+    },
+    {
+      "type": "Text",
+      "props": {
+        "id": "Text-terms-0005",
+        "title": "Intellectual Property",
+        "body": "All content on this website, including text, images, graphics, logos, and layout, is the property of {{name}} or its licensors and is protected under applicable intellectual property laws. You may not reproduce, distribute, or use any content from this website without our prior written permission."
+      }
+    },
+    {
+      "type": "Text",
+      "props": {
+        "id": "Text-terms-0006",
+        "title": "Limitation of Liability",
+        "body": "To the fullest extent permitted by law, {{name}} shall not be liable for any indirect, incidental, special, or consequential losses arising from your use of or inability to use this website or any content on it. Our total liability in connection with this website shall not exceed the amount you paid, if any, to access it."
+      }
+    },
+    {
+      "type": "Text",
+      "props": {
+        "id": "Text-terms-0007",
+        "title": "Third-Party Links and Embedded Content",
+        "body": "This website may contain links to third-party websites or embed content from third-party providers such as YouTube, Google Maps, Google Forms, and Calendly. These links and embeds are provided for your convenience. We are not responsible for the content, accuracy, or privacy practices of any third-party website or service. Accessing third-party content is at your own risk."
+      }
+    },
+    {
+      "type": "Text",
+      "props": {
+        "id": "Text-terms-0008",
+        "title": "Governing Law and Jurisdiction",
+        "body": "These Terms of Use are governed by and construed in accordance with the laws of India. Any dispute arising out of or in connection with these terms shall be subject to the exclusive jurisdiction of the courts located at {{address}}."
+      }
+    },
+    {
+      "type": "Text",
+      "props": {
+        "id": "Text-terms-0009",
+        "title": "Contact Us",
+        "body": "If you have any questions about these Terms of Use, please contact us at {{email}} or call us at {{phone}}. You may also write to us at {{address}}. This website is available at {{url}}."
+      }
+    },
+    {
+      "type": "Text",
+      "props": {
+        "id": "Text-terms-0010",
+        "title": "Last Updated",
+        "body": "These Terms of Use were last updated on {{date}}."
+      }
+    }
+  ]
+}

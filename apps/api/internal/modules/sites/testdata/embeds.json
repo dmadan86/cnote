@@ -1,0 +1,161 @@
+{
+  "normalize": [
+    {
+      "input": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+      "provider": "youtube",
+      "ref": "dQw4w9WgXcQ",
+      "ok": true
+    },
+    {
+      "input": "https://youtu.be/dQw4w9WgXcQ",
+      "provider": "youtube",
+      "ref": "dQw4w9WgXcQ",
+      "ok": true
+    },
+    {
+      "input": "https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ",
+      "provider": "youtube",
+      "ref": "dQw4w9WgXcQ",
+      "ok": true
+    },
+    {
+      "input": "<iframe src=\"https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ\" width=\"560\" height=\"315\" allowfullscreen></iframe>",
+      "provider": "youtube",
+      "ref": "dQw4w9WgXcQ",
+      "ok": true
+    },
+    {
+      "input": "https://www.google.com/maps/embed?pb=1BCABAlxyz_TestPbValue123abc456def789ghi",
+      "provider": "google_maps",
+      "ref": "1BCABAlxyz_TestPbValue123abc456def789ghi",
+      "ok": true
+    },
+    {
+      "input": "<iframe src=\"https://www.google.com/maps/embed?pb=1BCABAlxyz_TestPbValue123abc456def789ghi\" width=\"600\" height=\"450\" allowfullscreen loading=\"lazy\"></iframe>",
+      "provider": "google_maps",
+      "ref": "1BCABAlxyz_TestPbValue123abc456def789ghi",
+      "ok": true
+    },
+    {
+      "input": "https://docs.google.com/forms/d/e/1FAIpQLSc_abcdefgh1234EFGH5678ijkl/viewform",
+      "provider": "google_forms",
+      "ref": "1FAIpQLSc_abcdefgh1234EFGH5678ijkl",
+      "ok": true
+    },
+    {
+      "input": "https://docs.google.com/forms/d/e/1FAIpQLSc_abcdefgh1234EFGH5678ijkl/viewform?embedded=true",
+      "provider": "google_forms",
+      "ref": "1FAIpQLSc_abcdefgh1234EFGH5678ijkl",
+      "ok": true
+    },
+    {
+      "input": "https://calendly.com/sharmadental",
+      "provider": "calendly",
+      "ref": "sharmadental",
+      "ok": true
+    },
+    {
+      "input": "https://calendly.com/sharmadental/consultation",
+      "provider": "calendly",
+      "ref": "sharmadental/consultation",
+      "ok": true
+    },
+    {
+      "input": "javascript:alert(1)",
+      "ok": false,
+      "error_contains": "scheme"
+    },
+    {
+      "input": "<iframe src=\"https://evil.example.com/widget\"></iframe>",
+      "ok": false,
+      "error_contains": "provider"
+    },
+    {
+      "input": "https://vimeo.com/123456789",
+      "ok": false,
+      "error_contains": "provider"
+    },
+    {
+      "input": "https://maps.app.goo.gl/abc123",
+      "ok": false,
+      "error_contains": "provider"
+    },
+    {
+      "input": "https://forms.gle/abc123",
+      "ok": false,
+      "error_contains": "provider"
+    },
+    {
+      "input": "<iframe src=\"javascript:alert(1)\"></iframe>",
+      "ok": false,
+      "error_contains": "scheme"
+    },
+    {
+      "input": "https://www.youtube.com/watch?v=TOOLONG12CH",
+      "ok": false,
+      "error_contains": "ref"
+    },
+    {
+      "input": "<iframe width=\"560\" height=\"315\" allowfullscreen></iframe>",
+      "ok": false,
+      "error_contains": "src"
+    },
+    {
+      "input": "",
+      "ok": false,
+      "error_contains": "empty"
+    }
+  ],
+  "src": [
+    {
+      "provider": "youtube",
+      "ref": "dQw4w9WgXcQ",
+      "want": "https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ",
+      "ok": true
+    },
+    {
+      "provider": "google_maps",
+      "ref": "1BCABAlxyz_TestPbValue123abc456def789ghi",
+      "want": "https://www.google.com/maps/embed?pb=1BCABAlxyz_TestPbValue123abc456def789ghi",
+      "ok": true
+    },
+    {
+      "provider": "google_forms",
+      "ref": "1FAIpQLSc_abcdefgh1234EFGH5678ijkl",
+      "want": "https://docs.google.com/forms/d/e/1FAIpQLSc_abcdefgh1234EFGH5678ijkl/viewform?embedded=true",
+      "ok": true
+    },
+    {
+      "provider": "calendly",
+      "ref": "sharmadental",
+      "want": "https://calendly.com/sharmadental",
+      "ok": true
+    },
+    {
+      "provider": "calendly",
+      "ref": "sharmadental/consultation",
+      "want": "https://calendly.com/sharmadental/consultation",
+      "ok": true
+    },
+    {
+      "provider": "youtube",
+      "ref": "BAD REF!!!",
+      "ok": false
+    },
+    {
+      "provider": "youtube",
+      "ref": "",
+      "ok": false
+    },
+    {
+      "provider": "google_maps",
+      "ref": "x",
+      "ok": false
+    },
+    {
+      "provider": "unknown_provider",
+      "ref": "anything",
+      "ok": false
+    }
+  ]
+}

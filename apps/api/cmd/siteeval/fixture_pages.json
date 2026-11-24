@@ -1,0 +1,242 @@
+{
+  "root": {
+    "props": {
+      "title": "Sharma Dental",
+      "description": "Expert dental care for the whole family in Pune.",
+      "theme": {
+        "primary": "#4f46e5",
+        "background": "#ffffff",
+        "text": "#111827",
+        "font": "sans",
+        "radius": "md"
+      }
+    }
+  },
+  "content": [
+    {
+      "type": "Header",
+      "props": {
+        "id": "Header-a1b2c3d4",
+        "brand": "Sharma Dental",
+        "links": [
+          { "label": "Home", "href": "https://sharmadental.in/" },
+          { "label": "Services", "href": "#Services-0c7e8a9b" },
+          { "label": "Contact", "href": "#ContactForm-1a2b3c4d" }
+        ],
+        "cta_label": "Book Appointment",
+        "cta_href": "tel:+919876543210"
+      }
+    },
+    {
+      "type": "Hero",
+      "props": {
+        "id": "Hero-d4e5f6a7",
+        "title": "Sharma Dental",
+        "subtitle": "Expert dental care for your whole family. We provide gentle, compassionate dentistry in a comfortable environment.",
+        "cta_label": "Book Appointment",
+        "cta_href": "tel:+919876543210",
+        "align": "center"
+      }
+    },
+    {
+      "type": "About",
+      "props": {
+        "id": "About-b2c3d4e5",
+        "title": "About Us",
+        "body": "Sharma Dental has been serving patients in Pune for over 15 years. Our experienced team of dentists uses the latest technology to provide gentle and effective care for patients of all ages. We believe every patient deserves a healthy, confident smile."
+      }
+    },
+    {
+      "type": "Services",
+      "props": {
+        "id": "Services-0c7e8a9b",
+        "title": "Our Services",
+        "items": [
+          {
+            "name": "General Check-up",
+            "description": "Comprehensive dental examination and cleaning for all ages.",
+            "price": "₹500"
+          },
+          {
+            "name": "Teeth Whitening",
+            "description": "Professional whitening to brighten your smile.",
+            "price": "₹3,000"
+          },
+          {
+            "name": "Root Canal Treatment",
+            "description": "Pain-free root canal therapy to save your natural tooth.",
+            "price": "₹5,000"
+          },
+          {
+            "name": "Dental Implants",
+            "description": "Permanent tooth replacement with titanium implants.",
+            "price": "₹25,000"
+          },
+          {
+            "name": "Braces & Aligners",
+            "description": "Straighten your teeth with traditional braces or clear aligners.",
+            "price": "₹35,000"
+          },
+          {
+            "name": "Tooth Extraction",
+            "description": "Safe and gentle extraction when necessary.",
+            "price": "₹800"
+          }
+        ]
+      }
+    },
+    {
+      "type": "Pricing",
+      "props": {
+        "id": "Pricing-c3d4e5f6",
+        "title": "Treatment Packages",
+        "note": "Prices include consultation. EMI available.",
+        "items": [
+          {
+            "name": "Basic Care",
+            "price": "₹999",
+            "description": "Check-up, cleaning and X-ray."
+          },
+          {
+            "name": "Smile Makeover",
+            "price": "₹15,000",
+            "description": "Whitening, bonding and polish."
+          },
+          {
+            "name": "Implant Package",
+            "price": "₹28,000",
+            "description": "Single implant with crown and follow-up."
+          }
+        ]
+      }
+    },
+    {
+      "type": "Gallery",
+      "props": {
+        "id": "Gallery-d4e5f6a7",
+        "title": "Our Clinic",
+        "items": []
+      }
+    },
+    {
+      "type": "FAQ",
+      "props": {
+        "id": "FAQ-e5f6a7b8",
+        "title": "Frequently Asked Questions",
+        "items": [
+          {
+            "question": "Do you treat children?",
+            "answer": "Yes, we welcome patients of all ages including young children. Our team is trained in paediatric dentistry to make the experience comfortable."
+          },
+          {
+            "question": "Is root canal treatment painful?",
+            "answer": "Modern root canal treatment is performed under local anaesthesia and is no more uncomfortable than a routine filling. Most patients are surprised at how painless the procedure is."
+          },
+          {
+            "question": "How often should I visit the dentist?",
+            "answer": "We recommend a check-up and clean every six months to catch any issues early and keep your teeth and gums healthy."
+          }
+        ]
+      }
+    },
+    {
+      "type": "Testimonials",
+      "props": {
+        "id": "Testimonials-f6a7b8c9",
+        "title": "What Our Patients Say",
+        "items": []
+      }
+    },
+    {
+      "type": "CallToAction",
+      "props": {
+        "id": "CallToAction-a7b8c9d0",
+        "title": "Ready for a Healthier Smile?",
+        "text": "Book your appointment today and take the first step toward better dental health.",
+        "cta_label": "Book Now",
+        "cta_href": "tel:+919876543210"
+      }
+    },
+    {
+      "type": "MapHours",
+      "props": {
+        "id": "MapHours-b8c9d0e1",
+        "title": "Find Us",
+        "address": "12, MG Road, Pune 411001, Maharashtra",
+        "map_url": "https://www.google.com/maps/search/?api=1&query=12+MG+Road+Pune",
+        "hours": [
+          { "days": "Monday \u2013 Friday", "time": "9:00 AM \u2013 7:00 PM" },
+          { "days": "Saturday", "time": "9:00 AM \u2013 5:00 PM" },
+          { "days": "Sunday", "time": "Closed" }
+        ]
+      }
+    },
+    {
+      "type": "WhatsAppButton",
+      "props": {
+        "id": "WhatsAppButton-c9d0e1f2",
+        "phone": "+91 98765 43210",
+        "message": "Hi, I would like to book a dental appointment.",
+        "label": "Chat on WhatsApp"
+      }
+    },
+    {
+      "type": "ContactForm",
+      "props": {
+        "id": "ContactForm-1a2b3c4d",
+        "title": "Contact Us",
+        "intro": "Book an appointment or ask us anything. We respond within one business day.",
+        "phone": "+91 98765 43210",
+        "email": "hello@sharmadental.in",
+        "address": "12, MG Road, Pune 411001, Maharashtra",
+        "submit_label": "Send Message"
+      }
+    },
+    {
+      "type": "Footer",
+      "props": {
+        "id": "Footer-4e5f6a7b",
+        "text": "\u00a9 2026 Sharma Dental. All rights reserved.",
+        "phone": "+91 98765 43210",
+        "email": "hello@sharmadental.in",
+        "address": "12, MG Road, Pune 411001, Maharashtra",
+        "links": [
+          { "label": "Privacy Policy", "href": "https://sharmadental.in/privacy" },
+          { "label": "Terms", "href": "https://sharmadental.in/terms" }
+        ]
+      }
+    }
+  ],
+  "pages": [
+    {
+      "slug": "about",
+      "title": "About Us",
+      "description": "Learn more about Sharma Dental Clinic and our team.",
+      "content": [
+        {
+          "type": "Text",
+          "props": {
+            "id": "Text-about-0001",
+            "title": "Our Story",
+            "body": "Sharma Dental has been serving patients in Pune since 2008. Our team of experienced dentists is committed to making every visit comfortable and stress-free."
+          }
+        }
+      ]
+    },
+    {
+      "slug": "pricing",
+      "title": "Treatment Packages",
+      "description": "Transparent pricing for all our dental treatments.",
+      "content": [
+        {
+          "type": "Text",
+          "props": {
+            "id": "Text-pricing-0001",
+            "title": "Our Packages",
+            "body": "We offer clear, upfront pricing for all treatments. EMI available on treatments above \u20b95,000."
+          }
+        }
+      ]
+    }
+  ]
+}
