@@ -25,6 +25,7 @@ func Commands() []command.Command {
 		return c
 	}
 	return append([]command.Command{
+		internalStepCommand(),
 		command.NewCommand("search.hybrid", command.GroupRead, searchHybrid),
 		command.NewCommand("ai.summarize", command.GroupRead, summarize),
 		command.NewCommand("ai.extract_tasks", command.GroupRead, extractTasks),

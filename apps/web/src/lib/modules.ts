@@ -3,6 +3,7 @@ import {
   BookOpen,
   FileText,
   FolderKanban,
+  Globe,
   Home,
   type LucideIcon,
   Presentation,
@@ -21,6 +22,7 @@ export const MODULES: ModuleDef[] = [
   { key: 'billing', label: 'Billing', icon: Receipt },
   { key: 'reports', label: 'Reports', icon: BarChart3 },
   { key: 'whiteboard', label: 'Whiteboard', icon: Presentation },
+  { key: 'site', label: 'Website', icon: Globe },
 ]
 
 /** settings.modules: missing = all enabled. Home and Reports are always on (Reports hides datasets of switched-off modules itself). */

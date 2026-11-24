@@ -1,0 +1,106 @@
+{
+  "root": {
+    "props": {
+      "title": "Sharma Dental",
+      "theme": {
+        "primary": "#4f46e5",
+        "background": "#ffffff",
+        "text": "#111827",
+        "font": "sans",
+        "radius": "md"
+      }
+    }
+  },
+  "content": [
+    {
+      "type": "Header",
+      "props": {
+        "id": "Header-a1b2c3d4",
+        "brand": "Sharma Dental",
+        "links": [
+          { "label": "Home", "href": "https://sharmadental.in/" },
+          { "label": "Services", "href": "#Services-0c7e8a9b" },
+          { "label": "Contact", "href": "#ContactForm-1a2b3c4d" }
+        ],
+        "cta_label": "Book Appointment",
+        "cta_href": "tel:+919876543210"
+      }
+    },
+    {
+      "type": "Hero",
+      "props": {
+        "id": "Hero-d4e5f6a7",
+        "title": "Sharma Dental",
+        "subtitle": "Expert dental care for your whole family. We provide gentle, compassionate dentistry in a comfortable environment.",
+        "cta_label": "Book Appointment",
+        "cta_href": "tel:+919876543210",
+        "align": "center"
+      }
+    },
+    {
+      "type": "Services",
+      "props": {
+        "id": "Services-0c7e8a9b",
+        "title": "Our Services",
+        "items": [
+          {
+            "name": "General Check-up",
+            "description": "Comprehensive dental examination and cleaning for all ages.",
+            "price": "₹500"
+          },
+          {
+            "name": "Teeth Whitening",
+            "description": "Professional whitening to brighten your smile.",
+            "price": "₹3,000"
+          },
+          {
+            "name": "Root Canal Treatment",
+            "description": "Pain-free root canal therapy to save your natural tooth.",
+            "price": "₹5,000"
+          },
+          {
+            "name": "Dental Implants",
+            "description": "Permanent tooth replacement with titanium implants.",
+            "price": "₹25,000"
+          },
+          {
+            "name": "Braces & Aligners",
+            "description": "Straighten your teeth with traditional braces or clear aligners.",
+            "price": "₹35,000"
+          },
+          {
+            "name": "Tooth Extraction",
+            "description": "Safe and gentle extraction when necessary.",
+            "price": "₹800"
+          }
+        ]
+      }
+    },
+    {
+      "type": "ContactForm",
+      "props": {
+        "id": "ContactForm-1a2b3c4d",
+        "title": "Contact Us",
+        "intro": "Book an appointment or ask us anything. We respond within one business day.",
+        "phone": "+91 98765 43210",
+        "email": "hello@sharmadental.in",
+        "address": "12, MG Road, Pune 411001, Maharashtra",
+        "submit_label": "Send Message"
+      }
+    },
+    {
+      "type": "Footer",
+      "props": {
+        "id": "Footer-4e5f6a7b",
+        "text": "© 2026 Sharma Dental. All rights reserved.",
+        "phone": "+91 98765 43210",
+        "email": "hello@sharmadental.in",
+        "address": "12, MG Road, Pune 411001, Maharashtra",
+        "links": [
+          { "label": "Privacy Policy", "href": "https://sharmadental.in/privacy" },
+          { "label": "Terms", "href": "https://sharmadental.in/terms" }
+        ]
+      }
+    }
+  ]
+}

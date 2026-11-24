@@ -1,0 +1,67 @@
+{
+  "root": {
+    "props": {
+      "title": "{{name}}",
+      "theme": {
+        "primary": "#4f46e5",
+        "background": "#ffffff",
+        "text": "#111827",
+        "font": "sans",
+        "radius": "md"
+      }
+    }
+  },
+  "content": [
+    {
+      "type": "Header",
+      "props": {
+        "id": "Header-00000001",
+        "brand": "{{name}}",
+        "links": []
+      }
+    },
+    {
+      "type": "Hero",
+      "props": {
+        "id": "Hero-00000002",
+        "title": "{{name}}",
+        "align": "center"
+      }
+    },
+    {
+      "type": "Services",
+      "props": {
+        "id": "Services-00000003",
+        "title": "Our services",
+        "items": [
+          {
+            "name": "Your first service",
+            "description": ""
+          }
+        ]
+      }
+    },
+    {
+      "type": "ContactForm",
+      "props": {
+        "id": "ContactForm-00000004",
+        "title": "Contact us",
+        "phone": "{{phone}}",
+        "email": "{{email}}",
+        "address": "{{address}}",
+        "submit_label": "Send"
+      }
+    },
+    {
+      "type": "Footer",
+      "props": {
+        "id": "Footer-00000005",
+        "text": "{{name}}",
+        "phone": "{{phone}}",
+        "email": "{{email}}",
+        "address": "{{address}}",
+        "links": []
+      }
+    }
+  ]
+}

@@ -56,6 +56,8 @@ func Commands() []command.Command {
 	}
 	R, W, A, M := command.GroupRead, command.GroupWriteNotes, command.GroupAdmin, command.Member
 	return []command.Command{
+		budgetCommand("agent.budget_reserve", budgetReserve),
+		budgetCommand("agent.budget_settle", budgetSettle),
 		mk("agent.templates", R, M, false, "List the AI employee templates (ask, briefing, lead_responder, support) with their tools, triggers, the workspace switches each needs, and the installed agent id.", sch(nil, props{}), templatesCmd),
 		mk("agent.install", A, command.Admin, true, "Install an AI employee template as an agent owned by the caller. at is the daily time (IST) for the briefing; channel_id is where the briefing posts; quotes lets the lead responder draft quotations.",
 			sch([]string{"template"}, props{"template": tStr, "at": tStr, "channel_id": tID, "quotes": tBool}), install),
@@ -836,4 +838,40 @@ func runCancel(c *command.Ctx, raw json.RawMessage) (any, error) {
 		return props{"status": r["status"]}, nil // already finished: nothing to cancel
 	}
 	return props{"status": status}, command.DB(err)
+}
+
+func budgetCommand(name string, handler command.Handler) command.Command {
+	c := command.NewCommand(name, command.GroupRead, handler)
+	c.Internal = true
+	return c
+}
+func budgetReserve(c *command.Ctx, raw json.RawMessage) (any, error) {
+	var in struct {
+		Tokens int64 `json:"tokens"`
+	}
+	if json.Unmarshal(raw, &in) != nil || in.Tokens <= 0 {
+		return nil, command.ErrInvalid("tokens must be positive")
+	}
+	day := time.Now().UTC().Format("2006-01-02")
+	if err := reserve(c, day, in.Tokens); err != nil {
+		return nil, err
+	}
+	return map[string]string{"day": day}, nil
+}
+func budgetSettle(c *command.Ctx, raw json.RawMessage) (any, error) {
+	var in struct {
+		Day      string `json:"day"`
+		Reserved int64  `json:"reserved"`
+		Used     int64  `json:"used"`
+	}
+	if json.Unmarshal(raw, &in) != nil || in.Reserved < 0 || in.Used < 0 {
+		return nil, command.ErrInvalid("invalid budget settlement")
+	}
+	if _, err := time.Parse("2006-01-02", in.Day); err != nil {
+		return nil, command.ErrInvalid("invalid budget day")
+	}
+	if err := settle(c, in.Day, in.Reserved, in.Used); err != nil {
+		return nil, err
+	}
+	return map[string]any{}, nil
 }

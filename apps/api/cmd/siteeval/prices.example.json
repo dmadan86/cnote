@@ -1,0 +1,43 @@
+{
+  "_comment": "USD per million tokens. cache_read_ratio is the fraction of input_usd applied to cached tokens. Fill in OpenAI and Sarvam entries before running.",
+  "models": [
+    {
+      "provider": "anthropic",
+      "model": "claude-haiku-5-5",
+      "input_usd": 0.1,
+      "output_usd": 0.5,
+      "cache_read_ratio": 0.1
+    },
+    {
+      "provider": "anthropic",
+      "model": "claude-sonnet-5-5",
+      "input_usd": 2.0,
+      "output_usd": 10.0,
+      "cache_read_ratio": 0.1
+    },
+    {
+      "provider": "openai",
+      "model": "gpt-4o-mini",
+      "input_usd": 0,
+      "output_usd": 0,
+      "cache_read_ratio": 0.5,
+      "_note": "Fill in actual prices from https://openai.com/api/pricing/"
+    },
+    {
+      "provider": "openai",
+      "model": "gpt-4o",
+      "input_usd": 0,
+      "output_usd": 0,
+      "cache_read_ratio": 0.5,
+      "_note": "Fill in actual prices from https://openai.com/api/pricing/"
+    },
+    {
+      "provider": "sarvam",
+      "model": "sarvam-m",
+      "input_usd": 0,
+      "output_usd": 0,
+      "cache_read_ratio": 0.0,
+      "_note": "Fill in actual prices from https://www.sarvam.ai/pricing"
+    }
+  ]
+}

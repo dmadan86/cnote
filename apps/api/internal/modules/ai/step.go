@@ -135,15 +135,23 @@ func redactContent(s string) string {
 // Record writes the ai.audit row and, unless the workspace brings its own key, the core.usage rows for one step.
 // ref is the audit prompt, e.g. {run_id, seq}; a map with run_id or agent_id also puts them in the usage meta.
 func (s *Session) Record(c *command.Ctx, ref any, res StepResult) error {
+	return s.recordAs(c, "agent.step", ref, res, nil, refMeta(ref))
+}
+
+func refMeta(ref any) map[string]string {
 	meta := map[string]string{}
 	if m, ok := ref.(map[string]any); ok {
-		for _, k := range []string{"run_id", "agent_id"} {
+		for _, k := range []string{"run_id", "agent_id", "site_id", "turn_id"} {
 			if v, ok := m[k].(string); ok {
 				meta[k] = v
 			}
 		}
 	}
-	return record(c, s.r, res.Provider, res.Model, "agent.step", ref, nil, res.TokensIn, res.TokensOut, meta)
+	return meta
+}
+
+func (s *Session) recordAs(c *command.Ctx, purpose string, ref any, res StepResult, response any, meta map[string]string) error {
+	return record(c, s.r, res.Provider, res.Model, purpose, ref, response, res.TokensIn, res.TokensOut, meta)
 }
 
 // Complete runs a one-shot completion with the workspace's key, redaction, audit and metering.
@@ -492,4 +500,54 @@ func (Local) Step(_ context.Context, r StepRequest) (StepResult, error) {
 
 func (c Composite) Step(ctx context.Context, r StepRequest) (StepResult, error) {
 	return c.Chat.Step(ctx, r)
+}
+
+// internalStepCommand exposes one metered step to other modules through Ctx.Call.
+func internalStepCommand() command.Command {
+	c := command.NewCommand("ai.step", command.GroupRead, stepCommand)
+	c.Internal = true
+	return c
+}
+
+// shortcut: ai.step holds a tenant transaction open during the provider call, as
+// ai.summarize and ai.draft do today; give it its own connection handling if lane count grows past a handful.
+//
+// A provider failure is answered as {error, status} (not as an error) so the failed call is still audited: an
+// error would roll the caller's transaction back with the audit row in it.
+func stepCommand(c *command.Ctx, raw json.RawMessage) (any, error) {
+	var in struct {
+		StepRequest
+		Tier string
+		Ref  any
+	}
+	if err := json.Unmarshal(raw, &in); err != nil {
+		return nil, command.ErrInvalid("invalid step request")
+	}
+	session, err := Open(c)
+	if err != nil {
+		return nil, err
+	}
+	purpose := "agent.step"
+	if in.Purpose == "site.chat" {
+		purpose = in.Purpose
+	}
+	in.Model = session.ModelFor(in.Tier)
+	meta := refMeta(in.Ref)
+	result, err := session.Step(c.Context, in.StepRequest)
+	if err != nil {
+		status := 0
+		var api *APIError
+		if errors.As(err, &api) {
+			status = api.Status
+		}
+		failed := StepResult{Provider: session.r.provider.Name(), Model: in.Model}
+		if rerr := session.recordAs(c, purpose, in.Ref, failed, map[string]any{"error": err.Error(), "status": status}, meta); rerr != nil {
+			return nil, rerr
+		}
+		return map[string]any{"error": err.Error(), "status": status}, nil
+	}
+	if err = session.recordAs(c, purpose, in.Ref, result, nil, meta); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
