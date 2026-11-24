@@ -105,7 +105,7 @@ test.describe('configurable Home', () => {
     await page.getByRole('button', { name: 'Customise' }).click()
     await page.getByRole('button', { name: 'Reset to default' }).click()
     await page.getByRole('dialog').getByRole('button', { name: 'Reset', exact: true }).click()
-    await expect(page.getByRole('alert')).toBeVisible()
+    await expect(page.getByRole('alert').filter({ hasText: /\S/ })).toBeVisible() // Next adds an empty route-announcer alert
     await page.getByRole('button', { name: 'Cancel' }).click()
     // still the custom layout, not the defaults
     await expect(page.getByRole('form', { name: 'Ask your business' })).toHaveCount(0)
