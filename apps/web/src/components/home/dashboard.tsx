@@ -24,8 +24,7 @@ import { useShell } from '@/components/shell'
 import { EmptyState } from '@/components/ui'
 import { useCmd } from '@/lib/hooks'
 
-type Tile<T> = T | undefined
-type Summary = {
+export type Summary = {
   view: 'owner' | 'personal'
   tiles: {
     tasks_due?: { count: number; overdue: number }
@@ -57,7 +56,7 @@ type Summary = {
   }[]
 }
 
-const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`
+export const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`
 
 const compact = new Intl.NumberFormat('en-IN', {
   style: 'currency',
@@ -69,7 +68,7 @@ const compact = new Intl.NumberFormat('en-IN', {
 const shortMoney = (minor: number) =>
   Math.abs(minor) >= 10_000_000 ? compact.format(minor / 100) : money(minor).replace(/\.00$/, '')
 
-const KIND: Record<Summary['attention'][number]['kind'], { icon: LucideIcon; label: string }> = {
+export const KIND: Record<Summary['attention'][number]['kind'], { icon: LucideIcon; label: string }> = {
   task: { icon: ListChecks, label: 'Task' },
   invoice: { icon: Receipt, label: 'Invoice' },
   bill: { icon: Banknote, label: 'Bill' },
@@ -78,13 +77,13 @@ const KIND: Record<Summary['attention'][number]['kind'], { icon: LucideIcon; lab
   confirmation: { icon: ShieldCheck, label: 'Confirm' },
   approval: { icon: ClipboardCheck, label: 'Approval' },
 }
-const GROUPS = [
+export const GROUPS = [
   { sev: 'overdue', title: 'Overdue', tone: 'bg-bad-bg text-bad' },
   { sev: 'due', title: 'Due now', tone: 'bg-warn-bg text-warn' },
   { sev: 'info', title: 'For your information', tone: 'bg-hover text-muted' },
 ] as const
 
-function TileLink({
+export function TileLink({
   href,
   label,
   value,
@@ -131,32 +130,8 @@ function TileLink({
   )
 }
 
-export function HomeDashboard() {
-  const { ws } = useShell()
-  const [branch, setBranch] = useState('')
-  const { data, error } = useCmd<Summary>(ws, 'home.summary', branch ? { branch_id: branch } : {})
-  const [all, setAll] = useState(false)
-  const base = `/w/${ws}`
-  if (error)
-    return (
-      <p role="alert" className="text-muted">
-        Could not load your summary.
-      </p>
-    )
-  if (!data) return <Skeleton />
-  const t = data.tiles
-  const href = (a: Summary['attention'][number]) =>
-    ({
-      task: `${base}/projects/${a.key}`,
-      invoice: `${base}/billing/${a.id}`,
-      bill: `${base}/billing/bills/${a.id}`,
-      quote: `${base}/billing/quotes/${a.id}`,
-      deal: `${base}/crm/deals/${a.id}`,
-      confirmation: `${base}/settings?tab=Confirmations`,
-      approval: `${base}/approvals`,
-    })[a.kind]
-  const rows = all ? data.attention : data.attention.slice(0, 5)
-  const tiles: Tile<React.ReactNode>[] = [
+export function summaryTiles(t: Summary['tiles'], base: string) {
+  return [
     t.payments_pending && (
       <TileLink
         key="pay"
@@ -305,7 +280,35 @@ export function HomeDashboard() {
         detail={`${plural(t.urgent.overdue_tasks, 'overdue task')}, ${plural(t.urgent.overdue_invoices, 'overdue invoice')}`}
       />
     ),
-  ].filter(Boolean)
+  ].filter((x): x is React.ReactElement<{ big?: boolean; label: string }> => !!x)
+}
+
+export function HomeDashboard() {
+  const { ws } = useShell()
+  const [branch, setBranch] = useState('')
+  const { data, error } = useCmd<Summary>(ws, 'home.summary', branch ? { branch_id: branch } : {})
+  const [all, setAll] = useState(false)
+  const base = `/w/${ws}`
+  if (error)
+    return (
+      <p role="alert" className="text-muted">
+        Could not load your summary.
+      </p>
+    )
+  if (!data) return <Skeleton />
+  const t = data.tiles
+  const href = (a: Summary['attention'][number]) =>
+    ({
+      task: `${base}/projects/${a.key}`,
+      invoice: `${base}/billing/${a.id}`,
+      bill: `${base}/billing/bills/${a.id}`,
+      quote: `${base}/billing/quotes/${a.id}`,
+      deal: `${base}/crm/deals/${a.id}`,
+      confirmation: `${base}/settings?tab=Confirmations`,
+      approval: `${base}/approvals`,
+    })[a.kind]
+  const rows = all ? data.attention : data.attention.slice(0, 5)
+  const tiles = summaryTiles(t, base)
 
   const bigTiles = tiles.filter((x) => (x as React.ReactElement<{ big?: boolean }>).props.big)
   const smallTiles = tiles.filter((x) => !(x as React.ReactElement<{ big?: boolean }>).props.big)
@@ -455,7 +458,7 @@ export function HomeDashboard() {
 }
 
 /** Thin share bar; the numbers beside it carry the meaning, so it is decorative. */
-function AskCard() {
+export function AskCard() {
   const { openAsk } = useShell()
   const [q, setQ] = useState('')
   return (
