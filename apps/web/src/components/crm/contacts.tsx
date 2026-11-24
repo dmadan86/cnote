@@ -1,8 +1,9 @@
 'use client'
 import { Plus, Search, Users } from 'lucide-react'
 import Link from 'next/link'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { type Contact, STATES, stateName } from '@/components/billing/fmt'
+import { type Column, ListTable } from '@/components/list-table'
 import { useShell } from '@/components/shell'
 import { btn, btnPrimary, EmptyState, ErrorText, Field, inputCls, Modal } from '@/components/ui'
 import { cmd } from '@/lib/api'
@@ -138,11 +139,55 @@ export function NeedSpace() {
   )
 }
 
+const LIMIT = 500
+
 export function ContactsList() {
   const { ws, spaces } = useShell()
   const [q, setQ] = useState('')
   const [adding, setAdding] = useState(false)
-  const { data, error, reload } = useCmd<Contact[]>(ws, 'contact.list', { q, limit: 500 })
+  const { data, error, reload } = useCmd<Contact[]>(ws, 'contact.list', { q, limit: LIMIT })
+  const columns = useMemo<Column<Contact>[]>(
+    () => [
+      {
+        key: 'name',
+        label: 'Name',
+        locked: true,
+        sort: (c) => c.name,
+        cell: (c) => (
+          <Link href={`/w/${ws}/crm/contacts/${c.id}`} className="hover:underline">
+            {c.name}
+          </Link>
+        ),
+      },
+      {
+        key: 'type',
+        label: 'Type',
+        sort: (c) => c.kind,
+        cell: (c) => <span className="capitalize">{c.kind}</span>,
+      },
+      {
+        key: 'email',
+        label: 'Email',
+        sort: (c) => c.email,
+        cell: (c) => <span className="text-muted">{c.email}</span>,
+      },
+      {
+        key: 'gstin',
+        label: 'GSTIN',
+        sort: (c) => c.gstin,
+        cell: (c) => <span className="font-mono text-[13px]">{c.gstin}</span>,
+      },
+      {
+        key: 'state',
+        label: 'State',
+        sort: (c) => stateName(c.state_code),
+        cell: (c) => stateName(c.state_code),
+      },
+      { key: 'phone', label: 'Phone', hidden: true, sort: (c) => c.phone, cell: (c) => c.phone },
+      { key: 'company', label: 'Company', hidden: true, sort: (c) => c.company, cell: (c) => c.company },
+    ],
+    [ws],
+  )
   return (
     <div>
       <div className="mb-3 flex items-center gap-2">
@@ -170,51 +215,35 @@ export function ContactsList() {
       </div>
       <ErrorText error={error} />
       {!spaces.length && <NeedSpace />}
-      {data?.length === 0 && spaces.length > 0 && (
-        <EmptyState
-          icon={q ? Search : Users}
-          title={q ? 'No contacts match' : 'No contacts yet'}
-          action={
-            q ? undefined : (
-              <button type="button" className={btnPrimary} onClick={() => setAdding(true)}>
-                <Plus size={14} /> Add first contact
-              </button>
-            )
-          }
-        >
-          {q
-            ? 'Try a different name, email or GSTIN.'
-            : 'Customers, vendors and leads you deal with live here.'}
-        </EmptyState>
-      )}
-      {!!data?.length && (
-        <table className="w-full text-left text-[14px]">
-          <thead className="text-[12px] text-muted">
-            <tr className="border-b border-line">
-              <th className="py-2 font-medium">Name</th>
-              <th className="font-medium">Type</th>
-              <th className="font-medium">Email</th>
-              <th className="font-medium">GSTIN</th>
-              <th className="font-medium">State</th>
-            </tr>
-          </thead>
-          <tbody>
-            {data.map((c) => (
-              <tr key={c.id} className="border-b border-line hover:bg-hover">
-                <td className="py-2 font-medium">
-                  <Link href={`/w/${ws}/crm/contacts/${c.id}`} className="hover:underline">
-                    {c.name}
-                  </Link>
-                </td>
-                <td className="capitalize">{c.kind}</td>
-                <td className="text-muted">{c.email}</td>
-                <td className="font-mono text-[13px]">{c.gstin}</td>
-                <td>{stateName(c.state_code)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
+      <ListTable
+        screen="crm.contacts"
+        label="Contacts"
+        columns={columns}
+        rows={data}
+        rowKey={(c) => c.id}
+        filters={{ q }}
+        onFilters={(f) => setQ(f.q ?? '')}
+        partial={data && data.length >= LIMIT ? `first ${LIMIT} contacts by name` : undefined}
+        empty={
+          spaces.length > 0 ? (
+            <EmptyState
+              icon={q ? Search : Users}
+              title={q ? 'No contacts match' : 'No contacts yet'}
+              action={
+                q ? undefined : (
+                  <button type="button" className={btnPrimary} onClick={() => setAdding(true)}>
+                    <Plus size={14} /> Add first contact
+                  </button>
+                )
+              }
+            >
+              {q
+                ? 'Try a different name, email or GSTIN.'
+                : 'Customers, vendors and leads you deal with live here.'}
+            </EmptyState>
+          ) : undefined
+        }
+      />
       {adding && (
         <ContactForm
           onClose={() => setAdding(false)}
