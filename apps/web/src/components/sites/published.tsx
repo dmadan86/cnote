@@ -3,6 +3,7 @@ import { notFound, redirect } from 'next/navigation'
 import { cache, type ReactNode } from 'react'
 import {
   blockDefs,
+  blockedOf,
   type CatalogueView,
   canonicalHost,
   catalogOf,
@@ -18,6 +19,7 @@ import {
   readingMinutes,
   reportHref,
   type SiteBlock,
+  safeHref,
   siteSummary,
   themeStyle,
   viewOfPage,
@@ -56,6 +58,7 @@ function phoneOf(site: PublicSite) {
 function Blocks({ site, blocks }: { site: PublicSite; blocks: SiteBlock[] }) {
   const sum = siteSummary(site.data)
   const assetBase = `/api/sites/img/${site.site_id}`
+  const blocked = blockedOf(site)
   const catalog = catalogOf(site)
   const at = formAt(site)
   const phone = phoneOf(site)
@@ -83,7 +86,7 @@ function Blocks({ site, blocks }: { site: PublicSite; blocks: SiteBlock[] }) {
             b.type === 'Catalogue' ? { catalog, phone, askPath: at?.path, formId: at?.id } : undefined
           return (
             <div key={id || b.type} id={id}>
-              <C {...b.props} {...extra} assetBase={assetBase} form={form} />
+              <C {...b.props} {...extra} assetBase={assetBase} form={form} blocked={blocked} />
             </div>
           )
         })}
@@ -223,7 +226,7 @@ export async function PublishedPage({ host, slug }: { host: string; slug: string
     '@context': 'https://schema.org',
     '@type': 'LocalBusiness',
     name: s.name || undefined,
-    url: site.url,
+    url: safeHref(site.url, blockedOf(site)),
     telephone: s.phone || undefined,
     email: s.email || undefined,
     address: s.address || undefined,
@@ -394,7 +397,7 @@ export async function PublishedPost({ host, slug }: { host: string; slug: string
     datePublished: post.published_at,
     dateModified: modified,
     image: image ? img(site, image) : undefined,
-    mainEntityOfPage: `${site.url}/blog/${post.slug}`,
+    mainEntityOfPage: safeHref(`${site.url}/blog/${post.slug}`, blockedOf(site)),
     author: { '@type': 'Organization', name },
     publisher: { '@type': 'Organization', name },
   }
@@ -416,7 +419,7 @@ export async function PublishedPost({ host, slug }: { host: string; slug: string
             <time dateTime={post.published_at}>{dateLabel(post.published_at)}</time> ·{' '}
             {readingMinutes(post.body)} min read
           </p>
-          <PostBody body={post.body} assetBase={`/api/sites/img/${site.site_id}`} />
+          <PostBody body={post.body} assetBase={`/api/sites/img/${site.site_id}`} blocked={blockedOf(site)} />
         </article>
         {form && <Blocks site={site} blocks={[form]} />}
         {more.length > 0 && (

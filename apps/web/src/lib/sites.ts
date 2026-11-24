@@ -223,7 +223,26 @@ const web = (v: string) => {
     return false
   }
 }
-export function safeHref(v: unknown): string | undefined {
+/** Same canonical form as Go CanonicalURL (webrisk.go): lower-case scheme and host, default port and query/fragment dropped, path kept. IDN hosts stay punycode here (Go decodes them): shortcut, match them when the scanner stores them. */
+export function canonicalUrl(raw: string): string | undefined {
+  try {
+    const u = new URL(raw)
+    if (u.protocol !== 'https:' && u.protocol !== 'http:') return undefined
+    return `${u.protocol}//${u.host}${u.pathname || '/'}`
+  } catch {
+    return undefined
+  }
+}
+/** `blocked` holds canonical URLs the abuse scan hid (PublicSite.blocked_links); a blocked link returns undefined, so it renders as plain text. */
+export function safeHref(v: unknown, blocked?: ReadonlySet<string>): string | undefined {
+  const r = safeHrefRaw(v)
+  if (r && blocked?.size && /^https?:/i.test(r)) {
+    const c = canonicalUrl(r)
+    if (c && blocked.has(c)) return undefined
+  }
+  return r
+}
+function safeHrefRaw(v: unknown): string | undefined {
   if (typeof v !== 'string' || !v || v.length > 300 || CTRL.test(v)) return undefined
   if (/^tel:[\d+\- ]+$/.test(v)) return v
   if (/\s/.test(v)) return undefined
@@ -331,7 +350,11 @@ export type PublicSite = {
   /** The one host this site is served from (a verified custom domain, else the subdomain). Absent on older servers. */
   canonical_host?: string
   form_paused?: boolean
+  /** Canonical URLs hidden by the abuse scan (Phase 3b). */
+  blocked_links?: string[]
 }
+export const blockedOf = (site: Pick<PublicSite, 'blocked_links'>): ReadonlySet<string> =>
+  new Set(site.blocked_links ?? [])
 const SUB = /^[a-z0-9]+(-[a-z0-9]+)*$/
 export const validSub = (v: string) => v.length >= 3 && v.length <= 40 && SUB.test(v)
 
@@ -921,3 +944,91 @@ export const pageOgId = (site: Site, page: string) => {
   const m = (site as Site & { page_og_images?: Record<string, string> }).page_og_images
   return m?.[page] ?? (page ? undefined : m?.home)
 }
+
+// ======== Phase 3b types (design section 18): languages and abuse. Stubs: shapes are assumed until the backend lands. ========
+
+/** Languages: English plus eight; pa and or are refused by the API unless SITES_EXTRA_LANGS lists them (`extra`). */
+export type SiteLang = { code: string; name: string; native: string; extra?: boolean }
+export const SUPPORTED_LANGS: readonly SiteLang[] = [
+  { code: 'en', name: 'English', native: 'English' },
+  { code: 'hi', name: 'Hindi', native: 'हिन्दी' },
+  { code: 'ta', name: 'Tamil', native: 'தமிழ்' },
+  { code: 'te', name: 'Telugu', native: 'తెలుగు' },
+  { code: 'kn', name: 'Kannada', native: 'ಕನ್ನಡ' },
+  { code: 'mr', name: 'Marathi', native: 'मराठी' },
+  { code: 'bn', name: 'Bengali', native: 'বাংলা' },
+  { code: 'gu', name: 'Gujarati', native: 'ગુજરાતી' },
+  { code: 'ml', name: 'Malayalam', native: 'മലയാളം' },
+  { code: 'pa', name: 'Punjabi', native: 'ਪੰਜਾਬੀ', extra: true },
+]
+/** One translated value; `stale` when its source text changed since (fingerprint mismatch), so the page shows the source. */
+export type LangEntry = {
+  block_id: string
+  prop: string
+  index?: number
+  text: string
+  stale?: boolean
+  checked?: boolean
+}
+export type LangPage = { slug: string; entries: LangEntry[] }
+export type SiteLangInfo = {
+  code: string
+  translated: number
+  stale: number
+  missing: number
+  unchecked: number
+}
+export type LangReview = { lang: string; pages: LangPage[] }
+
+export type AbuseSignal = { rule: string; location: string; snippet: string; reported?: boolean }
+export type AbuseStatus = 'open' | 'dismissed' | 'taken_down' | 'restored'
+export type AbuseCase = {
+  id: string
+  site_id: string
+  site_name: string
+  status: AbuseStatus
+  score: number
+  version_id?: string
+  opened_at: string
+  signals?: AbuseSignal[]
+  not_checked?: string[]
+  appeal?: { note: string; at: string }
+}
+export type AbuseAction = 'dismiss' | 'takedown' | 'restore'
+
+export const siteApi3b = {
+  langList: (ws: string, id: string) => cmd<{ langs: SiteLangInfo[] }>(ws, 'site.lang_list', { id }),
+  langAdd: (ws: string, id: string, lang: string) =>
+    cmd<{ langs: SiteLangInfo[] }>(ws, 'site.lang_add', { id, lang }),
+  langRemove: (ws: string, id: string, lang: string) =>
+    cmd<{ langs: SiteLangInfo[] }>(ws, 'site.lang_remove', { id, lang }),
+  langReview: (ws: string, id: string, lang: string) => cmd<LangReview>(ws, 'site.lang_review', { id, lang }),
+  langEntrySet: (
+    ws: string,
+    id: string,
+    expected_version_id: string,
+    lang: string,
+    entry: { page: string; block_id: string; prop: string; index?: number; text: string },
+  ) => cmd<{ entry: LangEntry }>(ws, 'site.lang_entry_set', { id, expected_version_id, lang, ...entry }),
+  langMarkChecked: (ws: string, id: string, lang: string, page?: string) =>
+    cmd<{ ok: boolean }>(ws, 'site.lang_mark_checked', { id, lang, page }),
+  /** A whole-site translation is one chat turn of kind 'translate': same turn polling as any chat turn. */
+  chatTranslate: (ws: string, id: string, expected_version_id: string, translate: string) =>
+    cmd<{ turn_id: string }>(ws, 'site.chat', { id, expected_version_id, message: '', translate }),
+
+  /** Visitor report: public, same-origin, no cookie (POST /api/sites/report/{site_id}). */
+  abuseReport: (
+    siteId: string,
+    body: { reason: string; details?: string; url?: string; company_website?: string },
+  ) => api<{ ok?: boolean }>(`/api/sites/report/${encodeURIComponent(siteId)}`, { body }),
+  // Platform review (platform admins only).
+  abuseList: (ws: string, status?: AbuseStatus) =>
+    cmd<{ cases: AbuseCase[] }>(ws, 'site.abuse_list', { status }),
+  abuseGet: (ws: string, id: string) => cmd<AbuseCase>(ws, 'site.abuse_get', { id }),
+  abuseAct: (ws: string, id: string, action: AbuseAction, note: string) =>
+    cmd<AbuseCase>(ws, 'site.abuse_act', { id, action, note }),
+  // Owner appeal: one per takedown.
+  abuseAppeal: (ws: string, id: string, note: string) =>
+    cmd<{ ok: boolean }>(ws, 'site.abuse_appeal', { id, note }),
+}
+// ======== end Phase 3b types ========

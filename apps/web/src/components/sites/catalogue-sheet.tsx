@@ -1,7 +1,7 @@
 'use client'
 import { ImageIcon, MessageCircle, X } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { type CatalogueItemView, type CatMode, catalogueTaxNote, waHref } from '@/lib/sites'
+import { type CatalogueItemView, type CatMode, catalogueTaxNote, safeHref, waHref } from '@/lib/sites'
 
 const STEP = 12
 const btn =
@@ -28,6 +28,7 @@ export function CatalogueView({
   phone,
   askPath,
   formId,
+  blocked,
 }: {
   items: CatalogueItemView[]
   mode: CatMode
@@ -39,6 +40,7 @@ export function CatalogueView({
   /** The page path holding the ContactForm ('/' or '/slug') and its block id; none, no "Ask a question". */
   askPath?: string
   formId?: string
+  blocked?: ReadonlySet<string>
 }) {
   const [cat, setCat] = useState('')
   const [shown, setShown] = useState(STEP)
@@ -90,7 +92,7 @@ export function CatalogueView({
       <img src={`${assetBase}/${id}`} alt="" loading="lazy" className="size-full object-cover" />
     ) : null
   const note = catalogueTaxNote(mode)
-  const wa = (name: string) => waHref(phone, `Hi, I'm interested in ${name}`)
+  const wa = (name: string) => safeHref(waHref(phone, `Hi, I'm interested in ${name}`), blocked)
   const useWa = enquire !== 'form'
   const useAsk = enquire !== 'whatsapp' && !!askPath && !!formId
   const grid = variant !== 'list'

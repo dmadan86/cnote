@@ -19,7 +19,7 @@ import { EmbedFrame } from './embed'
  * ContactForm, `form` (the published page's live form; the preview keeps the inert one).
  * Props are typed loosely on purpose: the catalog is the source of truth and is validated in Go before render.
  */
-type Ctx = { assetBase?: string; editing?: boolean; form?: ReactNode }
+type Ctx = { assetBase?: string; editing?: boolean; form?: ReactNode; blocked?: ReadonlySet<string> }
 type P = Record<string, unknown> & Ctx
 type Obj = Record<string, unknown>
 
@@ -56,8 +56,18 @@ const h2 = 'text-2xl font-bold leading-tight md:text-4xl'
 const card = 'rounded-[var(--site-radius)] border border-[var(--site-border)]'
 
 /** A link only for a safe href; anything else stays inert text. */
-function Link({ href, className, children }: { href: unknown; className?: string; children: ReactNode }) {
-  const h = safeHref(href)
+function Link({
+  href,
+  className,
+  children,
+  blocked,
+}: {
+  href: unknown
+  className?: string
+  children: ReactNode
+  blocked?: ReadonlySet<string>
+}) {
+  const h = safeHref(href, blocked)
   return h ? (
     <a href={h} className={className}>
       {children}
@@ -96,18 +106,28 @@ function Img({
   return <img src={`${p.assetBase}/${i}`} alt={alt} loading="lazy" className={className} />
 }
 
-const Contact = ({ phone, email, address }: { phone: string; email: string; address: string }) => (
+const Contact = ({
+  phone,
+  email,
+  address,
+  blocked,
+}: {
+  phone: string
+  email: string
+  address: string
+  blocked?: ReadonlySet<string>
+}) => (
   <>
     {phone && (
       <li>
-        <Link href={telHref(phone)} className={linkCls}>
+        <Link blocked={blocked} href={telHref(phone)} className={linkCls}>
           {phone}
         </Link>
       </li>
     )}
     {email && (
       <li>
-        <Link href={`mailto:${email}`} className={linkCls}>
+        <Link blocked={blocked} href={`mailto:${email}`} className={linkCls}>
           {email}
         </Link>
       </li>
@@ -135,7 +155,7 @@ function Header(p: P) {
               {links.map((l, i) => (
                 // biome-ignore lint/suspicious/noArrayIndexKey: list items have no ids
                 <li key={i}>
-                  <Link href={l.href} className={linkCls}>
+                  <Link blocked={p.blocked} href={l.href} className={linkCls}>
                     {str(l.label)}
                   </Link>
                 </li>
@@ -144,7 +164,7 @@ function Header(p: P) {
           </nav>
         )}
         {cta && (
-          <Link href={p.cta_href} className={btnCls}>
+          <Link blocked={p.blocked} href={p.cta_href} className={btnCls}>
             {cta}
           </Link>
         )}
@@ -175,7 +195,7 @@ function Hero(p: P) {
           </h1>
           {str(p.subtitle) && <p className="max-w-[56ch] text-lg opacity-90">{str(p.subtitle)}</p>}
           {cta && (
-            <Link href={p.cta_href} className={`${btnCls} max-md:w-full`}>
+            <Link blocked={p.blocked} href={p.cta_href} className={`${btnCls} max-md:w-full`}>
               {cta}
             </Link>
           )}
@@ -194,7 +214,7 @@ function Hero(p: P) {
           <p className="max-w-[56ch] text-lg text-[var(--site-muted)]">{str(p.subtitle)}</p>
         )}
         {cta && (
-          <Link href={p.cta_href} className={`${btnCls} max-md:w-full`}>
+          <Link blocked={p.blocked} href={p.cta_href} className={`${btnCls} max-md:w-full`}>
             {cta}
           </Link>
         )}
@@ -389,6 +409,7 @@ function CallToAction(p: P) {
         </div>
         {label && (
           <Link
+            blocked={p.blocked}
             href={p.cta_href}
             className="inline-flex min-h-12 items-center justify-center rounded-[var(--site-radius)] bg-[var(--site-bg)] px-5 text-[15px] font-semibold text-[var(--site-text)] max-md:w-full"
           >
@@ -403,7 +424,8 @@ function CallToAction(p: P) {
 function MapHours(p: P) {
   const address = str(p.address)
   const hours = list(p.hours).filter((h) => str(h.days) && str(h.time))
-  const maps = safeHref(p.map_url) ?? (address ? mapsHref(address) : undefined)
+  const maps =
+    safeHref(p.map_url, p.blocked) ?? (address ? safeHref(mapsHref(address), p.blocked) : undefined)
   return (
     <section className="bg-[var(--site-tint)]">
       <div className={sec}>
@@ -445,7 +467,7 @@ function MapHours(p: P) {
 }
 
 function WhatsAppButton(p: P) {
-  const href = waHref(p.phone, str(p.message) || 'Hi, I found you on your website')
+  const href = safeHref(waHref(p.phone, str(p.message) || 'Hi, I found you on your website'), p.blocked)
   if (!href)
     return p.editing ? (
       <div className="px-5 py-4 md:px-8">
@@ -537,7 +559,7 @@ function InertForm({ label }: { label: string }) {
 
 function ContactForm(p: P) {
   const [phone, email, address] = [str(p.phone), str(p.email), str(p.address)]
-  const wa = waHref(p.phone)
+  const wa = safeHref(waHref(p.phone), p.blocked)
   return (
     <section
       className={`${sec} grid gap-8 ${str(p.variant) === 'stacked' ? 'max-w-[720px]' : 'md:grid-cols-[5fr_7fr] md:gap-14'}`}
@@ -547,7 +569,7 @@ function ContactForm(p: P) {
         {str(p.intro) && <p className="text-[var(--site-muted)]">{str(p.intro)}</p>}
         {(phone || email || address) && (
           <ul className="space-y-1 text-[15px]">
-            <Contact phone={phone} email={email} address={address} />
+            <Contact phone={phone} email={email} address={address} blocked={p.blocked} />
             {wa && (
               <li>
                 <a href={wa} rel="noopener noreferrer" className={linkCls}>
@@ -576,7 +598,7 @@ function Footer(p: P) {
         {str(p.text) && <p>{str(p.text)}</p>}
         {(phone || email || address) && (
           <ul className={str(p.variant) === 'columns' ? 'space-y-1' : 'flex flex-wrap gap-x-6 gap-y-1'}>
-            <Contact phone={phone} email={email} address={address} />
+            <Contact phone={phone} email={email} address={address} blocked={p.blocked} />
           </ul>
         )}
         {links.length > 0 && (
@@ -584,7 +606,7 @@ function Footer(p: P) {
             {links.map((l, i) => (
               // biome-ignore lint/suspicious/noArrayIndexKey: list items have no ids
               <li key={i}>
-                <Link href={l.href} className={linkCls}>
+                <Link blocked={p.blocked} href={l.href} className={linkCls}>
                   {str(l.label)}
                 </Link>
               </li>
@@ -642,7 +664,7 @@ export function Embed(p: P) {
   const provider = str(p.provider)
   const id = str(p.source)
   const href = embedLinks(provider, id)
-  if (!href)
+  if (!href || !safeHref(href.page, p.blocked))
     return p.editing ? (
       <section className={sec}>
         <Empty label="Choose a video, map, form or calendar and add its address or ID" />
@@ -681,6 +703,7 @@ export function Catalogue(p: P) {
         variant={str(p.variant)}
         enquire={str(p.enquire)}
         assetBase={p.assetBase}
+        blocked={p.blocked}
         phone={str(p.phone) || undefined}
         askPath={str(p.askPath) || undefined}
         formId={str(p.formId) || undefined}

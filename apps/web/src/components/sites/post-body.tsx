@@ -7,12 +7,16 @@ import { type PostBodyDocument, type PostNode, safeHref } from '@/lib/sites'
 const MAX_DEPTH = 8
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
-function mark(m: { type: string; attrs?: Record<string, unknown> }, child: ReactNode): ReactNode {
+function mark(
+  m: { type: string; attrs?: Record<string, unknown> },
+  child: ReactNode,
+  blocked?: ReadonlySet<string>,
+): ReactNode {
   if (m.type === 'bold') return <strong>{child}</strong>
   if (m.type === 'italic') return <em>{child}</em>
   if (m.type === 'link') {
     // The href passes safeHref again at render; a link that fails it stays plain text.
-    const href = safeHref(m.attrs?.href)
+    const href = safeHref(m.attrs?.href, blocked)
     return href ? (
       <a
         href={href}
@@ -28,16 +32,26 @@ function mark(m: { type: string; attrs?: Record<string, unknown> }, child: React
   return child
 }
 
-function Node({ n, assetBase, depth }: { n: PostNode; assetBase?: string; depth: number }) {
+function Node({
+  n,
+  assetBase,
+  depth,
+  blocked,
+}: {
+  n: PostNode
+  assetBase?: string
+  depth: number
+  blocked?: ReadonlySet<string>
+}) {
   if (depth > MAX_DEPTH) return null
   const kids = (n.content ?? []).map((c, i) => (
     // biome-ignore lint/suspicious/noArrayIndexKey: a document tree has no ids
-    <Node key={i} n={c} assetBase={assetBase} depth={depth + 1} />
+    <Node key={i} n={c} assetBase={assetBase} depth={depth + 1} blocked={blocked} />
   ))
   switch (n.type) {
     case 'text':
       return typeof n.text === 'string'
-        ? (n.marks ?? []).reduce<ReactNode>((c, m) => mark(m, c), n.text)
+        ? (n.marks ?? []).reduce<ReactNode>((c, m) => mark(m, c, blocked), n.text)
         : null
     case 'paragraph':
       return <p className="my-4">{kids}</p>
@@ -84,13 +98,21 @@ function Node({ n, assetBase, depth }: { n: PostNode; assetBase?: string; depth:
   }
 }
 
-export function PostBody({ body, assetBase }: { body: PostBodyDocument; assetBase?: string }) {
+export function PostBody({
+  body,
+  assetBase,
+  blocked,
+}: {
+  body: PostBodyDocument
+  assetBase?: string
+  blocked?: ReadonlySet<string>
+}) {
   if (body?.type !== 'doc') return null
   return (
     <>
       {(body.content ?? []).map((c, i) => (
         // biome-ignore lint/suspicious/noArrayIndexKey: a document tree has no ids
-        <Node key={i} n={c} assetBase={assetBase} depth={1} />
+        <Node key={i} n={c} assetBase={assetBase} depth={1} blocked={blocked} />
       ))}
     </>
   )
