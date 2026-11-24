@@ -9,7 +9,7 @@ CREATE TABLE sites.blocked_links (
 CREATE TABLE sites.abuse_cases (
  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), workspace_id uuid NOT NULL, site_id uuid NOT NULL,
  status text NOT NULL DEFAULT 'open' CHECK (status IN ('open','dismissed','taken_down','restored')),
- score int NOT NULL DEFAULT 0, published_version_id uuid, post_rev int,
+ score int NOT NULL DEFAULT 0, published_version_id uuid, post_rev text,
  dismissed_for_version uuid, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
  UNIQUE(workspace_id,site_id,id),
  FOREIGN KEY (workspace_id,site_id) REFERENCES sites.sites(workspace_id,id) ON DELETE CASCADE,

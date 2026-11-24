@@ -7,7 +7,7 @@ ALTER TABLE sites.abuse_cases ADD COLUMN scan_score int NOT NULL DEFAULT 0;     
 
 -- One row per site: what the last scan covered. A newer publish or post change means the row no longer matches and the site is due.
 CREATE TABLE sites.abuse_scans (
- workspace_id uuid NOT NULL, site_id uuid NOT NULL, published_version_id uuid NOT NULL, post_rev int NOT NULL,
+ workspace_id uuid NOT NULL, site_id uuid NOT NULL, published_version_id uuid NOT NULL, post_rev text NOT NULL,
  score int NOT NULL DEFAULT 0, scanned_at timestamptz NOT NULL DEFAULT now(),
  PRIMARY KEY (workspace_id, site_id),
  FOREIGN KEY (workspace_id, site_id) REFERENCES sites.sites(workspace_id, id) ON DELETE CASCADE
@@ -49,16 +49,21 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = sites, core, pg_temp AS $
   SELECT b.canonical_url FROM sites.blocked_links b WHERE b.site_id = p_site ORDER BY b.canonical_url LIMIT 500 $$;
 
 -- A visitor report. Only a live site takes one; it joins the open case when there is one.
-CREATE FUNCTION sites.abuse_report_add(p_site uuid, p_ip_hash text, p_reason text) RETURNS boolean
+CREATE FUNCTION sites.abuse_report_add(p_site uuid, p_ip_hash text, p_reason text) RETURNS text
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = sites, core, pg_temp AS $$
 DECLARE s sites.sites; cid uuid;
 BEGIN
   SELECT x.* INTO s FROM sites.sites x LEFT JOIN sites.site_platform p ON p.site_id = x.id
    WHERE x.id = p_site AND x.published_version_id IS NOT NULL AND p.taken_down_at IS NULL;
-  IF NOT FOUND THEN RETURN false; END IF;
+  IF NOT FOUND THEN RETURN 'not_found'; END IF;
+  PERFORM pg_advisory_xact_lock(hashtext('sites.abuse_report_add'));
+  IF (SELECT count(*) FROM sites.abuse_reports WHERE site_id = p_site AND ip_hash = p_ip_hash AND created_at > now() - interval '1 day') >= 3
+     OR (SELECT count(*) FROM sites.abuse_reports WHERE created_at > now() - interval '1 hour') >= 500 THEN
+    RETURN 'rate_limited';
+  END IF;
   SELECT id INTO cid FROM sites.abuse_cases WHERE site_id = p_site AND status = 'open';
   INSERT INTO sites.abuse_reports (workspace_id, site_id, case_id, ip_hash, reason) VALUES (s.workspace_id, s.id, cid, p_ip_hash, left(p_reason, 500));
-  RETURN true;
+  RETURN 'ok';
 END $$;
 
 -- ---- platform review (called over the admin connection, like sites.platform_set) ----

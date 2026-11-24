@@ -28,6 +28,8 @@ type fakeCF struct {
 	badAuth                     int
 	srv                         *httptest.Server
 	lastCreate, lastCreateToken string
+	createDelay                 time.Duration // a create takes this long (before it takes the lock, so other calls overlap it)
+	onCreate                    func()        // runs while the create is in flight
 }
 
 type fakeHost struct {
@@ -56,6 +58,9 @@ func reply(w http.ResponseWriter, code int, result any, info map[string]any) {
 func newFakeCF(t *testing.T) *fakeCF {
 	f := &fakeCF{hosts: map[string]*fakeHost{}}
 	f.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "POST" && f.createDelay > 0 {
+			time.Sleep(f.createDelay)
+		}
 		f.mu.Lock()
 		defer f.mu.Unlock()
 		f.calls++
@@ -82,6 +87,9 @@ func newFakeCF(t *testing.T) *fakeCF {
 				Meta     map[string]any `json:"custom_metadata"`
 			}
 			_ = json.NewDecoder(r.Body).Decode(&in)
+			if f.onCreate != nil {
+				f.onCreate()
+			}
 			for _, h := range f.hosts {
 				if h.Hostname == in.Hostname {
 					reply(w, 409, nil, nil)
@@ -552,4 +560,68 @@ func TestSiteCloudflareRateLimitAndAuth(t *testing.T) {
 		t.Fatalf("bad token: %v", err)
 	}
 	eq(t, e.claim(host, "routing_configured"), "true")
+}
+
+// 8. The app role cannot run the planner (it crosses workspaces and takes any limit); without the admin connection the sweep does nothing.
+func TestSiteCloudflarePlannerNotForAppRole(t *testing.T) {
+	e := newCFEnv(t)
+	host := e.connect()
+	if _, err := e.pool.Exec(context.Background(), "select sites.cf_plan(0)"); err == nil || !strings.Contains(err.Error(), "permission denied") {
+		t.Fatalf("the app role ran cf_plan: %v", err)
+	}
+	eq(t, e.rows(host), "0")
+	t.Setenv("DATABASE_ADMIN_URL", "")
+	e.sweep()
+	if calls, _, _ := e.cf.stat(); calls != 0 || e.rows(host) != "0" {
+		t.Fatalf("no admin connection, yet %d calls and %s rows", calls, e.rows(host))
+	}
+}
+
+// 9. Two workers, one slot left: exactly one create (the slot is reserved before the provider is called).
+func TestSiteCloudflareLastSlotReserved(t *testing.T) {
+	e := newCFEnv(t)
+	t.Setenv("SITES_CF_MAX_HOSTNAMES", "1")
+	e.cf.createDelay = 300 * time.Millisecond
+	a, b := e.connect(), e.connect()
+	var wg sync.WaitGroup
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func() { defer wg.Done(); _ = sites.CloudflareSweep(context.Background(), e.pool) }()
+	}
+	wg.Wait()
+	if _, creates, _ := e.cf.stat(); creates != 1 {
+		t.Fatalf("one slot, %d creates", creates)
+	}
+	eq(t, e.sql("select count(*)::text from sites.cloudflare_reconciliation where reserved_at is not null"), "0") // released
+	eq(t, e.sql("select sites.cf_used()::text"), "1")
+	_ = a
+	_ = b
+}
+
+// 10. A result for a hostname that stopped being wanted while the provider call was in flight is dropped.
+func TestSiteCloudflareStaleResultDropped(t *testing.T) {
+	e := newCFEnv(t)
+	host := e.connect()
+	e.cf.onCreate = func() {
+		adminOK(t, e.call(e.owner, "site.unpublish", map[string]any{"id": e.site}))
+		admin, err := pgxpool.New(context.Background(), os.Getenv("DATABASE_ADMIN_URL"))
+		if err == nil {
+			defer admin.Close()
+			_, err = admin.Exec(context.Background(), "select sites.cf_plan(5)")
+		}
+		if err != nil {
+			t.Error(err)
+		}
+	}
+	e.sweep()
+	e.cf.onCreate = nil
+	eq(t, e.row(host, "desired_state"), "absent")
+	eq(t, e.row(host, "provider_id"), "-") // the stale "created" was not stored
+	eq(t, e.claim(host, "routing_configured"), "false")
+	eq(t, e.sql("select count(*)::text from sites.cloudflare_reconciliation where reserved_at is not null"), "0")
+	e.due(host)
+	e.sweep() // the tombstone finds and deletes what the in-flight create made
+	if e.cf.byName(host) != nil || e.rows(host) != "0" {
+		t.Fatalf("hostname left at the provider or row kept: %s", e.rows(host))
+	}
 }

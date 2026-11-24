@@ -369,3 +369,63 @@ func TestSiteAbuseCapsSweepRetention(t *testing.T) {
 	eq(t, a.sql("select count(*)::text from sites.abuse_reports where site_id = $1::uuid and reason = 'old'", a.site), "0")
 	eq(t, a.sql("select count(*)::text from sites.abuse_signals where case_id = $1::uuid and created_at < now() - interval '100 days'", id), "0")
 }
+
+// The report limits live in the function: direct calls past them are refused (3 per address per site per day, 500 per hour).
+func TestSiteAbuseReportLimitsInSQL(t *testing.T) {
+	a := newAbuseEnv(t)
+	a.publishOK(a.sub)
+	call := func(ip string) string {
+		var r string
+		if err := a.pool.QueryRow(context.Background(), "select sites.abuse_report_add($1::uuid, $2, 'x')", a.site, ip).Scan(&r); err != nil {
+			t.Fatal(err)
+		}
+		return r
+	}
+	for i := 0; i < 3; i++ {
+		eq(t, call("h1"), "ok")
+	}
+	eq(t, call("h1"), "rate_limited")
+	eq(t, call("h2"), "ok")
+	var nf string
+	if err := a.pool.QueryRow(context.Background(), "select sites.abuse_report_add('00000000-0000-0000-0000-000000000000', 'h3', 'x')").Scan(&nf); err != nil {
+		t.Fatal(err)
+	}
+	eq(t, nf, "not_found")
+	a.admin(`insert into sites.abuse_reports (workspace_id, site_id, ip_hash, reason)
+		select workspace_id, site_id, 'bulk' || g, 'x' from sites.abuse_reports, generate_series(1, 500) g where site_id = $1::uuid limit 500`, a.site)
+	eq(t, call("h4"), "rate_limited") // platform-wide, whatever the address
+	a.admin("delete from sites.abuse_reports where site_id = $1::uuid", a.site)
+}
+
+// A published-post set that changes without the revision sum changing is still noticed: unpublish one post, publish another.
+func TestSiteAbusePostSetFingerprint(t *testing.T) {
+	a := newAbuseEnv(t)
+	post := func(title string) string {
+		r := a.ok(a.owner, "site.post_save", map[string]any{"id": a.site, "title": title, "body": docOf(para(title))})
+		a.ok(a.owner, "site.post_publish", map[string]any{"id": a.site, "post_id": r["id"], "expected_rev": r["rev"], "publish": true})
+		return r["id"].(string)
+	}
+	a.publishOK(a.sub)
+	p1 := post("First")
+	a.scan()
+	stored := a.sql("select post_rev from sites.abuse_scans where site_id = $1::uuid", a.site)
+	if len(stored) != 64 {
+		t.Fatalf("a SHA-256 hex fingerprint: %q", stored)
+	}
+	// a second post, then swap: p1 draft, p2 published with p1's revision
+	p2 := post("Second")
+	a.admin("update sites.posts set status = 'draft' where id = $1::uuid", p1)
+	a.admin("update sites.posts set rev = (select rev from sites.posts where id = $2::uuid) where id = $1::uuid", p2, p1)
+	a.scan()
+	a.admin("update sites.posts set status = 'published' where id = $1::uuid", p1)
+	a.admin("update sites.posts set status = 'draft' where id = $1::uuid", p2)
+	a.admin("update sites.abuse_scans set scanned_at = now() - interval '1 minute' where site_id = $1::uuid", a.site)
+	before := a.sql("select post_rev from sites.abuse_scans where site_id = $1::uuid", a.site)
+	if err := sites.AbuseSweep(context.Background(), a.pool); err != nil {
+		t.Fatal(err)
+	}
+	after := a.sql("select post_rev from sites.abuse_scans where site_id = $1::uuid", a.site)
+	if before == after || after != stored {
+		t.Fatalf("the sweep did not rescan the swapped set: stored %s before %s after %s", stored, before, after)
+	}
+}

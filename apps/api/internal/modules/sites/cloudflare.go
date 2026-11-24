@@ -18,10 +18,12 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/cnote/api/internal/command"
@@ -407,6 +409,32 @@ var CloudflareAlert = func(ctx context.Context, used, max int) {
 	slog.WarnContext(ctx, "cloudflare for saas: hostname budget is at 80 percent or more", "used", used, "max", max)
 }
 
+var cfAdminMu sync.Mutex
+var cfAdminPool *pgxpool.Pool
+var cfAdminURL string
+var cfMissingAdminLogged bool
+
+func cfAdmin(ctx context.Context) (*pgxpool.Pool, error) {
+	cfAdminMu.Lock()
+	defer cfAdminMu.Unlock()
+	u := strings.TrimSpace(os.Getenv("DATABASE_ADMIN_URL"))
+	if u == "" {
+		if !cfMissingAdminLogged {
+			slog.WarnContext(ctx, "cloudflare sweep: DATABASE_ADMIN_URL is not configured")
+			cfMissingAdminLogged = true
+		}
+		return nil, nil
+	}
+	if cfAdminPool == nil || cfAdminURL != u {
+		p, err := pgxpool.New(ctx, u)
+		if err != nil {
+			return nil, err
+		}
+		cfAdminPool, cfAdminURL = p, u
+	}
+	return cfAdminPool, nil
+}
+
 // CloudflareSweep is the reconciler (worker sweep "sites.cloudflare", every minute or two is cheap): it plans the desired state,
 // then creates, polls and deletes the hostnames that are due. Hostnames of unpublished, taken down, Pro-lapsed and disconnected
 // sites are deleted at the provider within the next runs (routing stopped at once, in the proxy lookup). It does nothing unless
@@ -422,7 +450,14 @@ func CloudflareSweep(ctx context.Context, pool *pgxpool.Pool) error {
 	if err != nil {
 		return err
 	}
-	if _, err := pool.Exec(ctx, "select sites.cf_plan($1)", cfPerWS); err != nil {
+	admin, err := cfAdmin(ctx)
+	if err != nil {
+		return err
+	}
+	if admin == nil {
+		return nil
+	}
+	if _, err := admin.Exec(ctx, "select sites.cf_plan($1)", cfPerWS); err != nil {
 		return err
 	}
 	rows, err := pool.Query(ctx, "select workspace_id::text, hostname from sites.cf_due($1)", cfBatch)
@@ -459,7 +494,7 @@ func CloudflareSweep(ctx context.Context, pool *pgxpool.Pool) error {
 // cfLease takes the row for this run: it moves next_attempt_at forward by an exponential backoff (so a failure retries later and
 // a second sweep skips the row) and counts the attempt. tried is the count before this one; a row with tried > 0 and no
 // provider id may have been created without us recording it.
-func cfLease(ctx context.Context, pool *pgxpool.Pool, ws, host string) (desired, id string, tried int, ok bool, err error) {
+func cfLease(ctx context.Context, pool *pgxpool.Pool, ws, host string) (desired, id string, tried, gen int, ok bool, err error) {
 	tx, err := db.BeginTenant(ctx, pool, ws)
 	if err != nil {
 		return
@@ -467,14 +502,14 @@ func cfLease(ctx context.Context, pool *pgxpool.Pool, ws, host string) (desired,
 	defer tx.Rollback(ctx)
 	err = tx.QueryRow(ctx, `update sites.cloudflare_reconciliation set attempts = attempts + 1, last_attempt_at = now(), updated_at = now(),
 		next_attempt_at = now() + least(interval '1 hour', interval '30 seconds' * power(2, least(attempts, 7)))
-		where hostname = $1 and next_attempt_at <= now() returning desired_state, coalesce(provider_id, ''), attempts - 1`, host).Scan(&desired, &id, &tried)
+		where hostname = $1 and next_attempt_at <= now() returning desired_state, coalesce(provider_id, ''), attempts - 1, generation`, host).Scan(&desired, &id, &tried, &gen)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", "", 0, false, nil
+		return "", "", 0, 0, false, nil
 	}
 	if err != nil {
 		return
 	}
-	return desired, id, tried, true, tx.Commit(ctx)
+	return desired, id, tried, gen, true, tx.Commit(ctx)
 }
 
 type cfResult struct {
@@ -488,7 +523,7 @@ type cfResult struct {
 }
 
 func cfReconcile(ctx context.Context, pool *pgxpool.Pool, cl *CloudflareClient, ws, host string) error {
-	desired, id, tried, ok, err := cfLease(ctx, pool, ws, host)
+	desired, id, tried, gen, ok, err := cfLease(ctx, pool, ws, host)
 	if err != nil || !ok {
 		return err
 	}
@@ -509,7 +544,7 @@ func cfReconcile(ctx context.Context, pool *pgxpool.Pool, cl *CloudflareClient, 
 		}
 		return err
 	}
-	return cfStore(ctx, pool, ws, host, res)
+	return cfStore(ctx, pool, ws, host, gen, res)
 }
 
 // cfEnsure makes the hostname exist at the provider and reports its state. Create is idempotent: the provider is asked about
@@ -531,15 +566,19 @@ func cfEnsure(ctx context.Context, pool *pgxpool.Pool, cl *CloudflareClient, hos
 			return cfResult{status: "conflict", note: "the zone already holds this hostname and it is not ours", next: time.Hour}, nil
 		}
 		if h == nil {
-			var used int
-			if err := pool.QueryRow(ctx, "select sites.cf_used()").Scan(&used); err != nil {
+			// the slot is reserved before the provider is called, so two workers cannot both take the last one; cfStore or cfStoreError releases it
+			var got bool
+			if err := pool.QueryRow(ctx, "select sites.cf_reserve($1, $2)", host, cfMax()).Scan(&got); err != nil {
 				return cfResult{}, err
+			}
+			if !got {
+				return cfResult{status: "budget", note: "hostname budget reached", next: 15 * time.Minute}, nil
 			}
 			remote, err := cl.Count(ctx)
 			if err != nil {
 				return cfResult{}, err
 			}
-			if used >= cfMax() || remote >= cfMax() {
+			if remote >= cfMax() {
 				return cfResult{status: "budget", note: "hostname budget reached", next: 15 * time.Minute}, nil
 			}
 			if h, err = cl.Create(ctx, host, cfInstall()); err != nil {
@@ -589,7 +628,7 @@ func cfRemove(ctx context.Context, cl *CloudflareClient, host, id string, tried 
 }
 
 // cfStore writes what the run found: the row, and for a present hostname the claim (routing, strikes, lost).
-func cfStore(ctx context.Context, pool *pgxpool.Pool, ws, host string, r cfResult) error {
+func cfStore(ctx context.Context, pool *pgxpool.Pool, ws, host string, gen int, r cfResult) error {
 	tx, err := db.BeginTenant(ctx, pool, ws)
 	if err != nil {
 		return err
@@ -607,9 +646,16 @@ func cfStore(ctx context.Context, pool *pgxpool.Pool, ws, host string, r cfResul
 		if r.note != "" {
 			note = &r.note
 		}
-		_, err = tx.Exec(ctx, `update sites.cloudflare_reconciliation set provider_id = nullif($2, ''), status = $3, ssl_status = nullif($4, ''), last_error = $5,
-			attempts = 0, next_attempt_at = now() + make_interval(secs => $6), updated_at = now() where hostname = $1`, host, r.id, r.status, r.ssl, note, r.next.Seconds())
-		if err == nil && r.judged {
+		// only for the row as it was read: if the planner changed it meanwhile (disconnect, unpublish) the result is stale and dropped,
+		// and a hostname created meanwhile is found again by the tombstone's delete
+		var tag pgconn.CommandTag
+		tag, err = tx.Exec(ctx, `update sites.cloudflare_reconciliation set provider_id = nullif($2, ''), status = $3, ssl_status = nullif($4, ''), last_error = $5,
+			attempts = 0, next_attempt_at = now() + make_interval(secs => $6), updated_at = now(), reserved_at = null
+			where hostname = $1 and desired_state = 'present' and generation = $7`, host, r.id, r.status, r.ssl, note, r.next.Seconds(), gen)
+		if err == nil && tag.RowsAffected() == 0 {
+			_, err = tx.Exec(ctx, "update sites.cloudflare_reconciliation set reserved_at = null where hostname = $1", host)
+		}
+		if err == nil && r.judged && tag.RowsAffected() == 1 {
 			_, err = tx.Exec(ctx, `update sites.domain_claims set routing_configured = $2, checked_at = now(),
 				failures = case $3::int when 0 then 0 when 2 then failures + 1 else failures end,
 				status = case when $3::int = 3 or ($3::int = 2 and failures + 1 >= $4::int) then 'lost' else status end
@@ -633,7 +679,7 @@ func cfStoreError(ctx context.Context, pool *pgxpool.Pool, ws, host string, caus
 	if len(msg) > 300 {
 		msg = msg[:300]
 	}
-	if _, err = tx.Exec(ctx, `update sites.cloudflare_reconciliation set last_error = $2,
+	if _, err = tx.Exec(ctx, `update sites.cloudflare_reconciliation set last_error = $2, reserved_at = null,
 		next_attempt_at = greatest(next_attempt_at, now() + make_interval(secs => $3)) where hostname = $1`, host, msg, wait.Seconds()); err != nil {
 		return err
 	}

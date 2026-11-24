@@ -13,7 +13,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/cnote/api/internal/command"
-	"github.com/cnote/api/internal/db"
 	"github.com/cnote/api/internal/modules/sites"
 )
 
@@ -75,26 +74,17 @@ func (s *Server) siteReport(w http.ResponseWriter, r *http.Request) {
 	}
 	busy := command.NewError(command.RateLimited, "Too many reports right now. Please try again later.")
 	ip := sites.IPKey(sites.ClientIP(r, sites.TrustedProxies()))
-	n, err := db.Bump(r.Context(), s.Pool, "sitereport:ip:"+siteID+":"+ip, true)
-	if err == nil && n > reportPerIPSiteDay {
-		s.siteFail(w, busy)
-		return
-	}
-	if err == nil {
-		if n, err = db.Bump(r.Context(), s.Pool, "sitereport:all", false); err == nil && n > reportPerHour {
-			s.siteFail(w, busy)
-			return
-		}
-	}
-	var ok bool
-	if err == nil {
-		err = s.Pool.QueryRow(r.Context(), "select sites.abuse_report_add($1::uuid, $2, $3)", siteID, ip, text).Scan(&ok)
-	}
+	var result string
+	err = s.Pool.QueryRow(r.Context(), "select sites.abuse_report_add($1::uuid, $2, $3)", siteID, ip, text).Scan(&result)
 	if err != nil {
 		s.siteFail(w, command.DB(err))
 		return
 	}
-	if !ok {
+	if result == "rate_limited" {
+		s.siteFail(w, busy)
+		return
+	}
+	if result != "ok" {
 		notFound(w)
 		return
 	}

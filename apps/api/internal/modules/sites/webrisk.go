@@ -67,6 +67,22 @@ func CanonicalURL(raw string) (string, error) {
 		host += ":" + port
 	}
 	path := u.EscapedPath()
+	parts := strings.Split(path, "/")
+	out := make([]string, 0, len(parts))
+	for i, part := range parts {
+		dot := strings.ToLower(strings.ReplaceAll(part, "%2e", "."))
+		if dot == "." || dot == ".." {
+			if dot == ".." && len(out) > 1 {
+				out = out[:len(out)-1]
+			}
+			if i == len(parts)-1 {
+				out = append(out, "")
+			}
+		} else {
+			out = append(out, part)
+		}
+	}
+	path = strings.Join(out, "/")
 	if path == "" {
 		path = "/"
 	}

@@ -679,7 +679,7 @@ type abSnap struct {
 	data                map[string]any
 	catalog             json.RawMessage
 	posts               []abPost
-	postRev             int
+	postRev             string
 	reports             int
 	age                 int
 	business            string
@@ -706,21 +706,22 @@ func abLoadSnap(ctx context.Context, tx pgx.Tx, ws, siteID string) (s abSnap, ok
 		return s, false, err
 	}
 	s.catalog = cat
-	rows, err := tx.Query(ctx, `select slug, title, description, body, rev from sites.posts where workspace_id = $1::uuid and site_id = $2::uuid and status = 'published' order by slug`, ws, siteID)
+	rows, err := tx.Query(ctx, `select slug, title, description, body from sites.posts where workspace_id = $1::uuid and site_id = $2::uuid and status = 'published' order by slug`, ws, siteID)
 	if err != nil {
 		return s, false, err
 	}
 	for rows.Next() {
 		var p abPost
-		var rev int
-		if err = rows.Scan(&p.Slug, &p.Title, &p.Description, &p.Body, &rev); err != nil {
+		if err = rows.Scan(&p.Slug, &p.Title, &p.Description, &p.Body); err != nil {
 			rows.Close()
 			return s, false, err
 		}
 		s.posts = append(s.posts, p)
-		s.postRev += rev + 1
 	}
 	if err = rows.Err(); err != nil {
+		return s, false, err
+	}
+	if err = tx.QueryRow(ctx, `select encode(sha256(convert_to(coalesce(string_agg(id::text || ':' || rev::text, ',' order by id), ''), 'UTF8')), 'hex') from sites.posts where site_id = $1::uuid and status = 'published'`, siteID).Scan(&s.postRev); err != nil {
 		return s, false, err
 	}
 	var created time.Time
@@ -956,7 +957,7 @@ func abDue(ctx context.Context, pool *pgxpool.Pool, ws string) ([]string, error)
 		where s.published_version_id is not null and p.taken_down_at is null
 		and not exists (select 1 from sites.abuse_cases c where c.site_id = s.id and c.status in ('dismissed','restored') and c.dismissed_for_version = s.published_version_id)
 		and (a.site_id is null or a.published_version_id <> s.published_version_id
-		  or a.post_rev <> (select coalesce(sum(rev + 1), 0) from sites.posts x where x.site_id = s.id and x.status = 'published')
+		  or a.post_rev <> (select encode(sha256(convert_to(coalesce(string_agg(x.id::text || ':' || x.rev::text, ',' order by x.id), ''), 'UTF8')), 'hex') from sites.posts x where x.site_id = s.id and x.status = 'published')
 		  or a.scanned_at < now() - $1 * interval '1 second'
 		  or exists (select 1 from sites.abuse_links l where l.site_id = s.id and l.expires_at < now())
 		  or exists (select 1 from sites.abuse_reports r where r.site_id = s.id and r.created_at > a.scanned_at))
