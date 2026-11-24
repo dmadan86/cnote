@@ -13,3 +13,6 @@ coverage
 target
 .claude/
 *.tsbuildinfo
+
+# generated knowledge graph (local tooling)
+graphify-out/
