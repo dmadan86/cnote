@@ -1,10 +1,11 @@
 'use client'
 import { FileText, Plus } from 'lucide-react'
 import Link from 'next/link'
-import { useRouter, useSearchParams } from 'next/navigation'
-import { useState } from 'react'
+import { usePathname, useRouter, useSearchParams } from 'next/navigation'
+import { useMemo, useState } from 'react'
 import { BranchSelect, useBranches } from '@/components/company/branch-filter'
 import { NeedSpace } from '@/components/crm/contacts'
+import { type Column, ListTable } from '@/components/list-table'
 import { useShell } from '@/components/shell'
 import { btn, btnPrimary, EmptyState, ErrorText, Field, inputCls, Modal, Pill } from '@/components/ui'
 import { useCmd } from '@/lib/hooks'
@@ -101,29 +102,114 @@ function NewInvoice({ onClose }: { onClose: () => void }) {
   )
 }
 
+const OPEN = ['issued', 'irn_generated', 'sent', 'partly_paid']
+/** Amount still owed; null where it does not apply (drafts, cancelled, credit notes). */
+const outstanding = (i: Invoice) =>
+  i.kind === 'invoice' && i.status !== 'draft' && i.status !== 'cancelled'
+    ? i.total_minor - i.paid_minor - i.credited_minor
+    : null
+const LIMIT = 500
+
 export function InvoiceList() {
   const { ws, spaces } = useShell()
   const [adding, setAdding] = useState(false)
   const [branch, setBranch] = useState('')
   const [q, setQ] = useState('')
   const { data: all, error } = useCmd<Invoice[]>(ws, 'invoice.list', {
-    limit: 500,
+    limit: LIMIT,
     ...(branch && { branch_id: branch }),
   })
   // home tiles link here with ?filter=outstanding|overdue
   const filter = useSearchParams().get('filter')
+  const router = useRouter()
+  const pathname = usePathname()
   const base =
     filter === 'outstanding' || filter === 'overdue'
       ? all?.filter(
           (i) =>
             i.kind === 'invoice' &&
-            ['issued', 'irn_generated', 'sent', 'partly_paid'].includes(i.status) &&
+            OPEN.includes(i.status) &&
             i.total_minor - i.paid_minor - i.credited_minor > 0 &&
             (filter === 'outstanding' || (!!i.due_date && i.due_date < today())),
         )
       : all
   const contacts = useCmd<Contact[]>(ws, 'contact.list', { limit: 500 })
-  const names = new Map(contacts.data?.map((c) => [c.id, c.name]))
+  const names = useMemo(() => new Map(contacts.data?.map((c) => [c.id, c.name])), [contacts.data])
+  const columns = useMemo<Column<Invoice>[]>(
+    () => [
+      {
+        key: 'number',
+        label: 'Number',
+        locked: true,
+        sort: (i) => i.number,
+        cell: (i) => (
+          <>
+            <Link href={`/w/${ws}/billing/${i.id}`} className="hover:underline">
+              {i.number ?? 'Draft'}
+            </Link>
+            {i.kind === 'credit_note' && <span className="ml-1.5 text-[12px] text-muted">credit note</span>}
+          </>
+        ),
+      },
+      {
+        key: 'customer',
+        label: 'Customer',
+        sort: (i) => (i.contact_id && names.get(i.contact_id)) || null,
+        cell: (i) => (i.contact_id ? names.get(i.contact_id) : ''),
+      },
+      {
+        key: 'date',
+        label: 'Date',
+        sort: (i) => i.invoice_date,
+        cell: (i) => <span className="text-muted">{i.invoice_date}</span>,
+      },
+      {
+        key: 'due',
+        label: 'Due',
+        sort: (i) => i.due_date,
+        cell: (i) => <span className="text-muted">{i.due_date}</span>,
+      },
+      {
+        key: 'status',
+        label: 'Status',
+        sort: (i) => STATUS_LABEL[i.status] ?? i.status,
+        cell: (i) => <StatusPill status={i.status} />,
+      },
+      {
+        key: 'total',
+        label: 'Total',
+        align: 'right',
+        sort: (i) => i.total_minor,
+        cell: (i) => money(i.total_minor),
+      },
+      {
+        key: 'outstanding',
+        label: 'Outstanding',
+        align: 'right',
+        sort: outstanding,
+        cell: (i) => {
+          const o = outstanding(i)
+          return o == null ? '' : money(o)
+        },
+      },
+      {
+        key: 'paid',
+        label: 'Paid',
+        align: 'right',
+        hidden: true,
+        sort: (i) => i.paid_minor,
+        cell: (i) => money(i.paid_minor),
+      },
+      {
+        key: 'gstin',
+        label: 'Buyer GSTIN',
+        hidden: true,
+        sort: (i) => i.buyer_gstin,
+        cell: (i) => <span className="font-mono text-[13px]">{i.buyer_gstin}</span>,
+      },
+    ],
+    [ws, names],
+  )
   const data = q.trim()
     ? base?.filter((i) =>
         hits(
@@ -157,64 +243,40 @@ export function InvoiceList() {
       )}
       <ErrorText error={error} />
       {!spaces.length && <NeedSpace />}
-      {data?.length === 0 && spaces.length > 0 && (
-        <EmptyState
-          icon={FileText}
-          title={data !== all ? 'No invoices match' : 'No invoices yet'}
-          action={
-            data !== all ? undefined : (
-              <button type="button" className={btnPrimary} onClick={() => setAdding(true)}>
-                <Plus size={14} /> Create first invoice
-              </button>
-            )
-          }
-        >
-          {data !== all
-            ? 'Nothing fits this filter.'
-            : 'Invoices you send to customers, and what they owe, show up here.'}
-        </EmptyState>
-      )}
-      {!!data?.length && (
-        <table className="w-full text-left text-[14px]">
-          <thead className="text-[12px] text-muted">
-            <tr className="border-b border-line">
-              <th className="py-2 font-medium">Number</th>
-              <th className="font-medium">Customer</th>
-              <th className="font-medium">Date</th>
-              <th className="font-medium">Due</th>
-              <th className="font-medium">Status</th>
-              <th className="text-right font-medium">Total</th>
-              <th className="text-right font-medium">Outstanding</th>
-            </tr>
-          </thead>
-          <tbody>
-            {data.map((i) => (
-              <tr key={i.id} className="border-b border-line hover:bg-hover">
-                <td className="py-2 font-medium">
-                  <Link href={`/w/${ws}/billing/${i.id}`} className="hover:underline">
-                    {i.number ?? 'Draft'}
-                  </Link>
-                  {i.kind === 'credit_note' && (
-                    <span className="ml-1.5 text-[12px] text-muted">credit note</span>
-                  )}
-                </td>
-                <td>{i.contact_id ? names.get(i.contact_id) : ''}</td>
-                <td className="text-muted">{i.invoice_date}</td>
-                <td className="text-muted">{i.due_date}</td>
-                <td>
-                  <StatusPill status={i.status} />
-                </td>
-                <td className="text-right tabular-nums">{money(i.total_minor)}</td>
-                <td className="text-right tabular-nums">
-                  {i.kind === 'invoice' && i.status !== 'draft' && i.status !== 'cancelled'
-                    ? money(i.total_minor - i.paid_minor - i.credited_minor)
-                    : ''}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
+      <ListTable
+        screen="billing.invoices"
+        label="Invoices"
+        columns={columns}
+        rows={data}
+        rowKey={(i) => i.id}
+        filters={{ q, branch, filter: filter === 'outstanding' || filter === 'overdue' ? filter : '' }}
+        onFilters={(f) => {
+          setQ(f.q ?? '')
+          setBranch(f.branch ?? '')
+          const next = f.filter === 'outstanding' || f.filter === 'overdue' ? `?filter=${f.filter}` : ''
+          router.replace(`${pathname}${next}`)
+        }}
+        partial={all && all.length >= LIMIT ? `newest ${LIMIT} invoices` : undefined}
+        empty={
+          spaces.length > 0 && data?.length === 0 ? (
+            <EmptyState
+              icon={FileText}
+              title={data !== all ? 'No invoices match' : 'No invoices yet'}
+              action={
+                data !== all ? undefined : (
+                  <button type="button" className={btnPrimary} onClick={() => setAdding(true)}>
+                    <Plus size={14} /> Create first invoice
+                  </button>
+                )
+              }
+            >
+              {data !== all
+                ? 'Nothing fits this filter.'
+                : 'Invoices you send to customers, and what they owe, show up here.'}
+            </EmptyState>
+          ) : undefined
+        }
+      />
       {adding && <NewInvoice onClose={() => setAdding(false)} />}
     </div>
   )

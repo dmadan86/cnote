@@ -595,3 +595,81 @@ Where this design differs, and why:
 12–13. List screens (Release 2) get a typed per-screen contract (filters serialization, sort semantics for dates, money, nulls and ties, pagination reset rules, URL deep links) written before each conversion; no partial client-side result is presented as complete.
 14. Migration **1312**; the new `uiconfig` module registers its commands with metadata and roles, imports no other module, and is added to the boundary test.
 15. Release 1 is behind `HOME_WIDGETS=1`, with e2e covering owner, member without finance, and mobile; flipping the flag off restores the old Home.
+
+## 17. Release 2 screen contracts
+
+First slice: the invoices list and the contacts list, on the shared `ListTable`
+(`apps/web/src/components/list-table/`). Written before conversion, per 16.12 and 16.13.
+
+### 17.1 Decisions for `ListTable`
+
+- **No TanStack Table.** The newest stable is `@tanstack/react-table` 9.3.1 (npm `latest`; alpha and beta tags are
+  ignored). What we need is a column list, visible order, one sort key and a page slice: about 100 lines in
+  `config.ts`. Column pinning is CSS (`position: sticky`), and we use no grouping, resizing, filtering or virtual rows.
+  v9 is a new major line, and adopting it for this would add about 31 KB gzip and a migration surface for no gain.
+  Revisit when a screen needs server-driven sorting with row models, resizing or virtualisation.
+- **Native `<table>`**, `<th scope="col">`, `aria-sort` on the sorted header, header buttons only on sortable columns,
+  a visually hidden `<caption>` with the row count. No `role="grid"`.
+- **Settings in one `Modal`** (native `<dialog>`: focus trap, Esc, focus returns to the Columns button), on desktop and
+  phone alike. This replaces the popover in section 8 to keep one code path.
+- **Reorder** uses the already installed `@dnd-kit` with `KeyboardSensor` and announcements, plus Move up and Move down
+  buttons (disabled at the edges; focus moves to the other arrow when one is disabled). Show and hide are checkboxes;
+  hidden columns sit in their own list. The first column is locked: always first, always shown.
+- **Mobile: horizontal scroll with the first column frozen**, not cards. Both screens are wide, column settings apply
+  unchanged, table semantics stay, and cards would need a second template per screen. The scroll region is focusable
+  and labelled. "Keep the first column in place" turns the freeze off.
+- **Three densities**: row height 32, 40 (default) and 48 px.
+- **Stored shape** (`ui_config`, screens `billing.invoices` and `crm.contacts`): `{v:1, columns, sort, density,
+  pageSize, freezeFirst, views}`. Parsed defensively: unknown columns dropped, enums clamped, at most 10 views, names
+  at most 40 characters, filter values at most 200. A newer `v` shows the default and disables editing.
+- **Sort is saved per screen, not per view.** A view stores filters and visible columns. Applying a view sets both.
+  "All" clears the filters. A view shows as pressed when its filters equal the current ones.
+- **Reset to default** (confirmed) deletes the stored row: columns, order, sort, density, page size, freeze and views.
+- **Announcements**: one polite live region in the table (sort, page, view saved, applied, deleted, page size) and one in the
+  dialog (hide, show, move, density, freeze, reset). Save failures render as `role="alert"`.
+
+### 17.2 Sort and paging semantics (both screens)
+
+- A sort cycle on a header is ascending, descending, then off. Off means the server order.
+- Null and empty values sort last in both directions. Numbers (money in minor units) compare numerically. Text
+  compares numeric-aware and case-insensitively (`INV-2` before `INV-10`). ISO dates (`YYYY-MM-DD`) compare as text.
+  Ties keep the server order in both directions.
+- Paging is in the browser over the rows loaded. Page size is 25, 50 (default) or 100.
+- The page returns to 1 when the sort, the page size, any filter, or the loaded row count changes. The page number is
+  not in the URL.
+- **Neither command pages by cursor or sorts by column**, and both cap at 500 rows. When the loaded set reaches 500
+  the table shows "Showing only the ... Sorting and paging cover these rows, not every record." We never show a
+  capped window as complete. Moving to server sort and paging needs `order_by`/`cursor` inputs on the commands; that is out of scope here.
+
+### 17.3 Contract: invoices (`/w/[ws]/billing`, screen `billing.invoices`)
+
+| Item | Contract |
+|---|---|
+| Source | `invoice.list`. Server inputs used: `limit` (500, the server maximum) and `branch_id`. The command also accepts `status`, `contact_id` and `kind`; the screen does not use them. |
+| Server order | Newest first (`created_at desc`). This is the "off" sort. |
+| Cap | 500. Beyond it the table says it shows the newest 500. |
+| Client-side filters | Search box (number, customer, status, total) and the `filter=outstanding|overdue` deep link. Both run over the loaded 500 only, as before. The "partial" note appears when 500 were loaded. |
+| Customer names | From `contact.list` limit 500; a customer beyond that shows a blank name (existing behaviour). |
+| URL | `?filter=outstanding` and `?filter=overdue` (Home tiles link here); any other value is ignored. Unchanged. "Show all" in the banner links to `/billing`. Applying a view or "All" rewrites `filter` with `router.replace`. |
+| Filters object (for views) | `{q, branch, filter}`, all strings, empty means off. |
+| Actions kept | New invoice (modal, branch picker, create draft, redirect), number link to the invoice, the banner link, empty states (no space, no invoices, no match), branch selector, search. |
+| Columns | Number (locked, text), Customer (text), Date, Due (ISO, null last), Status (label text), Total and Outstanding (minor units; Outstanding is null for drafts, cancelled and credit notes, so those sort last); hidden by default: Paid, Buyer GSTIN. |
+| Default sort | None (server order). |
+
+### 17.4 Contract: contacts (`/w/[ws]/crm`, screen `crm.contacts`)
+
+| Item | Contract |
+|---|---|
+| Source | `contact.list`. Server inputs used: `q` (name, email or company, case-insensitive substring) and `limit` 500. |
+| Server order | Name ascending. This is the "off" sort. |
+| Cap | 500. The note reads "first 500 contacts by name". |
+| Search | Server-side through `q`, so a search is complete within the cap. Changing it reloads and returns to page 1. |
+| URL | None, today or after this change. |
+| Filters object (for views) | `{q}`. |
+| Actions kept | New contact (modal), Import link, name link to the contact page, empty states, no-space prompt, search. |
+| Columns | Name (locked), Type, Email, GSTIN, State (text, by state name); hidden by default: Phone, Company. Null and empty last. |
+| Default sort | None (server name order). |
+
+### 17.5 Not done in this slice
+
+Sticky header row, server-side sort and paging, shared (team) views, per-view sort, and the other list screens.
