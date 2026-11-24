@@ -28,6 +28,9 @@ var globalByDesign = map[string]bool{
 	"core.oauth_codes":       true,
 	"core.oauth_grants":      true,
 	"core.app_install_codes": true,
+	// written only by the SECURITY DEFINER function sites.platform_set: the app role has no INSERT (site_platform) or no access at all (platform_actions)
+	"sites.site_platform":    true,
+	"sites.platform_actions": true,
 }
 
 type tbl struct{ schema, name string }

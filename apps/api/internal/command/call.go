@@ -39,7 +39,7 @@ func (r *Registry) WithTx(ctx context.Context, pool *pgxpool.Pool, p Principal, 
 		return DB(err)
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
-	c := &Ctx{Context: ctx, Tx: tx, Principal: p, reg: r}
+	c := &Ctx{Context: ctx, Tx: tx, Pool: pool, Principal: p, reg: r}
 	if err := fn(c); err != nil {
 		return err
 	}

@@ -8,6 +8,7 @@ export default function SitePreview() {
   const [data, setData] = useState<SiteData>()
   const [selected, setSelected] = useState<string | null>(null)
   const [pulse, setPulse] = useState<string | null>(null)
+  const [ctx, setCtx] = useState<{ assetBase?: string; pro?: boolean }>({})
   const prev = useRef<Map<string, string>>(new Map())
   // The parent is the only thing that may drive this page; a standalone visit renders nothing.
   const embedded = typeof window !== 'undefined' && window.parent !== window
@@ -33,6 +34,12 @@ export default function SitePreview() {
       }
       prev.current = next
       setData(d)
+      // The asset base is a same-origin API path or nothing; a boolean badge flag is all else the parent sends.
+      const ab = e.data.assetBase
+      setCtx({
+        assetBase: typeof ab === 'string' && /^\/api\/[\w/-]+$/.test(ab) ? ab : undefined,
+        pro: typeof e.data.pro === 'boolean' ? e.data.pro : undefined,
+      })
       setSelected(typeof e.data.selected === 'string' ? e.data.selected : null)
       if (changed) {
         setPulse(changed)
@@ -57,6 +64,13 @@ export default function SitePreview() {
   // ?readonly=1 (template preview, thumbnails): no outlines, nothing selectable.
   const readonly = new URLSearchParams(location.search).has('readonly')
   return (
-    <Renderer data={data} selectedId={selected} onSelect={readonly ? undefined : select} pulseId={pulse} />
+    <Renderer
+      data={data}
+      selectedId={selected}
+      onSelect={readonly ? undefined : select}
+      pulseId={pulse}
+      assetBase={ctx.assetBase}
+      pro={ctx.pro}
+    />
   )
 }

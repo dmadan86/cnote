@@ -4,8 +4,15 @@ import { btnPrimary, ErrorText, Field, inputCls } from '@/components/ui'
 import { api } from '@/lib/api'
 
 /** Public "raise a ticket" form: no session, no app shell. The token in the link is the only authorization. */
-export default function Page({ params }: { params: Promise<{ token: string }> }) {
+export default function Page({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ token: string }>
+  searchParams: Promise<{ subject?: string }>
+}) {
   const { token } = use(params)
+  const { subject } = use(searchParams) // prefilled by links such as a published site's "Report this site"
   const [name, setName] = useState<string>()
   const [missing, setMissing] = useState(false)
   const [state, setState] = useState<'idle' | 'sending' | 'done'>('idle')
@@ -54,7 +61,16 @@ export default function Page({ params }: { params: Promise<{ token: string }> })
           {(id) => <input id={id} name="email" type="email" autoComplete="email" className={cls} />}
         </Field>
         <Field label="Subject (required)">
-          {(id) => <input id={id} name="subject" required maxLength={200} className={cls} />}
+          {(id) => (
+            <input
+              id={id}
+              name="subject"
+              required
+              maxLength={200}
+              defaultValue={subject?.slice(0, 200)}
+              className={cls}
+            />
+          )}
         </Field>
         <Field label="What went wrong? (required)">
           {(id) => (

@@ -243,8 +243,9 @@ type SessionUser struct {
 	Email string `json:"email"`
 	Name  string `json:"name"`
 
-	AMR          string `json:"-"` // pwd, mfa or sso
-	SSOWorkspace string `json:"-"` // set for an SSO session: the only workspace it may use
+	EmailVerified bool   `json:"-"`
+	AMR           string `json:"-"` // pwd, mfa or sso
+	SSOWorkspace  string `json:"-"` // set for an SSO session: the only workspace it may use
 }
 
 // SessionUser resolves the caller's session; errors are the Rust ones ("sign in required" / "session expired").
@@ -256,9 +257,9 @@ func (a *Auth) SessionUser(ctx context.Context, h http.Header) (SessionUser, err
 	var u SessionUser
 	var stale bool
 	err := a.Pool.QueryRow(ctx,
-		`select u.id::text, u.email, u.name, s.amr, coalesce(s.sso_workspace_id::text, ''), (s.last_seen_at is null or s.last_seen_at < now() - make_interval(secs => $2))
+		`select u.id::text, u.email, u.name, u.email_verified_at is not null, s.amr, coalesce(s.sso_workspace_id::text, ''), (s.last_seen_at is null or s.last_seen_at < now() - make_interval(secs => $2))
 		 from core.sessions s join core.users u on u.id = s.user_id
-		 where s.id = $1 and s.expires_at > now()`, sha256Hex(tok), seenEvery.Seconds()).Scan(&u.ID, &u.Email, &u.Name, &u.AMR, &u.SSOWorkspace, &stale)
+		 where s.id = $1 and s.expires_at > now()`, sha256Hex(tok), seenEvery.Seconds()).Scan(&u.ID, &u.Email, &u.Name, &u.EmailVerified, &u.AMR, &u.SSOWorkspace, &stale)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return u, command.NewError(command.Unauthenticated, "session expired")
 	}

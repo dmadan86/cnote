@@ -1,0 +1,114 @@
+{
+  "key": "trader",
+  "name": "Works",
+  "description": "A website for your manufacturer / trader business.",
+  "vertical": "Manufacturer / trader",
+  "data": {
+    "root": {
+      "props": {
+        "title": "{{name}}",
+        "theme": {
+          "primary": "#f59e0b",
+          "background": "#ffffff",
+          "text": "#111827",
+          "font": "sans",
+          "radius": "none"
+        }
+      }
+    },
+    "content": [
+      {
+        "type": "Header",
+        "props": {
+          "id": "Header-00000001",
+          "brand": "{{name}}",
+          "links": []
+        }
+      },
+      {
+        "type": "Hero",
+        "props": {
+          "id": "Hero-00000002",
+          "title": "{{name}}",
+          "align": "center"
+        }
+      },
+      {
+        "type": "Services",
+        "props": {
+          "id": "Services-00000003",
+          "title": "Products",
+          "items": [
+            {
+              "name": "Your first service",
+              "description": ""
+            }
+          ]
+        }
+      },
+      {
+        "type": "About",
+        "props": {
+          "id": "About-00000004",
+          "title": "About us",
+          "body": "Add your story here."
+        }
+      },
+      {
+        "type": "Gallery",
+        "props": {
+          "id": "Gallery-00000005",
+          "title": "Gallery",
+          "items": []
+        }
+      },
+      {
+        "type": "FAQ",
+        "props": {
+          "id": "FAQ-00000006",
+          "title": "Frequently asked questions",
+          "items": []
+        }
+      },
+      {
+        "type": "ContactForm",
+        "props": {
+          "id": "ContactForm-00000007",
+          "title": "Contact us",
+          "phone": "{{phone}}",
+          "email": "{{email}}",
+          "address": "{{address}}",
+          "submit_label": "Get a quote"
+        }
+      },
+      {
+        "type": "MapHours",
+        "props": {
+          "id": "MapHours-00000008",
+          "title": "Find us",
+          "address": "{{address}}",
+          "hours": []
+        }
+      },
+      {
+        "type": "Footer",
+        "props": {
+          "id": "Footer-00000009",
+          "text": "{{name}}",
+          "phone": "{{phone}}",
+          "email": "{{email}}",
+          "address": "{{address}}",
+          "links": []
+        }
+      },
+      {
+        "type": "WhatsAppButton",
+        "props": {
+          "id": "WhatsAppButton-0000000a",
+          "phone": "{{phone}}",
+          "label": "WhatsApp"
+        }
+      }
+    ]
+  }
+}

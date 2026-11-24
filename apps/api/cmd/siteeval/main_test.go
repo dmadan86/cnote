@@ -118,8 +118,9 @@ func TestLocalAddBlock(t *testing.T) {
 		t.Fatal("expected Changed=true")
 	}
 
+	// The updated fixture has 13 blocks; adding one more makes 14.
 	errs := EvalAssertions("local-add", res.Data, []Assertion{
-		{Path: "blocks", Op: "count", Value: float64(6)},
+		{Path: "blocks", Op: "count", Value: float64(14)},
 	})
 	for _, e := range errs {
 		t.Errorf("assertion failed: %s", e.Error())

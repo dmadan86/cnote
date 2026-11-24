@@ -406,3 +406,102 @@ func TestCase_OmittedBusinessAndHistory(t *testing.T) {
 		t.Errorf("expected nil History, got %v", cases[0].History)
 	}
 }
+
+// --- Case struct: images field ---
+
+func TestCase_ImagesField(t *testing.T) {
+	raw := `[{
+		"id": "img-test",
+		"lang": "en",
+		"prompt": "Set the Hero image",
+		"may_change": ["Hero"],
+		"expect": [],
+		"images": [
+			{"id": "11111111-1111-1111-1111-111111111111", "name": "logo.jpg"},
+			{"id": "22222222-2222-2222-2222-222222222222", "name": "clinic.jpg"}
+		]
+	}]`
+	var cases []Case
+	if err := json.Unmarshal([]byte(raw), &cases); err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
+	}
+	if len(cases) != 1 {
+		t.Fatalf("expected 1 case, got %d", len(cases))
+	}
+	c := cases[0]
+	if len(c.Images) != 2 {
+		t.Fatalf("expected 2 images, got %d", len(c.Images))
+	}
+	if c.Images[0].ID != "11111111-1111-1111-1111-111111111111" || c.Images[0].Name != "logo.jpg" {
+		t.Errorf("images[0] mismatch: %+v", c.Images[0])
+	}
+	if c.Images[1].ID != "22222222-2222-2222-2222-222222222222" || c.Images[1].Name != "clinic.jpg" {
+		t.Errorf("images[1] mismatch: %+v", c.Images[1])
+	}
+}
+
+func TestCase_OmittedImages(t *testing.T) {
+	// A case without an images field should have a nil Images slice.
+	raw := `[{"id": "x", "lang": "en", "prompt": "hi", "may_change": [], "expect": []}]`
+	var cases []Case
+	if err := json.Unmarshal([]byte(raw), &cases); err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
+	}
+	if cases[0].Images != nil {
+		t.Errorf("expected nil Images, got %v", cases[0].Images)
+	}
+}
+
+// --- root.title / root.description path assertions ---
+
+var rootDescData = json.RawMessage(`{
+  "root": {"props": {"title": "My Clinic", "description": "Expert care in Pune.", "theme": {"primary": "#4f46e5", "background": "#ffffff", "text": "#111827", "font": "sans", "radius": "md"}}},
+  "content": []
+}`)
+
+func TestAssertRootTitle(t *testing.T) {
+	errs := EvalAssertions("test", rootDescData, []Assertion{
+		{Path: "root.title", Op: "equals", Value: "My Clinic"},
+	})
+	if len(errs) != 0 {
+		t.Fatalf("expected no errors, got %v", errs)
+	}
+}
+
+func TestAssertRootDescription(t *testing.T) {
+	errs := EvalAssertions("test", rootDescData, []Assertion{
+		{Path: "root.description", Op: "contains", Value: "Pune"},
+	})
+	if len(errs) != 0 {
+		t.Fatalf("expected no errors, got %v", errs)
+	}
+}
+
+func TestAssertRootDescription_absent(t *testing.T) {
+	// fixtureData has no description field → should be absent
+	errs := EvalAssertions("test", fixtureData, []Assertion{
+		{Path: "root.description", Op: "absent"},
+	})
+	if len(errs) != 0 {
+		t.Fatalf("expected no errors (description absent in fixture), got %v", errs)
+	}
+}
+
+func TestAssertRootTitle_mismatch(t *testing.T) {
+	errs := EvalAssertions("test", rootDescData, []Assertion{
+		{Path: "root.title", Op: "equals", Value: "Wrong"},
+	})
+	if len(errs) != 1 {
+		t.Fatalf("expected 1 error, got %d", len(errs))
+	}
+}
+
+func TestAssertRootUnknownField(t *testing.T) {
+	// root.nonexistent should return absent
+	errs := EvalAssertions("test", rootDescData, []Assertion{
+		{Path: "root.nonexistent", Op: "absent"},
+	})
+	if len(errs) != 0 {
+		t.Fatalf("expected no errors for unknown root field (absent), got %v", errs)
+	}
+}

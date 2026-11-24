@@ -1,6 +1,8 @@
 import type { NextConfig } from 'next'
 
 const config: NextConfig = {
+  // Published sites are reached at <name>.localhost in development and CI (Chromium resolves *.localhost).
+  allowedDevOrigins: ['*.localhost'],
   async headers() {
     return [
       {

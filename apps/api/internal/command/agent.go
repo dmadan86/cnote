@@ -88,6 +88,6 @@ func (c *Ctx) CallConfirmed(p Principal, name, confirmationID string) (json.RawM
 	if err != nil {
 		return nil, DB(err)
 	}
-	cc := &Ctx{Context: c.Context, Tx: c.Tx, Principal: fresh, reg: c.reg}
+	cc := &Ctx{Context: c.Context, Tx: c.Tx, Pool: c.Pool, Principal: fresh, reg: c.reg}
 	return cc.reg.run(cc, name, stored, ExecOptions{ConfirmationID: &confirmationID})
 }

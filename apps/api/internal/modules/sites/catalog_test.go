@@ -11,11 +11,74 @@ import (
 
 func fixture(t *testing.T) json.RawMessage {
 	t.Helper()
-	b, err := assets.ReadFile("template_services.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	return json.RawMessage(strings.NewReplacer("-000001", "-00000001", "-000002", "-00000002", "-000003", "-00000003", "-000004", "-00000004", "-000005", "-00000005", "{{name}}", "Business", "{{phone}}", "", "{{email}}", "", "{{address}}", "").Replace(string(b)))
+	return json.RawMessage(strings.NewReplacer("{{name}}", "Business", "{{phone}}", "", "{{email}}", "", "{{address}}", "").Replace(`{
+  "root": {
+    "props": {
+      "title": "{{name}}",
+      "theme": {
+        "primary": "#4f46e5",
+        "background": "#ffffff",
+        "text": "#111827",
+        "font": "sans",
+        "radius": "md"
+      }
+    }
+  },
+  "content": [
+    {
+      "type": "Header",
+      "props": {
+        "id": "Header-00000001",
+        "brand": "{{name}}",
+        "links": []
+      }
+    },
+    {
+      "type": "Hero",
+      "props": {
+        "id": "Hero-00000002",
+        "title": "{{name}}",
+        "align": "center"
+      }
+    },
+    {
+      "type": "Services",
+      "props": {
+        "id": "Services-00000003",
+        "title": "Our services",
+        "items": [
+          {
+            "name": "Your first service",
+            "description": ""
+          }
+        ]
+      }
+    },
+    {
+      "type": "ContactForm",
+      "props": {
+        "id": "ContactForm-00000004",
+        "title": "Contact us",
+        "phone": "{{phone}}",
+        "email": "{{email}}",
+        "address": "{{address}}",
+        "submit_label": "Send"
+      }
+    },
+    {
+      "type": "Footer",
+      "props": {
+        "id": "Footer-00000005",
+        "text": "{{name}}",
+        "phone": "{{phone}}",
+        "email": "{{email}}",
+        "address": "{{address}}",
+        "links": []
+      }
+    }
+  ]
+}
+`))
 }
 func TestWebCatalogInSync(t *testing.T) {
 	a, err := assets.ReadFile("catalog.json")
@@ -106,5 +169,33 @@ func TestStrictPageAndValues(t *testing.T) {
 		if validateField("link", s, field{Kind: "link"}) == nil {
 			t.Fatalf("accepted %q", s)
 		}
+	}
+}
+
+func TestPhaseOneTemplates(t *testing.T) {
+	for _, key := range templateKeys {
+		t.Run(key, func(t *testing.T) {
+			for _, slots := range []map[string]string{{}, {"name": "Example", "phone": "+91 9876543210", "email": "a@example.com", "address": "Example street"}} {
+				data, _, err := fillTemplate(slots, key)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err = Validate(data); err != nil {
+					t.Fatal(err)
+				}
+				if !HasBlock(data, "WhatsAppButton") {
+					t.Fatal("missing WhatsApp")
+				}
+			}
+		})
+	}
+}
+func TestImageIDsAndWhatsApp(t *testing.T) {
+	data := json.RawMessage(`{"content":[{"type":"Gallery","props":{"items":[{"image":"12345678-1234-1234-1234-123456789abc"}]}}]}`)
+	if len(ImageIDs(data)) != 1 || !HasBlock(data, "Gallery") || HasBlock(data, "Hero") {
+		t.Fatal("image or block lookup failed")
+	}
+	if WaDigits("98765 43210") != "919876543210" || WaDigits("123") != "" {
+		t.Fatal("invalid WhatsApp digits")
 	}
 }

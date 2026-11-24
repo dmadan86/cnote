@@ -12,6 +12,14 @@ import (
 	"strings"
 )
 
+// CaseImage is one entry in a case's "images" array.
+// It mirrors sites.Image and is passed to TurnInput.Images so the model knows
+// which image IDs are available for placement into image props.
+type CaseImage struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
 // Case is one entry in cases.json.
 type Case struct {
 	ID        string      `json:"id"`
@@ -19,6 +27,9 @@ type Case struct {
 	Prompt    string      `json:"prompt"`
 	MayChange []string    `json:"may_change"`
 	Expect    []Assertion `json:"expect"`
+	// Images supplies available uploaded-image metadata for TurnInput.Images.
+	// The model is only allowed to reference IDs from this list in image props.
+	Images []CaseImage `json:"images,omitempty"`
 	// Business supplies name/phone/email/address for the TurnInput.Business field.
 	// Used by adversarial cases that plant injection payloads in the business name.
 	Business map[string]string `json:"business,omitempty"`
@@ -61,8 +72,9 @@ type pageRoot struct {
 }
 
 type pageRootProps struct {
-	Title string         `json:"title"`
-	Theme map[string]any `json:"theme"`
+	Title       string         `json:"title"`
+	Description string         `json:"description"`
+	Theme       map[string]any `json:"theme"`
 }
 
 type pageBlock struct {
@@ -257,6 +269,23 @@ func resolvePath(doc pageDoc, path string) (any, bool) {
 	// blocks.<idx>.type
 	if head == "blocks" && tail != "" {
 		return resolveBlocksIndexedPath(doc, tail)
+	}
+
+	// root.title | root.description
+	if head == "root" && tail != "" {
+		switch tail {
+		case "title":
+			if doc.Root.Props.Title == "" {
+				return nil, false
+			}
+			return doc.Root.Props.Title, true
+		case "description":
+			if doc.Root.Props.Description == "" {
+				return nil, false
+			}
+			return doc.Root.Props.Description, true
+		}
+		return nil, false
 	}
 
 	// theme.<token>

@@ -42,12 +42,12 @@ func Sniff(data []byte) (string, bool) {
 
 func Commands() []command.Command {
 	nc := command.NewCommand
-	return []command.Command{
+	return append([]command.Command{
 		nc("file.upload", command.GroupWriteNotes, upload),
 		nc("file.list", command.GroupRead, list),
 		nc("file.download", command.GroupRead, download),
 		nc("file.delete", command.GroupWriteNotes, remove),
-	}
+	}, imageCommands()...)
 }
 
 var uuidRe = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
@@ -235,7 +235,7 @@ func list(c *command.Ctx, input json.RawMessage) (any, error) {
 
 func noteOf(c *command.Ctx, id string) (string, error) {
 	var note string
-	err := c.Tx.QueryRow(c.Context, "select note_id::text from core.attachments where id = $1::uuid and (data is not null or storage_key = 's3')", id).Scan(&note)
+	err := c.Tx.QueryRow(c.Context, "select note_id::text from core.attachments where id = $1::uuid and note_id is not null and (data is not null or storage_key = 's3')", id).Scan(&note)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", command.ErrNotFound("file")
 	}

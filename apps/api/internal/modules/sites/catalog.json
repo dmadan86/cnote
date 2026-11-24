@@ -16,6 +16,11 @@
     "radius": {
       "kind": "enum",
       "values": ["none", "sm", "md", "lg"]
+    },
+    "font_heading": {
+      "kind": "enum",
+      "values": ["sans", "serif", "rounded"],
+      "optional": true
     }
   },
   "blocks": {
@@ -47,6 +52,9 @@
         },
         "cta_href": {
           "kind": "link"
+        },
+        "logo": {
+          "kind": "image"
         }
       }
     },
@@ -76,6 +84,10 @@
         "align": {
           "kind": "enum",
           "values": ["left", "center"]
+        },
+        "image_alt": {
+          "kind": "text",
+          "max": 120
         }
       }
     },
@@ -163,6 +175,213 @@
             },
             "href": {
               "kind": "link"
+            }
+          }
+        }
+      }
+    },
+    "About": {
+      "label": "About",
+      "props": {
+        "title": {
+          "kind": "text",
+          "max": 80
+        },
+        "body": {
+          "kind": "longtext",
+          "max": 800,
+          "required": true
+        },
+        "image": {
+          "kind": "image"
+        },
+        "image_alt": {
+          "kind": "text",
+          "max": 120
+        }
+      }
+    },
+    "Gallery": {
+      "label": "Gallery",
+      "max": 1,
+      "props": {
+        "title": {
+          "kind": "text",
+          "max": 80
+        },
+        "items": {
+          "kind": "list",
+          "max": 12,
+          "props": {
+            "image": {
+              "kind": "image",
+              "required": true
+            },
+            "caption": {
+              "kind": "text",
+              "max": 80
+            }
+          }
+        }
+      }
+    },
+    "Pricing": {
+      "label": "Pricing",
+      "props": {
+        "title": {
+          "kind": "text",
+          "max": 80
+        },
+        "note": {
+          "kind": "text",
+          "max": 120
+        },
+        "items": {
+          "kind": "list",
+          "max": 12,
+          "props": {
+            "name": {
+              "kind": "text",
+              "max": 60,
+              "required": true
+            },
+            "price": {
+              "kind": "text",
+              "max": 30,
+              "required": true
+            },
+            "description": {
+              "kind": "longtext",
+              "max": 200
+            }
+          }
+        }
+      }
+    },
+    "FAQ": {
+      "label": "FAQ",
+      "max": 1,
+      "props": {
+        "title": {
+          "kind": "text",
+          "max": 80
+        },
+        "items": {
+          "kind": "list",
+          "max": 12,
+          "props": {
+            "question": {
+              "kind": "text",
+              "max": 120,
+              "required": true
+            },
+            "answer": {
+              "kind": "longtext",
+              "max": 500,
+              "required": true
+            }
+          }
+        }
+      }
+    },
+    "CallToAction": {
+      "label": "Call to action",
+      "props": {
+        "title": {
+          "kind": "text",
+          "max": 80,
+          "required": true
+        },
+        "text": {
+          "kind": "longtext",
+          "max": 200
+        },
+        "cta_label": {
+          "kind": "text",
+          "max": 30
+        },
+        "cta_href": {
+          "kind": "link"
+        }
+      }
+    },
+    "MapHours": {
+      "label": "Map and hours",
+      "max": 1,
+      "props": {
+        "title": {
+          "kind": "text",
+          "max": 80
+        },
+        "address": {
+          "kind": "longtext",
+          "max": 200
+        },
+        "map_url": {
+          "kind": "link"
+        },
+        "hours": {
+          "kind": "list",
+          "max": 7,
+          "props": {
+            "days": {
+              "kind": "text",
+              "max": 30,
+              "required": true
+            },
+            "time": {
+              "kind": "text",
+              "max": 30,
+              "required": true
+            }
+          }
+        }
+      }
+    },
+    "WhatsAppButton": {
+      "label": "WhatsApp",
+      "max": 1,
+      "props": {
+        "phone": {
+          "kind": "phone"
+        },
+        "message": {
+          "kind": "text",
+          "max": 120
+        },
+        "label": {
+          "kind": "text",
+          "max": 30
+        }
+      }
+    },
+    "Testimonials": {
+      "label": "Testimonials",
+      "max": 1,
+      "props": {
+        "title": {
+          "kind": "text",
+          "max": 80
+        },
+        "items": {
+          "kind": "list",
+          "max": 6,
+          "props": {
+            "quote": {
+              "kind": "longtext",
+              "max": 300,
+              "required": true,
+              "verbatim": true
+            },
+            "name": {
+              "kind": "text",
+              "max": 60,
+              "required": true,
+              "verbatim": true
+            },
+            "role": {
+              "kind": "text",
+              "max": 60
             }
           }
         }

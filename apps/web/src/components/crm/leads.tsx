@@ -385,7 +385,7 @@ export function Inbox() {
                 {d.contact_name || d.title}
               </Link>
               <span className="text-[12px] text-muted">
-                {d.source && <Pill>{d.source}</Pill>} {ago(d.created_at)}
+                {d.source && <Pill>{d.source === 'website' ? 'Website' : d.source}</Pill>} {ago(d.created_at)}
               </span>
             </div>
             {d.last_activity && <p className="mt-1 line-clamp-2 text-[14px]">{d.last_activity}</p>}

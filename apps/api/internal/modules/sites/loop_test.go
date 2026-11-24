@@ -85,3 +85,30 @@ func TestFirstTurnEncodesAndBoundsUntrustedData(t *testing.T) {
 		}
 	}
 }
+
+func TestModelTestimonialsAndImages(t *testing.T) {
+	base := fixture(t)
+	next, err := Apply(base, "add_block", json.RawMessage(`{"type":"Testimonials","props":{"items":[{"quote":"Excellent work", "name":"Jane"}]}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := checkModelResult(base, next, TurnInput{Message: `Jane said “Excellent work”`}); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkModelResult(base, next, TurnInput{Message: "write a review"}); err == nil {
+		t.Fatal("invented testimonial accepted")
+	}
+	if err := checkModelResult(next, next, TurnInput{}); err != nil {
+		t.Fatal(err)
+	}
+	image, err := Apply(base, "update_block_props", json.RawMessage(`{"id":"Hero-00000002","props":{"image":"12345678-1234-1234-1234-123456789abc"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if checkModelResult(base, image, TurnInput{}) == nil {
+		t.Fatal("unknown image accepted")
+	}
+	if err := checkModelResult(base, image, TurnInput{Images: []Image{{ID: "12345678-1234-1234-1234-123456789abc"}}}); err != nil {
+		t.Fatal(err)
+	}
+}
