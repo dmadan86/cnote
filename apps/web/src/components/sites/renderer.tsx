@@ -1,7 +1,7 @@
 'use client'
 import { Monitor, Smartphone } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
-import { type SiteData, themeStyle } from '@/lib/sites'
+import { type CatalogueView, type SiteData, themeStyle } from '@/lib/sites'
 import { BLOCKS, SiteBadge } from './blocks'
 import catalog from './catalog.json'
 
@@ -13,12 +13,15 @@ export function Renderer({
   pulseId,
   assetBase,
   pro,
+  catalog: items,
 }: {
   data: SiteData
   selectedId?: string | null
   onSelect?: (id: string | null) => void
   pulseId?: string | null
   assetBase?: string
+  /** The catalogue items the Catalogue block shows (the builder's chosen items); none shows its placeholder. */
+  catalog?: CatalogueView
   /** false shows the plan badge strip (the preview of a free site); undefined shows nothing. */
   pro?: boolean
 }) {
@@ -92,7 +95,12 @@ export function Renderer({
                 {label}
               </span>
             )}
-            <C {...b.props} assetBase={assetBase} editing={!!onSelect} />
+            <C
+              {...b.props}
+              assetBase={assetBase}
+              editing={!!onSelect}
+              catalog={b.type === 'Catalogue' ? items : undefined}
+            />
           </div>
         )
       })}
@@ -114,6 +122,7 @@ export function PreviewFrame({
   decorative,
   assetBase,
   pro,
+  catalog: items,
 }: {
   data: SiteData
   selected?: string | null
@@ -123,6 +132,8 @@ export function PreviewFrame({
   decorative?: boolean
   assetBase?: string
   pro?: boolean
+  /** The draft catalogue the Catalogue block shows in the preview. */
+  catalog?: CatalogueView | null
 }) {
   const ref = useRef<HTMLIFrameElement>(null)
   const [ready, setReady] = useState(false)
@@ -142,10 +153,10 @@ export function PreviewFrame({
   useEffect(() => {
     if (ready)
       ref.current?.contentWindow?.postMessage(
-        { type: 'site:data', data, selected: selected ?? null, assetBase, pro },
+        { type: 'site:data', data, selected: selected ?? null, assetBase, pro, catalog: items ?? undefined },
         location.origin,
       )
-  }, [ready, data, selected, assetBase, pro])
+  }, [ready, data, selected, assetBase, pro, items])
   return (
     <iframe
       ref={ref}

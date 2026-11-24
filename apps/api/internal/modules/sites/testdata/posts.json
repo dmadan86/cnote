@@ -1,0 +1,653 @@
+{
+  "valid": [
+    {
+      "id": "simple-paragraph",
+      "description": "Simple paragraph post with plain text",
+      "body": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "This is a simple paragraph post. It contains only plain text with no special formatting."
+              }
+            ]
+          },
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "A second paragraph follows the first. Both are valid content for a site post."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "heading-bullets-bold",
+      "description": "Post with h2 heading, bullet list, and bold text",
+      "body": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "heading",
+            "attrs": { "level": 2 },
+            "content": [
+              {
+                "type": "text",
+                "text": "Our Dental Services"
+              }
+            ]
+          },
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "We offer a wide range of services to keep your smile healthy. Our team of "
+              },
+              {
+                "type": "text",
+                "marks": [{ "type": "bold" }],
+                "text": "experienced dentists"
+              },
+              {
+                "type": "text",
+                "text": " is here to help."
+              }
+            ]
+          },
+          {
+            "type": "bulletList",
+            "content": [
+              {
+                "type": "listItem",
+                "content": [
+                  {
+                    "type": "paragraph",
+                    "content": [{ "type": "text", "text": "Teeth cleaning and polishing" }]
+                  }
+                ]
+              },
+              {
+                "type": "listItem",
+                "content": [
+                  {
+                    "type": "paragraph",
+                    "content": [
+                      { "type": "text", "text": "Root canal treatment — " },
+                      { "type": "text", "marks": [{ "type": "bold" }], "text": "painless procedure" }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "listItem",
+                "content": [
+                  {
+                    "type": "paragraph",
+                    "content": [{ "type": "text", "text": "Teeth whitening" }]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "blockquote-post",
+      "description": "Post with a blockquote",
+      "body": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "heading",
+            "attrs": { "level": 3 },
+            "content": [
+              { "type": "text", "text": "What Our Patients Say" }
+            ]
+          },
+          {
+            "type": "blockquote",
+            "content": [
+              {
+                "type": "paragraph",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "Dr Sharma and the team made my root canal completely painless. I cannot recommend them highly enough to anyone anxious about dental treatment."
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "paragraph",
+            "content": [
+              { "type": "text", "text": "— Priya Mehta, patient since 2019" }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "internal-link",
+      "description": "Post with an internal link using href starting with /",
+      "body": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              { "type": "text", "text": "To learn more about our clinic, visit our " },
+              {
+                "type": "text",
+                "marks": [{ "type": "link", "attrs": { "href": "/about" } }],
+                "text": "about page"
+              },
+              { "type": "text", "text": ". You can also check our " },
+              {
+                "type": "text",
+                "marks": [{ "type": "link", "attrs": { "href": "/services" } }],
+                "text": "services"
+              },
+              { "type": "text", "text": " for a full list of treatments." }
+            ]
+          },
+          {
+            "type": "paragraph",
+            "content": [
+              { "type": "text", "text": "New patients are always welcome. Book your appointment today using the form on our " },
+              {
+                "type": "text",
+                "marks": [{ "type": "link", "attrs": { "href": "/" } }],
+                "text": "home page"
+              },
+              { "type": "text", "text": "." }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "external-https-link",
+      "description": "Post with an external https link",
+      "body": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "heading",
+            "attrs": { "level": 2 },
+            "content": [
+              { "type": "text", "text": "Dental Health Resources" }
+            ]
+          },
+          {
+            "type": "paragraph",
+            "content": [
+              { "type": "text", "text": "The Indian Dental Association publishes helpful guides on oral hygiene. Read their latest " },
+              {
+                "type": "text",
+                "marks": [{ "type": "link", "attrs": { "href": "https://www.ida.org.in/PublicHealth" } }],
+                "text": "public health guidelines"
+              },
+              { "type": "text", "text": " for details on brushing and flossing technique." }
+            ]
+          },
+          {
+            "type": "paragraph",
+            "content": [
+              { "type": "text", "text": "Regular checkups every six months are recommended by " },
+              {
+                "type": "text",
+                "marks": [{ "type": "link", "attrs": { "href": "https://www.who.int/health-topics/oral-health" } }],
+                "text": "the WHO"
+              },
+              { "type": "text", "text": "." }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "site-image-node",
+      "description": "Post with a siteImage node with valid image_id and alt text",
+      "body": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "heading",
+            "attrs": { "level": 2 },
+            "content": [
+              { "type": "text", "text": "Inside Our Clinic" }
+            ]
+          },
+          {
+            "type": "paragraph",
+            "content": [
+              { "type": "text", "text": "Take a look at our modern, fully equipped clinic." }
+            ]
+          },
+          {
+            "type": "siteImage",
+            "attrs": {
+              "image_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+              "alt": "Reception area of Sharma Dental Clinic with comfortable seating"
+            }
+          },
+          {
+            "type": "paragraph",
+            "content": [
+              { "type": "text", "text": "Our reception is open Monday to Saturday, 9 AM to 7 PM." }
+            ]
+          },
+          {
+            "type": "siteImage",
+            "attrs": {
+              "image_id": "b2c3d4e5-f6a7-8901-bcde-f12345678901",
+              "alt": "Treatment room with dental chair and equipment"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "hard-break-in-paragraph",
+      "description": "Post with hardBreak node inside a paragraph",
+      "body": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              { "type": "text", "text": "Sharma Dental Clinic" },
+              { "type": "hardBreak" },
+              { "type": "text", "text": "12, MG Road, Pune — 411001" },
+              { "type": "hardBreak" },
+              { "type": "text", "text": "Phone: +91 20 2345 6789" },
+              { "type": "hardBreak" },
+              { "type": "text", "text": "Email: info@sharmadental.in" }
+            ]
+          },
+          {
+            "type": "paragraph",
+            "content": [
+              { "type": "text", "text": "We are open six days a week. Walk-ins welcome." }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "ordered-list-nested",
+      "description": "Post with ordered list and nested content including bold and h3",
+      "body": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "heading",
+            "attrs": { "level": 2 },
+            "content": [
+              { "type": "text", "text": "How to Prepare for Your First Visit" }
+            ]
+          },
+          {
+            "type": "paragraph",
+            "content": [
+              { "type": "text", "text": "Following these steps will help your first appointment go smoothly." }
+            ]
+          },
+          {
+            "type": "orderedList",
+            "content": [
+              {
+                "type": "listItem",
+                "content": [
+                  {
+                    "type": "paragraph",
+                    "content": [
+                      { "type": "text", "marks": [{ "type": "bold" }], "text": "Book online" },
+                      { "type": "text", "text": " — use the form on our home page or call us." }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "listItem",
+                "content": [
+                  {
+                    "type": "paragraph",
+                    "content": [
+                      { "type": "text", "marks": [{ "type": "bold" }], "text": "Bring your ID" },
+                      { "type": "text", "text": " — a photo ID for registration." }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "listItem",
+                "content": [
+                  {
+                    "type": "paragraph",
+                    "content": [
+                      { "type": "text", "marks": [{ "type": "bold" }], "text": "Arrive 10 minutes early" },
+                      { "type": "text", "text": " — to complete a brief health form." }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "listItem",
+                "content": [
+                  {
+                    "type": "paragraph",
+                    "content": [
+                      { "type": "text", "marks": [{ "type": "bold" }], "text": "List your medications" },
+                      { "type": "text", "text": " — especially blood thinners or antibiotics." }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "heading",
+            "attrs": { "level": 3 },
+            "content": [
+              { "type": "text", "text": "What to Expect" }
+            ]
+          },
+          {
+            "type": "paragraph",
+            "content": [
+              { "type": "text", "text": "Your first visit typically takes about 45 minutes including a full examination and X-rays if needed." }
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "invalid": [
+    {
+      "id": "unknown-node-script",
+      "reason": "unknown node type",
+      "body": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [{ "type": "text", "text": "Normal content" }]
+          },
+          {
+            "type": "script",
+            "content": [{ "type": "text", "text": "alert('xss')" }]
+          }
+        ]
+      }
+    },
+    {
+      "id": "unknown-node-iframe",
+      "reason": "unknown node type",
+      "body": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [{ "type": "text", "text": "Watch the video below:" }]
+          },
+          {
+            "type": "iframe",
+            "attrs": { "src": "https://www.youtube.com/embed/dQw4w9WgXcQ" }
+          }
+        ]
+      }
+    },
+    {
+      "id": "unknown-mark-italic",
+      "reason": "unknown mark",
+      "body": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "marks": [{ "type": "italic" }],
+                "text": "This text uses an italic mark which is not in the allowlist"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "unknown-mark-underline",
+      "reason": "unknown mark",
+      "body": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "marks": [{ "type": "underline" }],
+                "text": "This text uses an underline mark which is not in the allowlist"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "javascript-link-lowercase",
+      "reason": "javascript: link not allowed",
+      "body": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              { "type": "text", "text": "Click " },
+              {
+                "type": "text",
+                "marks": [{ "type": "link", "attrs": { "href": "javascript:alert(document.cookie)" } }],
+                "text": "here"
+              },
+              { "type": "text", "text": " to continue." }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "data-uri-link",
+      "reason": "data: URI not allowed",
+      "body": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              { "type": "text", "text": "Download " },
+              {
+                "type": "text",
+                "marks": [{ "type": "link", "attrs": { "href": "data:text/html,<script>alert(1)</script>" } }],
+                "text": "document"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "unknown-attribute-onclick",
+      "reason": "unknown attribute",
+      "body": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "attrs": { "onclick": "document.location='https://evil.example.com'" },
+            "content": [
+              { "type": "text", "text": "Click anywhere to continue." }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "foreign-image-id",
+      "reason": "image not owned by site",
+      "body": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [{ "type": "text", "text": "See image:" }]
+          },
+          {
+            "type": "siteImage",
+            "attrs": {
+              "image_id": "deadbeef-dead-beef-dead-beefdeadbeef",
+              "alt": "An image from a different site or workspace"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "nesting-too-deep",
+      "reason": "exceeds max depth",
+      "body": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "bulletList",
+            "content": [
+              {
+                "type": "listItem",
+                "content": [
+                  {
+                    "type": "bulletList",
+                    "content": [
+                      {
+                        "type": "listItem",
+                        "content": [
+                          {
+                            "type": "bulletList",
+                            "content": [
+                              {
+                                "type": "listItem",
+                                "content": [
+                                  {
+                                    "type": "bulletList",
+                                    "content": [
+                                      {
+                                        "type": "listItem",
+                                        "content": [
+                                          {
+                                            "type": "bulletList",
+                                            "content": [
+                                              {
+                                                "type": "listItem",
+                                                "content": [
+                                                  {
+                                                    "type": "paragraph",
+                                                    "content": [
+                                                      { "type": "text", "text": "This is 7 levels deep, exceeding max_depth of 6" }
+                                                    ]
+                                                  }
+                                                ]
+                                              }
+                                            ]
+                                          }
+                                        ]
+                                      }
+                                    ]
+                                  }
+                                ]
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "body-too-large",
+      "reason": "body too large",
+      "note": "In tests, generate a body with text nodes totalling > 102400 bytes. This placeholder documents the case; the test should synthesise the oversized payload programmatically by repeating the paragraph node until octet_length exceeds 102400.",
+      "body": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "REPEAT_TO_EXCEED_LIMIT: This paragraph must be repeated hundreds of times in the test to exceed the 102400-byte limit. Each repetition adds approximately 200 bytes. The test should build this body programmatically rather than storing a 100 KB JSON fixture. See ValidatePost: octet_length(body::text) < 102400."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "heading-level-1",
+      "reason": "heading level not allowed",
+      "body": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "heading",
+            "attrs": { "level": 1 },
+            "content": [
+              { "type": "text", "text": "This is an h1 heading which is not in allowed levels [2, 3]" }
+            ]
+          },
+          {
+            "type": "paragraph",
+            "content": [
+              { "type": "text", "text": "h1 is reserved for the page title; posts may only use h2 and h3." }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "javascript-link-uppercase",
+      "reason": "javascript: link not allowed",
+      "body": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "paragraph",
+            "content": [
+              { "type": "text", "text": "Important notice — " },
+              {
+                "type": "text",
+                "marks": [{ "type": "link", "attrs": { "href": "JAVASCRIPT:alert(1)" } }],
+                "text": "read more"
+              },
+              { "type": "text", "text": " for details." }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

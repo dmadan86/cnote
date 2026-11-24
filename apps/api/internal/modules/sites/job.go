@@ -70,6 +70,9 @@ type turnExec struct {
 	retry     error // set when the model step failed for a reason worth another attempt
 	fatal     error // set when it failed for a reason that will not change
 	fenced    bool
+	kind      string // "page" or "post"
+	postID    *string
+	postIn    PostInput
 }
 
 func (e *turnExec) tx(ctx context.Context, fn func(c *command.Ctx) error) error {
@@ -80,6 +83,9 @@ func (e *turnExec) execute(ctx context.Context) error {
 	data, in, done, err := e.start(ctx)
 	if err != nil || done {
 		return err
+	}
+	if e.kind == "post" {
+		return e.runPost(ctx)
 	}
 	begun := time.Now()
 	res := RunTurn(ctx, e.step, data, in)
@@ -102,9 +108,9 @@ func (e *turnExec) start(ctx context.Context) (data json.RawMessage, in TurnInpu
 		var attached []string
 		var block, page *string
 		var created time.Time
-		err := sc.Tx.QueryRow(ctx, `select site_id::text, created_by::text, message, block_id, tier, status, base_version_id::text, calls, tokens_in + tokens_out, created_at, image_ids::text[], page
+		err := sc.Tx.QueryRow(ctx, `select site_id::text, created_by::text, message, block_id, tier, status, base_version_id::text, calls, tokens_in + tokens_out, created_at, image_ids::text[], page, kind, post_id::text
 			from sites.site_turns where workspace_id = $1::uuid and id = $2::uuid for update`, e.ws, e.turnID).
-			Scan(&e.siteID, &user, &message, &block, &e.tier, &status, &e.base, &e.calls, &e.tokens, &created, &attached, &page)
+			Scan(&e.siteID, &user, &message, &block, &e.tier, &status, &e.base, &e.calls, &e.tokens, &created, &attached, &page, &e.kind, &e.postID)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return errNotVisible
 		}
@@ -173,7 +179,20 @@ func (e *turnExec) start(ctx context.Context) (data json.RawMessage, in TurnInpu
 		for i := len(hist) - 1; i >= 0; i-- {
 			in.History = append(in.History, hist[i])
 		}
-		return command.DB(err)
+		if err != nil {
+			return command.DB(err)
+		}
+		if e.kind == "post" {
+			gone, err := e.loadPostInput(c, data, in)
+			if gone {
+				done = true
+				_, err = sc.Tx.Exec(ctx, `update sites.site_turns set status = 'failed', error = $3, finished_at = now(), updated_at = now()
+					where workspace_id = $1::uuid and id = $2::uuid`, e.ws, e.turnID, postGoneMsg)
+				return command.DB(err)
+			}
+			return err
+		}
+		return nil
 	})
 	if errors.Is(err, errNotVisible) {
 		return nil, in, false, err // the worker retries with backoff; after max attempts the job fails visibly
@@ -483,4 +502,92 @@ func Sweep(ctx context.Context, pool *pgxpool.Pool) error {
 		}
 	}
 	return nil
+}
+
+const (
+	postGoneMsg  = "That post is no longer on the site."
+	postMovedMsg = "The post changed while I was working. Try again."
+)
+
+// loadPostInput gathers what a post turn shows the model. gone: the post to edit no longer exists.
+func (e *turnExec) loadPostInput(c *command.Ctx, data json.RawMessage, in TurnInput) (gone bool, err error) {
+	e.postIn = PostInput{Message: in.Message, Tier: in.Tier, Business: in.Business, History: in.History}
+	var d map[string]any
+	if json.Unmarshal(data, &d) == nil {
+		for _, p := range pageMaps(d) {
+			e.postIn.Pages = append(e.postIn.Pages, fmt.Sprint(p["title"]))
+		}
+	}
+	if e.postID == nil {
+		return false, nil
+	}
+	p, err := loadPostState(c, e.siteID, *e.postID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return true, nil
+	}
+	e.postIn.Post = p
+	return false, err
+}
+
+// runPost runs a post turn: the model (through e.step, so budget, fence and audit are shared), then one save.
+func (e *turnExec) runPost(ctx context.Context) error {
+	begun := time.Now()
+	res := RunPostTurn(ctx, e.step, e.postIn)
+	var err error
+	if res.Err == "" {
+		err = e.commitPost(ctx, res)
+	} else {
+		err = e.failed(ctx, TurnResult{Err: res.Err, Steps: res.Steps}, begun, e.tier)
+	}
+	if errors.Is(err, errFenced) {
+		return nil
+	}
+	return err
+}
+
+// commitPost saves the draft (or pending copy) and finishes the turn in one transaction.
+func (e *turnExec) commitPost(ctx context.Context, res PostResult) error {
+	ctx = context.WithoutCancel(ctx)
+	steps, _ := json.Marshal(res.Steps)
+	reply := strings.TrimSpace(res.Reply)
+	if r := []rune(reply); len(r) > 2000 {
+		reply = string(r[:2000])
+	}
+	return e.tx(ctx, func(c *command.Ctx) error {
+		var status string
+		var attempt int32
+		if err := c.Tx.QueryRow(ctx, "select status, attempt from sites.site_turns where workspace_id = $1::uuid and id = $2::uuid for update", e.ws, e.turnID).Scan(&status, &attempt); err != nil {
+			return command.DB(err)
+		}
+		if status != "running" || attempt != e.attempt {
+			return errFenced
+		}
+		postID := e.postID
+		if res.Changed {
+			id, err := storePostDraft(c, e.siteID, e.postIn.Post, res)
+			msg := postMovedMsg
+			var ce *command.Error
+			if errors.As(err, &ce) && (ce.Code == command.PlanLimit || ce.Code == command.Invalid) {
+				msg, err = ce.Message, errPostMoved // a refusal that retrying cannot change: the person reads it
+			}
+			if errors.Is(err, errPostMoved) {
+				_, err = c.Tx.Exec(ctx, `update sites.site_turns set status = 'failed', error = $3, steps = $4, finished_at = now(), updated_at = now()
+					where workspace_id = $1::uuid and id = $2::uuid`, e.ws, e.turnID, msg, steps)
+				return command.DB(err)
+			}
+			if err != nil {
+				return err
+			}
+			postID = &id
+			for i := range res.Steps { // the builder's "Review draft" button opens this post
+				if res.Steps[i].Tool == "post_write" && res.Steps[i].OK {
+					res.Steps[i].PostID = id
+				}
+			}
+			steps, _ = json.Marshal(res.Steps)
+		}
+		_, err := c.Tx.Exec(ctx, `update sites.site_turns set status = 'done', reply = $3, post_id = $4::uuid, steps = $5, finished_at = now(), updated_at = now()
+			where workspace_id = $1::uuid and id = $2::uuid`, e.ws, e.turnID, reply, postID, steps)
+		return command.DB(err)
+	})
 }

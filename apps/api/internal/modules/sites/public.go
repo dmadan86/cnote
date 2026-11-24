@@ -37,15 +37,16 @@ type Public struct {
 	PublishedAt                                       time.Time
 	LeadSpaceID                                       *string
 	URL                                               string
-	CanonicalHost                                     *string // the live custom hostname, when the site has one (custom domains)
+	CanonicalHost                                     *string         // the live custom hostname, when the site has one (custom domains)
+	Catalog, OGImages                                 json.RawMessage // the catalogue snapshot and the share image of each page
 }
 
-const publicCols = `workspace_id::text, site_id::text, version_id::text, name, data, pro, published_at, published_by::text, form_paused, lead_space_id::text`
+const publicCols = `workspace_id::text, site_id::text, version_id::text, name, data, pro, published_at, published_by::text, form_paused, lead_space_id::text, catalog_published, og_images`
 
 func scanPublic(row pgx.Row) (Public, error) {
 	var p Public
 	var data []byte
-	err := row.Scan(&p.WorkspaceID, &p.SiteID, &p.VersionID, &p.Name, &data, &p.Pro, &p.PublishedAt, &p.PublishedBy, &p.FormPaused, &p.LeadSpaceID)
+	err := row.Scan(&p.WorkspaceID, &p.SiteID, &p.VersionID, &p.Name, &data, &p.Pro, &p.PublishedAt, &p.PublishedBy, &p.FormPaused, &p.LeadSpaceID, &p.Catalog, &p.OGImages)
 	p.Data = data
 	if errors.Is(err, pgx.ErrNoRows) {
 		return p, command.ErrNotFound("site")
@@ -210,7 +211,22 @@ func FormAllowed(ctx context.Context, pool *pgxpool.Pool, siteID, ip string) err
 // ---------- the form ----------
 
 // Submission is one validated contact-form post.
-type Submission struct{ Name, Phone, Email, Message, ConsentText string }
+type Submission struct{ Name, Phone, Email, Message, ConsentText, ItemID string }
+
+// ConsentTexts are the approved consent sentences, by id. The form sends an id; the text and its version are the
+// server's own (17.8). The first is the default for a client that sends none.
+const DefaultConsentID = "enquiry-v1"
+
+// ConsentFor returns the approved text for a consent id and the site's name, and its version.
+func ConsentFor(id, siteName string) (text, version string, ok bool) {
+	if id == "" {
+		id = DefaultConsentID
+	}
+	if id != DefaultConsentID {
+		return "", "", false
+	}
+	return "I agree that " + siteName + " may use these details to reply to my enquiry.", consentVersion, true
+}
 
 var errNoSpace = command.NewError(command.Conflict, "This website cannot take messages right now. Please call or email instead.")
 
@@ -220,7 +236,7 @@ func Submit(ctx context.Context, pool *pgxpool.Pool, reg *command.Registry, p Pu
 	sys := command.Principal{Kind: command.KindSystem, WorkspaceID: p.WorkspaceID, UserID: &p.PublishedBy, Role: command.Admin}
 	noSpace := false
 	err := reg.WithTx(ctx, pool, sys, func(c *command.Ctx) error {
-		var data []byte
+		var data, snap []byte
 		var paused, down bool
 		var lead *string
 		var locked string
@@ -231,10 +247,10 @@ func Submit(ctx context.Context, pool *pgxpool.Pool, reg *command.Registry, p Pu
 		if err != nil {
 			return command.DB(err)
 		}
-		err = c.Tx.QueryRow(ctx, `select v.data, s.form_paused, s.lead_space_id::text, coalesce(pl.taken_down_at is not null, false)
+		err = c.Tx.QueryRow(ctx, `select v.data, s.form_paused, s.lead_space_id::text, coalesce(pl.taken_down_at is not null, false), s.catalog_published
 			from sites.sites s join sites.site_versions v on v.workspace_id = s.workspace_id and v.site_id = s.id and v.id = s.published_version_id
 			left join sites.site_platform pl on pl.site_id = s.id
-			where s.workspace_id = $1::uuid and s.id = $2::uuid`, p.WorkspaceID, p.SiteID).Scan(&data, &paused, &lead, &down)
+			where s.workspace_id = $1::uuid and s.id = $2::uuid`, p.WorkspaceID, p.SiteID).Scan(&data, &paused, &lead, &down, &snap)
 		if errors.Is(err, pgx.ErrNoRows) || (err == nil && (down || paused || !HasBlock(data, "ContactForm"))) {
 			return command.ErrNotFound("site")
 		}
@@ -270,6 +286,9 @@ func Submit(ctx context.Context, pool *pgxpool.Pool, reg *command.Registry, p Pu
 		if space == nil {
 			noSpace = true
 			return note("A website enquiry could not be saved: this workspace has no space for leads", nil)
+		}
+		if about := aboutLine(snap, in.ItemID); about != "" { // the name and price come from the published snapshot, never from the client
+			in.Message = about + "\n" + in.Message
 		}
 		consent := fmt.Sprintf("Consent given on the website contact form (text %s, %s). Shown: %s", consentVersion, time.Now().UTC().Format(time.RFC3339), in.ConsentText)
 		out, err := c.Call("inquiry.receive", map[string]any{"space_id": *space, "name": in.Name, "phone": in.Phone, "email": in.Email,
@@ -359,4 +378,68 @@ func PruneForm(ctx context.Context, pool *pgxpool.Pool) error {
 		}
 	}
 	return nil
+}
+
+// PostSummary is a published post without its body.
+type PostSummary struct {
+	Slug         string    `json:"slug"`
+	Title        string    `json:"title"`
+	Description  string    `json:"description"`
+	CoverImageID *string   `json:"cover_image_id"`
+	OGImageID    *string   `json:"og_image_id"`
+	PublishedAt  time.Time `json:"published_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+const BlogPerPage = 10
+
+// PublicPosts is one page of a live site's published posts, newest first. limit 0 means BlogPerPage; the RSS feed asks for 20.
+func PublicPosts(ctx context.Context, pool *pgxpool.Pool, siteID string, page, limit int) (map[string]any, error) {
+	if limit <= 0 || limit > 20 {
+		limit = BlogPerPage
+	}
+	if page < 1 || page > 10000 {
+		page = 1
+	}
+	rows, err := pool.Query(ctx, "select slug, title, description, cover_image_id::text, og_image_id::text, published_at, updated_at, total from sites.public_posts($1::uuid, $2, $3)", siteID, limit, (page-1)*limit)
+	if err != nil {
+		return nil, command.DB(err)
+	}
+	posts := []PostSummary{}
+	var total int64
+	for rows.Next() {
+		var p PostSummary
+		if err := rows.Scan(&p.Slug, &p.Title, &p.Description, &p.CoverImageID, &p.OGImageID, &p.PublishedAt, &p.UpdatedAt, &total); err != nil {
+			rows.Close()
+			return nil, command.DB(err)
+		}
+		posts = append(posts, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, command.DB(err)
+	}
+	if len(posts) == 0 { // no published post, or past the end: the web answers 404
+		return nil, command.ErrNotFound("posts")
+	}
+	return map[string]any{"posts": posts, "page": page, "per_page": limit, "total": total, "pages": (total + int64(limit) - 1) / int64(limit)}, nil
+}
+
+// PublicPost is one published post with its body, checked against the grammar again before it is served.
+func PublicPost(ctx context.Context, pool *pgxpool.Pool, siteID, slug string) (map[string]any, error) {
+	var p PostSummary
+	var id string
+	var body []byte
+	err := pool.QueryRow(ctx, "select id::text, slug, title, description, cover_image_id::text, og_image_id::text, body, published_at, updated_at from sites.public_post($1::uuid, $2)", siteID, slug).
+		Scan(&id, &p.Slug, &p.Title, &p.Description, &p.CoverImageID, &p.OGImageID, &body, &p.PublishedAt, &p.UpdatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, command.ErrNotFound("post")
+	}
+	if err != nil {
+		return nil, command.DB(err)
+	}
+	if ValidatePost(body, nil) != nil {
+		return nil, command.ErrNotFound("post")
+	}
+	return map[string]any{"slug": p.Slug, "title": p.Title, "description": p.Description, "cover_image_id": p.CoverImageID, "og_image_id": p.OGImageID,
+		"body": json.RawMessage(body), "published_at": p.PublishedAt, "updated_at": p.UpdatedAt}, nil
 }

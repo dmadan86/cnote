@@ -68,6 +68,8 @@ export type SiteMeta = {
 }
 export type TurnStep = { tool: string; input: Record<string, unknown>; ok: boolean; error?: string }
 export type Turn = {
+  kind?: string
+  post_id?: string | null
   id: string
   message: string
   block_id: string | null
@@ -86,6 +88,19 @@ export type EditOp = { tool: string; input: Record<string, unknown> }
 
 /** Every write carries expected_version_id, the draft the person is looking at; a stale one answers `conflict`. */
 export const siteApi = {
+  // Phase 3a command interfaces; implementations arrive with the catalogue and blog backend.
+  catalogGet: (ws: string, id: string) => cmd<CatalogueState>(ws, 'site.catalog_get', { id }),
+  catalogSet: (ws: string, id: string, price_mode: CataloguePriceMode, items: CatalogueEntry[]) =>
+    cmd<CatalogueState>(ws, 'site.catalog_set', { id, price_mode, items }),
+  catalogSync: (ws: string, id: string) =>
+    cmd<{ synced_at: string; count: number }>(ws, 'site.catalog_sync', { id }),
+  postList: (ws: string, id: string) => cmd<SitePost[]>(ws, 'site.post_list', { id }),
+  postGet: (ws: string, id: string, post_id: string) => cmd<SitePost>(ws, 'site.post_get', { id, post_id }),
+  postSave: (ws: string, input: PostSaveInput) => cmd<SitePost>(ws, 'site.post_save', input),
+  postPublish: (ws: string, id: string, post_id: string, expected_rev: number, publish: boolean) =>
+    cmd<SitePost>(ws, 'site.post_publish', { id, post_id, expected_rev, publish }),
+  postDelete: (ws: string, id: string, post_id: string, expected_rev: number) =>
+    cmd<void>(ws, 'site.post_delete', { id, post_id, expected_rev }),
   addPage: (
     ws: string,
     id: string,
@@ -155,6 +170,7 @@ export const siteApi = {
     block_id?: string,
     image_ids?: string[],
     page?: string,
+    post?: string,
   ) =>
     cmd<{ turn_id: string }>(ws, 'site.chat', {
       id,
@@ -163,6 +179,7 @@ export const siteApi = {
       block_id,
       image_ids,
       page,
+      post,
     }),
   turn: (ws: string, id: string) => cmd<{ turn: Turn; data?: SiteData }>(ws, 'site.turn_get', { id }),
   cancel: (ws: string, id: string) => cmd<{ status: string }>(ws, 'site.turn_cancel', { id }),
@@ -367,6 +384,7 @@ const HIT = new RegExp(`^/api/sites/hit/${UUID}$`)
 /** A page address: the same rule as Go (design 17.10). Reserved names never match a page, so they 404. */
 export const PAGE_SLUG = /^[a-z0-9]+(-[a-z0-9]+)*$/
 export const RESERVED_SLUGS = [
+  'blog',
   'api',
   'internal',
   '_next',
@@ -543,4 +561,363 @@ export function externalReferrerHost(referrer: string, own: string) {
   } catch {
     return ''
   }
+}
+
+// ---- Phase 3a catalogue and blog scaffolding ----
+export type CataloguePriceMode = 'show_incl' | 'show_plus' | 'hide'
+export type CatalogueEntry = {
+  item_id: string
+  category: string
+  description: string
+  image_id?: string
+  position: number
+}
+export type CatalogueSnapshotItem = CatalogueEntry & {
+  name: string
+  unit: string
+  price_minor?: number
+  mode: CataloguePriceMode
+}
+export type CatalogueState = {
+  price_mode: CataloguePriceMode
+  items: CatalogueEntry[]
+  synced_at: string | null
+}
+export type PostBodyDocument = { type: 'doc'; content?: PostNode[] }
+export type PostNode = {
+  type: string
+  attrs?: Record<string, unknown>
+  content?: PostNode[]
+  text?: string
+  marks?: { type: string; attrs?: Record<string, unknown> }[]
+}
+export type SitePost = {
+  id: string
+  site_id: string
+  workspace_id: string
+  slug: string
+  title: string
+  description: string
+  cover_image_id: string | null
+  og_image_id: string | null
+  body: PostBodyDocument
+  pending: Record<string, unknown> | null
+  status: 'draft' | 'published'
+  published_at: string | null
+  rev: number
+  created_by: string
+  created_at: string
+  updated_at: string
+}
+export type PostSaveInput = {
+  id: string
+  post_id?: string
+  expected_rev?: number
+  slug: string
+  title: string
+  description?: string
+  cover_image_id?: string | null
+  body: PostBodyDocument
+}
+
+// ---- Phase 3a published side (B1) ----
+
+export const BLOG_PER_PAGE = 10
+const BLOG_SLUG = /^[a-z0-9]+(-[a-z0-9]+)*$/
+/** What a site host's blog paths rewrite to (design 17.4); null for any other path. A path, not `?page=`: the rewrite drops the query. */
+export function blogRewrite(pathname: string): string | null {
+  if (pathname === '/blog' || pathname === '/blog/rss.xml') return pathname
+  const pg = /^\/blog\/page\/([1-9]\d{0,3})$/.exec(pathname)
+  if (pg) return pathname
+  const post = /^\/blog\/([^/]{1,60})$/.exec(pathname)
+  return post && BLOG_SLUG.test(post[1]) ? pathname : null
+}
+
+export type PublicPostSummary = {
+  slug: string
+  title: string
+  description: string
+  cover_image_id?: string | null
+  og_image_id?: string | null
+  published_at: string
+  updated_at?: string
+}
+export type PublicPost = PublicPostSummary & { body: PostBodyDocument; tags?: string[] }
+export type PublicPosts = { posts: PublicPostSummary[]; total: number; page: number; per_page: number }
+
+/** Server only: one internal public read with the server token (same host rule as publicGet). */
+async function sitesPost(path: string, body: Record<string, unknown>) {
+  const domain = process.env.SITES_DOMAIN
+  const host = String(body.host ?? '')
+  if (!domain || !DNS_HOST.test(host)) return null
+  const [dHost, dPort] = domain.toLowerCase().split(':')
+  const sent = host.endsWith(`.${dHost}`) ? `${host}${dPort ? `:${dPort}` : ''}` : host
+  const r = await fetch(`${process.env.API_URL ?? 'http://localhost:4000'}/api/sites/${path}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-sites-token': process.env.SITES_SERVER_TOKEN ?? '' },
+    body: JSON.stringify({ ...body, host: sent }),
+    cache: 'no-store',
+  }).catch(() => null)
+  return r?.ok ? ((await r.json().catch(() => null)) as unknown) : null
+}
+/** Published posts, newest first, no bodies; null when the site has none on that page. */
+export async function publicPosts(host: string, page = 1): Promise<PublicPosts | null> {
+  const j = (await sitesPost('public_posts', { host, page })) as Partial<PublicPosts> | null
+  if (!j || !Array.isArray(j.posts) || j.posts.length === 0) return null
+  return {
+    posts: j.posts,
+    total: j.total ?? j.posts.length,
+    page: j.page ?? page,
+    per_page: j.per_page ?? BLOG_PER_PAGE,
+  }
+}
+/** One published post with its body; accepts the post bare or wrapped as {post}. */
+export async function publicPost(host: string, slug: string): Promise<PublicPost | null> {
+  const j = (await sitesPost('public_post', { host, slug })) as { post?: PublicPost } | PublicPost | null
+  const p = j && 'post' in j && j.post ? j.post : (j as PublicPost | null)
+  return p && typeof p.slug === 'string' && p.body?.type === 'doc' ? p : null
+}
+
+/** One function escapes every value in the RSS feed and the sitemap; control characters XML forbids are dropped. */
+export const xmlEscape = (v: string) =>
+  v
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: stripping exactly the characters XML 1.0 forbids
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F￾￿]/g, '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;')
+
+/** The plain text of a post body, for the description fallback and the reading time. */
+export function postText(body: PostBodyDocument): string {
+  const out: string[] = []
+  const walk = (n: PostNode) => {
+    if (n.type === 'text' && typeof n.text === 'string') out.push(n.text)
+    else if (n.type === 'hardBreak') out.push(' ')
+    for (const c of n.content ?? []) walk(c)
+    if (['paragraph', 'heading', 'listItem', 'blockquote'].includes(n.type)) out.push(' ')
+  }
+  walk(body)
+  return out.join('').replace(/\s+/g, ' ').trim()
+}
+export const readingMinutes = (body: PostBodyDocument) =>
+  Math.max(1, Math.round(postText(body).split(' ').filter(Boolean).length / 200))
+export const postDescription = (p: Pick<PublicPost, 'description' | 'body'>) =>
+  p.description.trim() || postText(p.body).slice(0, 160)
+export const dateLabel = (iso: string) => {
+  const d = new Date(iso)
+  return Number.isNaN(d.getTime())
+    ? ''
+    : d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' })
+}
+
+// Catalogue snapshot (design 2, 17.5). Accepts the snapshot as an array or as {items, price_mode, synced_at},
+// under `site.catalog` or `site.data.catalog`; an item's id is `id` or `item_id`; price modes in either spelling.
+export type CatMode = 'incl' | 'plus' | 'hide'
+export type CatalogueItemView = {
+  id: string
+  name: string
+  unit: string
+  /** The shown price text, or "Ask for price"; never derived when the mode hides the price. */
+  price: string
+  /** Rupees, only in incl mode with a price (JSON-LD offers.price). */
+  amount?: number
+  category: string
+  description: string
+  image_id?: string
+}
+export type CatalogueView = { mode: CatMode; items: CatalogueItemView[] }
+const catMode = (m: unknown): CatMode =>
+  m === 'incl' || m === 'show_incl' ? 'incl' : m === 'plus_gst' || m === 'show_plus' ? 'plus' : 'hide'
+const rupeeText = (minor: number) =>
+  new Intl.NumberFormat('en-IN', {
+    style: 'currency',
+    currency: 'INR',
+    minimumFractionDigits: minor % 100 ? 2 : 0,
+    maximumFractionDigits: 2,
+  }).format(minor / 100)
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+export function catalogueView(raw: unknown): CatalogueView | null {
+  const o = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>
+  const arr = Array.isArray(raw) ? raw : Array.isArray(o.items) ? o.items : []
+  const items: CatalogueItemView[] = []
+  for (const r of arr as Record<string, unknown>[]) {
+    if (!r || typeof r !== 'object') continue
+    const id = String(r.id ?? r.item_id ?? '').toLowerCase()
+    const name = String(r.name ?? '').trim()
+    if (!UUID_RE.test(id) || !name) continue
+    const mode = catMode(r.mode ?? o.price_mode)
+    const minor = Number(r.price_minor)
+    const shown = mode !== 'hide' && Number.isFinite(minor) && minor > 0
+    const unit = String(r.unit ?? '').trim()
+    const price = shown
+      ? `${rupeeText(minor)}${mode === 'plus' ? ' + GST' : ''}${unit ? ` / ${unit}` : ''}`
+      : 'Ask for price'
+    const img = String(r.image_id ?? '').toLowerCase()
+    items.push({
+      id,
+      name,
+      unit,
+      price,
+      amount: shown && mode === 'incl' ? minor / 100 : undefined,
+      category: String(r.category ?? '').trim(),
+      description: String(r.description ?? '').trim(),
+      image_id: UUID_RE.test(img) ? img : undefined,
+    })
+  }
+  if (!items.length) return null
+  return { mode: catMode(o.price_mode ?? (arr[0] as Record<string, unknown>)?.mode), items }
+}
+/** The published site's catalogue snapshot, or null when it has none. */
+export function catalogOf(site: PublicSite): CatalogueView | null {
+  const s = site as PublicSite & { catalog?: unknown; data: { catalog?: unknown } }
+  return catalogueView(s.catalog ?? s.data?.catalog)
+}
+/** The line shown once under the grid, by price mode. */
+export const catalogueTaxNote = (mode: CatMode) =>
+  mode === 'incl' ? 'Prices include GST.' : mode === 'plus' ? 'Prices are before GST.' : ''
+
+// ---- B2 builder helpers (Phase 3a): item picker, price banner, blog editor, share cards ----
+// Assumed shapes follow design sections 2 and 17.5: catalog_get takes {id, q?, cursor?} and may return
+// next_cursor (keyset paging of candidates) and snapshot (the published list, to show what "Update prices" changes).
+export type CatalogItem = {
+  item_id: string
+  name: string
+  unit: string
+  price_minor: number
+  gst_rate_bp: number
+  category: string
+  description: string
+  image_id?: string | null
+  missing?: boolean
+}
+export type CatalogCandidate = Pick<CatalogItem, 'name' | 'unit' | 'price_minor' | 'gst_rate_bp'> & {
+  id: string
+}
+export type CatalogSnap = {
+  id: string
+  name: string
+  unit: string
+  price_minor?: number
+  mode: CataloguePriceMode
+  category: string
+  description: string
+  image_id?: string | null
+}
+export type CatalogView = {
+  price_mode: CataloguePriceMode
+  limit: number
+  items: CatalogItem[]
+  candidates: CatalogCandidate[]
+  next_cursor?: string | null
+  synced_at: string | null
+  changed: number
+  snapshot?: CatalogSnap[]
+}
+export type CatalogPick = { item_id: string; category: string; description: string; image_id?: string | null }
+export const catalogApi = {
+  get: (ws: string, id: string, q?: string, cursor?: string) =>
+    cmd<CatalogView>(ws, 'site.catalog_get', { id, q: q || undefined, cursor }),
+  set: (ws: string, id: string, price_mode: CataloguePriceMode, items: CatalogPick[]) =>
+    cmd<CatalogView>(ws, 'site.catalog_set', {
+      id,
+      price_mode,
+      items: items.map((i) => ({ ...i, image_id: i.image_id || undefined })),
+    }),
+  sync: (ws: string, id: string) =>
+    cmd<{ synced_at: string; count: number }>(ws, 'site.catalog_sync', { id }),
+}
+
+/** ₹1,180 or ₹1,180.50 from paise. */
+export const rupees = (minor: number) =>
+  `₹${(minor / 100).toLocaleString('en-IN', { minimumFractionDigits: minor % 100 ? 2 : 0, maximumFractionDigits: 2 })}`
+/** The amount a visitor sees, in paise; 0 means "Ask for price". Same rule as Go: GST rounded half-up to the paisa. */
+export function shownMinor(mode: CataloguePriceMode, price: number, gstBp: number) {
+  if (mode === 'hide' || price <= 0) return 0
+  return mode === 'show_incl' ? price + Math.floor((price * gstBp + 5000) / 10000) : price
+}
+export function priceText(mode: CataloguePriceMode, price: number, gstBp: number, unit?: string) {
+  const m = shownMinor(mode, price, gstBp)
+  if (!m) return 'Ask for price'
+  return `${rupees(m)}${mode === 'show_plus' ? ' + GST' : ''}${unit ? ` / ${unit}` : ''}`
+}
+/** What the Catalogue block shows for the owner's selection before it is published. */
+export const previewSnapshot = (items: CatalogItem[], mode: CataloguePriceMode): CatalogSnap[] =>
+  items
+    .filter((i) => !i.missing)
+    .map((i) => {
+      const m = shownMinor(mode, i.price_minor, i.gst_rate_bp)
+      return {
+        id: i.item_id,
+        name: i.name,
+        unit: i.unit,
+        ...(m ? { price_minor: m } : {}),
+        mode,
+        category: i.category,
+        description: i.description,
+        image_id: i.image_id,
+      }
+    })
+/** Differences between the published list and the live items, for the "Update prices" confirmation. */
+export function catalogChanges(v: CatalogView): string[] {
+  const old = new Map((v.snapshot ?? []).map((s) => [s.id, s]))
+  const out: string[] = []
+  for (const i of v.items) {
+    const s = old.get(i.item_id)
+    if (!s) continue
+    if (i.missing) out.push(`${s.name}: removed from your items, it will leave your website`)
+    else {
+      if (s.name !== i.name) out.push(`${s.name}: renamed to ${i.name}`)
+      const now = shownMinor(v.price_mode, i.price_minor, i.gst_rate_bp)
+      if ((s.price_minor ?? 0) !== now)
+        out.push(
+          `${i.name}: ${s.price_minor ? rupees(s.price_minor) : 'Ask for price'} to ${now ? rupees(now) : 'Ask for price'}`,
+        )
+      if (s.unit !== i.unit) out.push(`${i.name}: unit ${s.unit || 'none'} to ${i.unit || 'none'}`)
+    }
+  }
+  return out
+}
+
+export type PostRow = Omit<SitePost, 'body'> & { body?: PostBodyDocument; ai?: boolean }
+const rows = <T>(r: unknown): T[] => {
+  if (Array.isArray(r)) return r as T[]
+  const o = r as { posts?: T[]; items?: T[] } | null
+  return o?.posts ?? o?.items ?? []
+}
+export const blogApi = {
+  list: async (ws: string, id: string) =>
+    rows<PostRow>(await cmd<unknown>(ws, 'site.post_list', { id, limit: 50 })),
+  get: (ws: string, id: string, post_id: string) =>
+    cmd<SitePost & { ai?: boolean }>(ws, 'site.post_get', { id, post_id }),
+  save: (
+    ws: string,
+    input: {
+      id: string
+      post_id?: string
+      expected_rev?: number
+      title: string
+      slug?: string
+      description?: string
+      cover_image_id?: string | null
+      body: PostBodyDocument
+    },
+  ) => cmd<SitePost>(ws, 'site.post_save', { ...input, cover_image_id: input.cover_image_id || undefined }),
+  publish: siteApi.postPublish,
+  remove: siteApi.postDelete,
+}
+export const POST_SLUG = /^[a-z0-9]+(-[a-z0-9]+)*$/
+export const postSlugify = (t: string) =>
+  t
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 60)
+    .replace(/-+$/, '')
+/** The stored share picture of a page ('' is Home), when the last publish made one. */
+export const pageOgId = (site: Site, page: string) => {
+  const m = (site as Site & { page_og_images?: Record<string, string> }).page_og_images
+  return m?.[page] ?? (page ? undefined : m?.home)
 }

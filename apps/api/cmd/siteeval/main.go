@@ -202,6 +202,9 @@ func runCase(
 	}
 
 	start := time.Now()
+	if c.isPost() {
+		return runPostCase(ctx, c, m, start)
+	}
 	imgs := make([]sites.Image, len(c.Images))
 	for i, ci := range c.Images {
 		imgs[i] = sites.Image{ID: ci.ID, Name: ci.Name}
@@ -270,6 +273,68 @@ func runCase(
 	return rr
 }
 
+// blogFixture is the open post of fixture_blog.json; blogLoaded says the file was there.
+var (
+	blogFixture PostSnap
+	blogLoaded  bool
+	blogPage    json.RawMessage // the base page, for page assertions in post cases
+)
+
+// isPost: a blog case ("post" is set and not false/null).
+func (c Case) isPost() bool {
+	p := strings.TrimSpace(string(c.Post))
+	return p != "" && p != "null" && p != "false"
+}
+
+// runPostCase runs a blog case: "new" starts from no post, anything else edits the fixture's post. Page assertions
+// run against the unchanged fixture page; post/ assertions and post collateral against the post after the turn.
+func runPostCase(ctx context.Context, c Case, m sites.Model, start time.Time) runResult {
+	in := sites.PostInput{Message: c.Prompt, Tier: "routine", Business: c.Business, History: c.History}
+	before := PostSnap{}
+	if string(c.Post) != `"new"` {
+		before = blogFixture
+		status := before.Status
+		if status == "" {
+			status = "draft"
+		}
+		in.Post = &sites.PostState{ID: "fixture", Title: before.Title, Description: before.Description, Status: status, Body: before.Body}
+	}
+	res := sites.RunPostTurn(ctx, m, in)
+	rr := runResult{LatencyMS: time.Since(start).Milliseconds(), TokensIn: res.TokensIn, TokensOut: res.TokensOut, Cached: res.CacheRead, FirstTry: true}
+	for _, step := range res.Steps {
+		if step.IsError {
+			rr.FirstTry = false
+			break
+		}
+	}
+	fail := func(reason string) runResult {
+		rr.Failure = &failureRecord{Case: c.ID, Reason: reason, Reply: res.Reply}
+		return rr
+	}
+	if res.Err != "" {
+		return fail(res.Err)
+	}
+	after := before
+	if res.Changed {
+		after = PostSnap{Title: res.Title, Description: res.Description, Status: before.Status, Body: res.Body}
+	}
+	after.Changed, after.Plan, after.Reply = res.Changed, res.Plan, res.Reply
+	pageAsserts, postAsserts := splitAssertions(c.Expect)
+	var reasons []string
+	for _, e := range EvalAssertions(c.ID, blogPage, pageAsserts) {
+		reasons = append(reasons, e.Error())
+	}
+	for _, e := range EvalPostAssertions(c.ID, after, postAsserts) {
+		reasons = append(reasons, e.Error())
+	}
+	reasons = append(reasons, CheckPostCollateral(c.ID, before, after, c.MayChange)...)
+	if len(reasons) > 0 {
+		return fail(strings.Join(reasons, "; "))
+	}
+	rr.Success = true
+	return rr
+}
+
 // ---------- percentile ----------
 
 func percentile(sorted []int64, p float64) int64 {
@@ -315,7 +380,20 @@ func main() {
 	if raw, err := os.ReadFile(filepath.Join(filepath.Dir(*casesFlag), "fixture_pages.json")); err == nil {
 		fixtures["pages"] = raw
 	}
+	if raw, err := os.ReadFile(filepath.Join(filepath.Dir(*casesFlag), "fixture_i18n.json")); err == nil {
+		fixtures["i18n"] = raw
+	}
+	blogPage = fixture
+	if raw, err := os.ReadFile(filepath.Join(filepath.Dir(*casesFlag), "fixture_blog.json")); err == nil {
+		if blogFixture, err = parsePostFixture(raw); err != nil {
+			log.Fatalf("fixture_blog.json: %v", err)
+		}
+		blogLoaded = true
+	}
 	for _, c := range cases {
+		if c.isPost() && string(c.Post) != `"new"` && !blogLoaded {
+			log.Fatalf("case %s: needs fixture_blog.json", c.ID)
+		}
 		if _, ok := fixtures[c.Fixture]; !ok {
 			log.Fatalf("case %s: unknown fixture %q", c.ID, c.Fixture)
 		}

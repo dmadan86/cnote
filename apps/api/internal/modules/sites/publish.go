@@ -105,6 +105,13 @@ func getExtras(c *command.Ctx, site siteOut, out props) error {
 		return command.DB(err)
 	}
 	if spaceID != nil {
+		out["page_og_images"], err = ogImages(c, site.ID)
+		if err != nil {
+			return err
+		}
+		if err := planExtras(c, site, out); err != nil {
+			return err
+		}
 		out["lead_space"] = props{"id": *spaceID, "name": *spaceName}
 	} else {
 		out["lead_space"] = nil
@@ -154,6 +161,14 @@ func checkImages(c *command.Ctx, siteID string, data json.RawMessage) error {
 	return nil
 }
 
+// Photo limits (design section 0): counted across pages, catalogue and posts.
+func imageLimit(pro bool) int {
+	if pro {
+		return 100
+	}
+	return 40
+}
+
 func imageUpload(c *command.Ctx, raw json.RawMessage) (any, error) {
 	var in struct {
 		ID, Filename string
@@ -166,7 +181,7 @@ func imageUpload(c *command.Ctx, raw json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	out, err := c.Call("file.image_put", props{"site_id": site.ID, "filename": in.Filename, "data_base64": in.DataBase64})
+	out, err := c.Call("file.image_put", props{"site_id": site.ID, "filename": in.Filename, "data_base64": in.DataBase64, "max": imageLimit(site.Pro)})
 	if err != nil {
 		return nil, err
 	}
@@ -318,9 +333,38 @@ func publish(c *command.Ctx, raw json.RawMessage) (any, error) {
 		}
 		site.Subdomain = &sub
 	}
-	if _, err := c.Tx.Exec(c.Context, `update sites.sites set published_version_id = draft_version_id, published_at = now(), published_by = $3::uuid, updated_at = now()
-		where workspace_id = $1::uuid and id = $2::uuid`, c.WorkspaceID(), site.ID, user); err != nil {
+	var snap any // the catalogue snapshot visitors read; none without a Catalogue block
+	if HasBlock(data, "Catalogue") {
+		sel, err := selection(c, site.ID)
+		if err != nil {
+			return nil, err
+		}
+		if len(sel) > itemLimit(site.Pro) {
+			return nil, command.NewError(command.PlanLimit, fmt.Sprintf("This site has %d catalogue items but your plan allows %d. Remove items to publish.", len(sel), itemLimit(site.Pro)))
+		}
+		items, err := snapshot(c, site.ID)
+		if err != nil {
+			return nil, err
+		}
+		snap = mustJSON(items)
+	}
+	var published int
+	if err := c.Tx.QueryRow(c.Context, "select count(*) from sites.posts where workspace_id = $1::uuid and site_id = $2::uuid and status = 'published'", c.WorkspaceID(), site.ID).Scan(&published); err != nil {
 		return nil, command.DB(err)
+	}
+	if published > 0 {
+		if err := checkNoBlogPage(c, site, data); err != nil {
+			return nil, err
+		}
+	}
+	// the share images belong to the version being published: start empty, the job fills them in
+	if _, err := c.Tx.Exec(c.Context, `update sites.sites set published_version_id = draft_version_id, published_at = now(), published_by = $3::uuid, updated_at = now(),
+		catalog_published = $4::jsonb, catalog_synced_at = case when $4::jsonb is null then null else now() end, page_og_images = '{}'::jsonb
+		where workspace_id = $1::uuid and id = $2::uuid`, c.WorkspaceID(), site.ID, user, snap); err != nil {
+		return nil, command.DB(err)
+	}
+	if err := enqueueOG(c, site.ID, site.DraftVersionID, ""); err != nil {
+		return nil, err
 	}
 	if _, err := c.Emit("site.published", nil, props{"site_id": site.ID, "version_id": site.DraftVersionID, "subdomain": *site.Subdomain}); err != nil {
 		return nil, err
@@ -453,5 +497,51 @@ func publicGet(c *command.Ctx, raw json.RawMessage) (any, error) {
 // PublicJSON is the answer to the web server's read of a published site.
 func PublicJSON(p Public) props {
 	return props{"site_id": p.SiteID, "version_id": p.VersionID, "name": p.Name, "data": p.Data, "pro": p.Pro, "published_at": p.PublishedAt,
-		"url": p.URL, "form_paused": p.FormPaused, "canonical_host": p.CanonicalHost}
+		"url": p.URL, "form_paused": p.FormPaused, "canonical_host": p.CanonicalHost, "catalog": catalogPublic(p.Catalog), "page_og_images": rawOr(p.OGImages, "{}")}
+}
+
+func rawOr(b json.RawMessage, def string) json.RawMessage {
+	if len(b) == 0 || string(b) == "null" {
+		return json.RawMessage(def)
+	}
+	return b
+}
+
+// ogImages is the generated share image of each page, keyed by page address ("" for Home).
+func ogImages(c *command.Ctx, siteID string) (json.RawMessage, error) {
+	var b []byte
+	err := c.Tx.QueryRow(c.Context, "select page_og_images from sites.sites where workspace_id = $1::uuid and id = $2::uuid", c.WorkspaceID(), siteID).Scan(&b)
+	return b, command.DB(err)
+}
+
+// planExtras adds the Phase 3a limits and counts the builder's plan card needs.
+func planExtras(c *command.Ctx, site siteOut, out props) error {
+	var items, posts, published, images int
+	if err := c.Tx.QueryRow(c.Context, `select (select count(*) from sites.catalog_items where site_id = $1::uuid),
+		(select count(*) from sites.posts where site_id = $1::uuid), (select count(*) from sites.posts where site_id = $1::uuid and status = 'published'),
+		(select count(*) from core.attachments where site_id = $1::uuid and not generated)`, site.ID).Scan(&items, &posts, &published, &images); err != nil {
+		return command.DB(err)
+	}
+	pl, al := postLimits(site.Pro)
+	out["catalogue_plan"] = props{"items": items, "limit": itemLimit(site.Pro)}
+	out["blog_plan"] = props{"posts": posts, "posts_limit": al, "published": published, "published_limit": pl}
+	out["images_plan"] = props{"used": images, "limit": imageLimit(site.Pro)}
+	return nil
+}
+
+// catalogPublic is the snapshot as the web reads it: {price_mode, items}. The mode is the one the owner chose, which
+// the items carry; items priced at 0 are "Ask for price" whatever the mode.
+func catalogPublic(raw json.RawMessage) props {
+	var items []snapItem
+	if len(raw) == 0 || json.Unmarshal(raw, &items) != nil || items == nil {
+		items = []snapItem{}
+	}
+	mode := priceHide
+	for _, x := range items {
+		if x.Mode != priceHide {
+			mode = x.Mode
+			break
+		}
+	}
+	return props{"price_mode": mode, "items": items}
 }

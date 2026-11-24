@@ -29,7 +29,9 @@ import (
 const (
 	maxImageBytes  = 1 << 20
 	maxImagePixels = 16_000_000
-	maxSiteImages  = 40
+	maxSiteImages  = 40  // default; the sites module passes the plan's limit as max, never above hardSiteImages
+	hardSiteImages = 100 // Website Pro
+	maxGenerated   = 300 // generated share images per site
 	userImagesHour = 30
 )
 
@@ -191,9 +193,10 @@ func imageCommands() []command.Command {
 	put := command.NewCommand("file.image_put", command.GroupWriteItems, imagePut)
 	get := command.NewCommand("file.image_get", command.GroupRead, imageGet)
 	list := command.NewCommand("file.image_list", command.GroupRead, imageList)
-	put.Internal, get.Internal, list.Internal = true, true, true
-	get.MinRole, list.MinRole = command.Member, command.Member
-	return []command.Command{put, get, list}
+	del := command.NewCommand("file.image_delete", command.GroupWriteItems, imageDelete)
+	put.Internal, get.Internal, list.Internal, del.Internal = true, true, true, true
+	get.MinRole, list.MinRole, del.MinRole = command.Member, command.Member, command.Member
+	return []command.Command{put, get, list, del}
 }
 
 type imageIn struct {
@@ -201,6 +204,10 @@ type imageIn struct {
 	ID       string `json:"id"`
 	Filename string `json:"filename"`
 	Data     string `json:"data_base64"`
+	// Max is the plan's photo limit (default 40, at most 100). Generated marks a share image made by the server: it
+	// is not counted as one of the owner's photos and is not listed with them.
+	Max       int  `json:"max"`
+	Generated bool `json:"generated"`
 }
 
 func imageDecode(raw json.RawMessage, needID bool) (imageIn, error) {
@@ -239,12 +246,19 @@ func imagePut(c *command.Ctx, raw json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	limit := maxSiteImages
+	if v.Max > 0 {
+		limit = min(v.Max, hardSiteImages)
+	}
+	if v.Generated {
+		limit = maxGenerated
+	}
 	var n int
-	if err := c.Tx.QueryRow(c.Context, "select count(*) from core.attachments where site_id = $1::uuid and (data is not null or storage_key = 's3')", v.SiteID).Scan(&n); err != nil {
+	if err := c.Tx.QueryRow(c.Context, "select count(*) from core.attachments where site_id = $1::uuid and generated = $2 and (data is not null or storage_key = 's3')", v.SiteID, v.Generated).Scan(&n); err != nil {
 		return nil, command.DB(err)
 	}
-	if n >= maxSiteImages {
-		return nil, command.ErrConflict(fmt.Sprintf("a website can hold at most %d photos", maxSiteImages))
+	if n >= limit {
+		return nil, command.ErrConflict(fmt.Sprintf("a website can hold at most %d photos", limit))
 	}
 	key, stored := "pg", clean
 	if store != nil {
@@ -252,9 +266,9 @@ func imagePut(c *command.Ctx, raw json.RawMessage) (any, error) {
 	}
 	name := cleanName(v.Filename)
 	var id string
-	err = c.Tx.QueryRow(c.Context, `insert into core.attachments (workspace_id, site_id, filename, content_type, size_bytes, storage_key, data, created_by)
-		values ($1::uuid, $2::uuid, $3, $4, $5, $6, $7, $8::uuid) returning id::text`,
-		c.WorkspaceID(), v.SiteID, name, ct, len(clean), key, stored, c.Principal.UserID).Scan(&id)
+	err = c.Tx.QueryRow(c.Context, `insert into core.attachments (workspace_id, site_id, filename, content_type, size_bytes, storage_key, data, created_by, generated)
+		values ($1::uuid, $2::uuid, $3, $4, $5, $6, $7, $8::uuid, $9) returning id::text`,
+		c.WorkspaceID(), v.SiteID, name, ct, len(clean), key, stored, c.Principal.UserID, v.Generated).Scan(&id)
 	if err != nil {
 		return nil, command.DB(err)
 	}
@@ -296,7 +310,7 @@ func imageList(c *command.Ctx, raw json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := c.Tx.Query(c.Context, `select id::text, filename from core.attachments where site_id = $1::uuid and (data is not null or storage_key = 's3') order by created_at, id`, v.SiteID)
+	rows, err := c.Tx.Query(c.Context, `select id::text, filename from core.attachments where site_id = $1::uuid and generated = $2 and (data is not null or storage_key = 's3') order by created_at, id`, v.SiteID, v.Generated)
 	if err != nil {
 		return nil, command.DB(err)
 	}
@@ -309,4 +323,26 @@ func imageList(c *command.Ctx, raw json.RawMessage) (any, error) {
 		out = []map[string]string{}
 	}
 	return out, command.DB(err)
+}
+
+// imageDelete removes a generated share image of a site (the sites module decides when one is unused).
+func imageDelete(c *command.Ctx, raw json.RawMessage) (any, error) {
+	v, err := imageDecode(raw, true)
+	if err != nil {
+		return nil, err
+	}
+	var key string
+	err = c.Tx.QueryRow(c.Context, "delete from core.attachments where site_id = $1::uuid and id = $2::uuid and generated returning storage_key", v.SiteID, v.ID).Scan(&key)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return map[string]any{"deleted": false}, nil
+	}
+	if err != nil {
+		return nil, command.DB(err)
+	}
+	if key == "s3" && store != nil {
+		if err := store.Delete(c.Context, c.WorkspaceID()+"/"+v.ID); err != nil {
+			return nil, fmt.Errorf("file storage: %w", err)
+		}
+	}
+	return map[string]any{"deleted": true}, nil
 }

@@ -47,6 +47,10 @@ func (s *Server) sitesPublic(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	p := r.URL.Path
 	switch {
+	case p == "/api/sites/public_posts" && r.Method == http.MethodPost:
+		s.sitePublicPosts(w, r, false)
+	case p == "/api/sites/public_post" && r.Method == http.MethodPost:
+		s.sitePublicPosts(w, r, true)
 	case p == "/api/sites/public_get" && r.Method == http.MethodPost:
 		s.sitePublicGet(w, r)
 	case strings.HasPrefix(p, "/api/sites/img/") && (r.Method == http.MethodGet || r.Method == http.MethodHead):
@@ -168,7 +172,9 @@ func (s *Server) siteForm(w http.ResponseWriter, r *http.Request, siteID string)
 		Email       string `json:"email"`
 		Message     string `json:"message"`
 		Consent     bool   `json:"consent"`
-		ConsentText string `json:"consent_text"`
+		ConsentText string `json:"consent_text"` // ignored: the server states the consent (17.8)
+		ConsentID   string `json:"consent_id"`
+		ItemID      string `json:"item_id"`
 		Honeypot    string `json:"company_website"`
 	}
 	pub, lerr := sites.LookupID(r.Context(), s.Pool, siteID)
@@ -185,8 +191,13 @@ func (s *Server) siteForm(w http.ResponseWriter, r *http.Request, siteID string)
 	case !in.Consent:
 		s.siteFail(w, command.ErrInvalid("please tick the box to agree before sending"))
 		return
-	case utf8.RuneCountInString(in.Message) > 1000 || utf8.RuneCountInString(in.ConsentText) > 400:
+	case utf8.RuneCountInString(in.Message) > 1000 || len(in.ConsentID) > 40 || len(in.ItemID) > 40:
 		s.siteFail(w, command.ErrInvalid("the message is too long"))
+		return
+	}
+	consent, _, okConsent := sites.ConsentFor(in.ConsentID, pub.Name)
+	if !okConsent {
+		s.siteFail(w, command.ErrInvalid("unknown consent text"))
 		return
 	}
 	q, _, err := leads.Clean(leads.Inquiry{Name: in.Name, Phone: in.Phone, Email: in.Email, Message: in.Message})
@@ -194,7 +205,7 @@ func (s *Server) siteForm(w http.ResponseWriter, r *http.Request, siteID string)
 		err = sites.FormAllowed(r.Context(), s.Pool, siteID, sites.ClientIP(r, sites.TrustedProxies()))
 	}
 	if err == nil {
-		err = sites.Submit(r.Context(), s.Pool, s.Registry, pub, sites.Submission{Name: q.Name, Phone: in.Phone, Email: q.Email, Message: q.Message, ConsentText: in.ConsentText})
+		err = sites.Submit(r.Context(), s.Pool, s.Registry, pub, sites.Submission{Name: q.Name, Phone: in.Phone, Email: q.Email, Message: q.Message, ConsentText: consent, ItemID: in.ItemID})
 	}
 	if err != nil {
 		s.siteFail(w, err)

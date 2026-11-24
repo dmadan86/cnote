@@ -40,6 +40,9 @@ type Case struct {
 	// Page is the open page's slug (empty is Home); Fixture picks the starting document ("" or "pages").
 	Page    string `json:"page,omitempty"`
 	Fixture string `json:"fixture,omitempty"`
+	// Post makes a blog case: "new" writes a new post, anything else (true, "open", an id) edits the post in
+	// fixture_blog.json. Post assertions use paths starting "post/" (see resolvePostPath).
+	Post json.RawMessage `json:"post,omitempty"`
 }
 
 // Assertion is one entry in the "expect" array of a Case.
@@ -66,9 +69,10 @@ func (e *AssertionError) Error() string {
 
 // pageDoc mirrors the top-level Puck document we eval against.
 type pageDoc struct {
-	Root    pageRoot    `json:"root"`
-	Content []pageBlock `json:"content"`
-	Pages   []pageEntry `json:"pages"`
+	Root    pageRoot                             `json:"root"`
+	Content []pageBlock                          `json:"content"`
+	Pages   []pageEntry                          `json:"pages"`
+	I18n    map[string]map[string]map[string]any `json:"i18n,omitempty"`
 }
 
 // pageEntry is one extra page of the document.
@@ -101,10 +105,14 @@ func EvalAssertions(caseID string, data json.RawMessage, assertions []Assertion)
 	if err := json.Unmarshal(data, &doc); err != nil {
 		return []*AssertionError{{Case: caseID, Path: "(parse)", Op: "parse", Expect: "valid JSON", Got: err.Error()}}
 	}
+	return evalAssertions(caseID, assertions, func(p string) (any, bool) { return resolvePath(doc, p) })
+}
 
+// evalAssertions checks each assertion against whatever resolve finds at its path.
+func evalAssertions(caseID string, assertions []Assertion, resolve func(string) (any, bool)) []*AssertionError {
 	var errs []*AssertionError
 	for _, a := range assertions {
-		got, resolved := resolvePath(doc, a.Path)
+		got, resolved := resolve(a.Path)
 		switch a.Op {
 		case "absent":
 			if resolved {
@@ -309,6 +317,41 @@ func resolvePath(doc pageDoc, path string) (any, bool) {
 	}
 	if path == "pages" {
 		return doc.Pages, true
+	}
+	// i18n/<lang>/<blockId>/<field>[.<subfield>]: walk the i18n overlay.
+	// e.g. "i18n/hi/Hero-d4e5f6a7/title" → doc.I18n["hi"]["Hero-d4e5f6a7"]["title"]
+	if strings.HasPrefix(path, "i18n/") {
+		rest := strings.TrimPrefix(path, "i18n/")
+		lang, rest2, hasLang := strings.Cut(rest, "/")
+		if !hasLang || doc.I18n == nil {
+			return nil, false
+		}
+		langMap, ok := doc.I18n[lang]
+		if !ok {
+			return nil, false
+		}
+		blockID, fieldPath, hasField := strings.Cut(rest2, "/")
+		blockMap, ok := langMap[blockID]
+		if !ok {
+			return nil, false
+		}
+		if !hasField {
+			return blockMap, true
+		}
+		key, subfield, hasSub := strings.Cut(fieldPath, ".")
+		v, ok := blockMap[key]
+		if !ok {
+			return nil, false
+		}
+		if !hasSub {
+			return v, true
+		}
+		// Descend into nested map (e.g. ".v" or ".r")
+		if m, ok2 := v.(map[string]any); ok2 {
+			sv, ok3 := m[subfield]
+			return sv, ok3
+		}
+		return nil, false
 	}
 	// <slug>/<path>: the same path inside one extra page (Home when the prefix is not a page)
 	if slug, rest, ok := strings.Cut(path, "/"); ok && !strings.Contains(slug, ".") {

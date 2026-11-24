@@ -51,6 +51,7 @@ func New(pool *pgxpool.Pool, reg *command.Registry) *Worker {
 	w.OnLong("agent.ask", 4, agents.RunJob(pool, reg))
 	w.OnLong("agent.run", 2, agents.RunJob(pool, reg))
 	w.OnLong("site.chat", 2, sites.RunJob(pool, reg))
+	w.OnLong(sites.OGJobKind, 1, sites.RunOGJob(pool, reg))
 	day := 24 * time.Hour
 	w.AddSweep(Sweep{"docs.freshness_sweep", day, FreshnessSweep})
 	w.AddSweep(Sweep{"finance.irn_window", day, func(ctx context.Context, w *Worker) error {

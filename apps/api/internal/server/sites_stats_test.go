@@ -118,11 +118,12 @@ func TestSiteHitReferrerCap(t *testing.T) {
 	wg.Wait()
 	eq(t, p.n("select count(*)::text from sites.site_referrers where host <> 'other'"), "50")
 	eq(t, p.n("select n::text from sites.site_referrers where host = 'other'"), "10")
-	// a host already counted keeps counting
-	if _, err := p.pool.Exec(context.Background(), "select sites.hit($1::uuid, '', 'r0.example.com', $2)", p.site, siteDomain); err != nil {
+	// Pick a host that was admitted: concurrent calls do not arrive in index order.
+	host := p.n("select host from sites.site_referrers where host <> 'other' limit 1")
+	if _, err := p.pool.Exec(context.Background(), "select sites.hit($1::uuid, '', $2, $3)", p.site, host, siteDomain); err != nil {
 		t.Fatal(err)
 	}
-	eq(t, p.n("select n::text from sites.site_referrers where host = 'r0.example.com'"), "2")
+	eq(t, p.n("select n::text from sites.site_referrers where host = $1", host), "2")
 	eq(t, p.n("select sum(n)::text from sites.site_stats where kind = 'visit'"), "61")
 }
 

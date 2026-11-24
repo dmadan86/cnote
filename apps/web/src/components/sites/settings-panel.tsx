@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import { btn, btnPrimary, ErrorText, Modal, Pill } from '@/components/ui'
 import {
   type EditOp,
+  pageOgId,
   type Site,
   type SiteData,
   type SiteDomain,
@@ -12,7 +13,7 @@ import {
   siteSummary,
 } from '@/lib/sites'
 import { DomainSheet } from './domain-sheet'
-import { CopyButton } from './publish-modal'
+import { CopyButton, ShareCard } from './publish-modal'
 import { StatsCard } from './stats-card'
 
 const Counter = ({ n, max }: { n: number; max: number }) => (
@@ -70,6 +71,7 @@ export function SettingsPanel({
 
   const dirty = title !== (saved.title ?? '') || desc !== (saved.description ?? '')
   const live = !!site.published_version_id
+  const shareId = pageOgId(site, page)
   const run = async (fn: () => Promise<unknown>) => {
     setBusy(true)
     setErr(undefined)
@@ -175,6 +177,22 @@ export function SettingsPanel({
               Save
             </button>
           </div>
+        </section>
+
+        <section className="space-y-2">
+          <h3 className="text-[11px] font-semibold uppercase tracking-wide text-muted">
+            How your link looks when shared{cur ? `: ${cur.title}` : ''}
+          </h3>
+          <ShareCard
+            image={shareId ? `/api/w/${ws}/sites/${site.id}/img/${shareId}` : undefined}
+            title={title || sum.name || 'Your website'}
+            description={desc || sum.description}
+            host={shown}
+          />
+          <p className="text-muted">
+            The picture is made from your photo, name and colours each time you publish. The name and
+            description come from "How you appear on Google" above.
+          </p>
         </section>
 
         {sum.hasForm && (
