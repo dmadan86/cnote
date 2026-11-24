@@ -175,6 +175,22 @@ func (e *turnExec) step(ctx context.Context, req StepReq) (StepRes, error) {
 	n := int64(len(b)/3) + stepReserve
 	var day struct{ Day string }
 	err := e.tx(ctx, func(c *command.Ctx) error {
+		// Count the call before it is made, against the turn's shared totals (not this attempt's), so an overlapping
+		// attempt or a crash after the provider is paid can never buy more than maxCalls calls per turn.
+		var calls, tokens int64
+		err := c.Tx.QueryRow(ctx, `update sites.site_turns set calls = calls + 1, updated_at = now()
+			where workspace_id = $1::uuid and id = $2::uuid and attempt = $3 and status = 'running'
+			returning calls, tokens_in + tokens_out`, e.ws, e.turnID, e.attempt).Scan(&calls, &tokens)
+		if errors.Is(err, pgx.ErrNoRows) {
+			e.fenced = true
+			return errFenced
+		}
+		if err != nil {
+			return command.DB(err)
+		}
+		if calls > maxCalls || tokens >= maxTokens {
+			return errTurnLimit // rolls the increment back with the reservation
+		}
 		out, err := c.Call("agent.budget_reserve", props{"tokens": n})
 		if err == nil {
 			err = json.Unmarshal(out, &day)
@@ -183,6 +199,11 @@ func (e *turnExec) step(ctx context.Context, req StepReq) (StepRes, error) {
 	})
 	var ce *command.Error
 	switch {
+	case errors.Is(err, errFenced):
+		return StepRes{}, errFenced
+	case errors.Is(err, errTurnLimit):
+		e.fatal = errTurnLimit
+		return StepRes{}, e.fatal
 	case errors.As(err, &ce) && ce.Code == command.PlanLimit:
 		e.fatal = &failErr{"The workspace's daily AI budget is used up. Try again tomorrow."}
 		return StepRes{}, e.fatal
@@ -211,7 +232,7 @@ func (e *turnExec) step(ctx context.Context, req StepReq) (StepRes, error) {
 		return err
 	})
 	if err != nil {
-		_ = release(0)
+		_ = release(n) // the provider may have been paid before the transaction failed: charge the whole reservation
 		e.retry = err
 		return StepRes{}, err
 	}
@@ -236,15 +257,21 @@ func (e *turnExec) step(ctx context.Context, req StepReq) (StepRes, error) {
 	e.calls++
 	e.tokens += used
 	err = e.tx(ctx, func(c *command.Ctx) error {
-		tag, err := c.Tx.Exec(ctx, `update sites.site_turns set calls = calls + 1, tokens_in = tokens_in + $4, tokens_out = tokens_out + $5, cache_read = cache_read + $6,
-			provider = $7, model = $8, updated_at = now()
-			where workspace_id = $1::uuid and id = $2::uuid and attempt = $3 and status = 'running'`,
-			e.ws, e.turnID, e.attempt, int32(out.TokensIn), int32(out.TokensOut), int32(out.CacheRead), out.Provider, out.Model)
-		if err == nil && tag.RowsAffected() == 0 {
+		// Usage is recorded whatever the attempt (it was spent); only then is the fence checked.
+		var attempt int32
+		var status string
+		err := c.Tx.QueryRow(ctx, `update sites.site_turns set tokens_in = tokens_in + $3, tokens_out = tokens_out + $4, cache_read = cache_read + $5,
+			provider = $6, model = $7, updated_at = now()
+			where workspace_id = $1::uuid and id = $2::uuid returning attempt, status`,
+			e.ws, e.turnID, int32(out.TokensIn), int32(out.TokensOut), int32(out.CacheRead), out.Provider, out.Model).Scan(&attempt, &status)
+		if err != nil {
+			return command.DB(err)
+		}
+		if attempt != e.attempt || status != "running" {
 			e.fenced = true
 			return errFenced
 		}
-		return command.DB(err)
+		return nil
 	})
 	if errors.Is(err, errFenced) {
 		return StepRes{}, errFenced
@@ -292,8 +319,8 @@ func (e *turnExec) commit(ctx context.Context, res TurnResult) error {
 	ctx = context.WithoutCancel(ctx)
 	steps, _ := json.Marshal(res.Steps)
 	reply := strings.TrimSpace(res.Reply)
-	if len(reply) > 2000 {
-		reply = string([]rune(reply)[:2000])
+	if r := []rune(reply); len(r) > 2000 {
+		reply = string(r[:2000])
 	}
 	return e.tx(ctx, func(c *command.Ctx) error {
 		var status string

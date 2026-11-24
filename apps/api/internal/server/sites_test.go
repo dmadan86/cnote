@@ -337,7 +337,8 @@ func TestSiteOverlappingAttemptAndStaleSweep(t *testing.T) {
 	})
 	eq(t, s.sql("select status || ' ' || attempt from sites.site_turns where id = $1::uuid", turn), "running 2")
 	eq(t, s.versions(), "1")
-	eq(t, s.sql("select (calls = 0)::text from sites.site_turns where id = $1::uuid", turn), "true") // its token write was fenced
+	// the paid call still counts toward the turn's cap and usage, even though its attempt was fenced
+	eq(t, s.sql("select (calls = 1)::text from sites.site_turns where id = $1::uuid", turn), "true")
 
 	// not stale yet: a recent turn stays; then it ages
 	if err := sites.Sweep(context.Background(), s.pool); err != nil {

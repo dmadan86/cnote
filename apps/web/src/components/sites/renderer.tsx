@@ -50,10 +50,16 @@ export function Renderer({
     if (e.type === 'click' && h?.startsWith('#'))
       document.getElementById(h.slice(1))?.scrollIntoView({ behavior: 'smooth' })
   }
+  // Keyboard activation of a link or a form control (Enter, Space, browser shortcuts) is cancelled too.
+  const stopKey = (e: React.KeyboardEvent) => {
+    if ((e.target as HTMLElement).closest('a, button, input, select, textarea') && (e.key === 'Enter' || e.key === ' '))
+      e.preventDefault()
+  }
   return (
     <div
       style={style}
       className="min-h-screen"
+      onKeyDownCapture={stopKey}
       onClickCapture={stop}
       onAuxClickCapture={stop}
       onSubmitCapture={stop}
