@@ -197,7 +197,9 @@ export function CatalogueView({
               )}
             </div>
             <div className="flex flex-col gap-3 p-5">
-              <h3 className="pr-10 text-xl font-bold md:pr-0">{cur.name}</h3>
+              <h3 className="pr-10 text-xl font-bold [font-family:var(--site-font-heading)] md:pr-0">
+                {cur.name}
+              </h3>
               <p className="text-lg font-bold tabular-nums">
                 {cur.price}
                 {mode === 'incl' && cur.amount !== undefined && (

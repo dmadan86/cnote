@@ -2,6 +2,7 @@ package sites
 
 import (
 	"encoding/json"
+	"math"
 	"regexp"
 	"strings"
 	"testing"
@@ -36,6 +37,19 @@ func TestTemplatePaletteContrast(t *testing.T) {
 	for _, m := range templateList {
 		if issues := themeIssues(themeOf(t, m.Key)); len(issues) > 0 {
 			t.Errorf("%s: %s", m.Key, strings.Join(issues, "; "))
+		}
+	}
+}
+
+func TestFocusRingOnPrimarySection(t *testing.T) {
+	// A text-coloured outline would disappear against this black primary.
+	theme := map[string]any{"primary": "#000000", "text": "#000000", "background": "#ffffff"}
+	if issues := themeIssues(theme); len(issues) != 0 {
+		t.Fatalf("two-tone focus ring should remain visible: %v", issues)
+	}
+	for _, surface := range []rgb{{0, 0, 0}, {255, 255, 255}, {128, 128, 128}} {
+		if r := math.Max(ratio(rgb{0, 0, 0}, surface), ratio(rgb{255, 255, 255}, surface)); r < 3 {
+			t.Errorf("focus ring lacks contrast against %v: %.2f", surface, r)
 		}
 	}
 }

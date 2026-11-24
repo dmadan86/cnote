@@ -60,7 +60,20 @@ test('Templates: a chosen palette and the brand colour are saved with the site',
   const dialog = page.getByRole('dialog')
   const swatches = dialog.getByRole('group', { name: 'Colours' }).getByRole('button')
   await expect(swatches).toHaveCount(5)
+  // Hold the themed response so the previous preview cannot be submitted for the new selection.
+  let release: (() => void) | undefined
+  const pending = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  await page.route('**/commands/site.templates', async (route) => {
+    const body = route.request().postDataJSON()
+    if (body.key && body.theme) await pending
+    await route.continue()
+  })
   await dialog.getByRole('button', { name: /^Colours from Trusty$/ }).click()
+  await expect(dialog.getByRole('button', { name: 'Use this design' })).toBeDisabled()
+  release?.()
+  await expect(dialog.getByRole('button', { name: 'Use this design' })).toBeEnabled()
   await expect(dialog.getByRole('button', { name: /^Colours from Trusty$/ })).toHaveAttribute(
     'aria-pressed',
     'true',

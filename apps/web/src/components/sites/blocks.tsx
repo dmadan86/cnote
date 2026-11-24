@@ -56,7 +56,7 @@ const list = (v: unknown): Obj[] =>
   Array.isArray(v) ? v.filter((x): x is Obj => !!x && typeof x === 'object' && !Array.isArray(x)) : []
 
 const btnCls =
-  'inline-flex min-h-12 items-center justify-center rounded-[var(--site-radius)] bg-[var(--site-primary)] px-5 text-[15px] font-semibold text-[var(--site-on-primary)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--site-text)]'
+  'inline-flex min-h-12 items-center justify-center rounded-[var(--site-radius)] bg-[var(--site-primary)] px-5 text-[15px] font-semibold text-[var(--site-on-primary)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-black focus-visible:ring-2 focus-visible:ring-white'
 const ghostCls =
   'inline-flex min-h-12 items-center justify-center rounded-[var(--site-radius)] border border-[var(--site-border)] px-5 text-[15px] font-semibold focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--site-primary)]'
 const linkCls =
@@ -101,20 +101,36 @@ export function hiddenIds(lists: SiteBlock[][], catalog?: CatalogueData) {
   )
 }
 const anchorOf = (href: unknown) =>
-  typeof href === 'string' ? (href.match(/#([A-Za-z]+-[0-9a-f]{8})$/)?.[1] ?? '') : ''
-/** What visitors get: empty sections dropped, and header and footer links to them omitted. */
+  typeof href === 'string' ? (href.match(/^\/?#([A-Za-z]+-[0-9a-f]{8})$/)?.[1] ?? '') : ''
+/** Drop empty sections and links to them, including links nested in block properties. */
 export function visibleBlocks(blocks: SiteBlock[], hidden: ReadonlySet<string>): SiteBlock[] {
   if (!hidden.size) return blocks
+  const prune = (value: unknown): unknown => {
+    if (Array.isArray(value))
+      return value
+        .filter((item) => {
+          if (!item || typeof item !== 'object') return true
+          return !Object.entries(item).some(
+            ([key, href]) => key.endsWith('href') && hidden.has(anchorOf(href)),
+          )
+        })
+        .map(prune)
+    if (!value || typeof value !== 'object') return value
+    const entries = Object.entries(value).map(
+      ([key, item]) => [key, key.endsWith('href') && hidden.has(anchorOf(item)) ? '' : prune(item)] as const,
+    )
+    const result = Object.fromEntries(entries)
+    if (
+      typeof result.cta_href === 'string' &&
+      !result.cta_href &&
+      hidden.has(anchorOf((value as Record<string, unknown>).cta_href))
+    )
+      result.cta_label = ''
+    return result
+  }
   return blocks
     .filter((b) => !hidden.has(String(b.props?.id ?? '')))
-    .map((b) =>
-      (b.type === 'Header' || b.type === 'Footer') && Array.isArray(b.props.links)
-        ? {
-            ...b,
-            props: { ...b.props, links: list(b.props.links).filter((l) => !hidden.has(anchorOf(l.href))) },
-          }
-        : b,
-    )
+    .map((b) => ({ ...b, props: prune(b.props) as SiteBlock['props'] }))
 }
 const card = 'rounded-[var(--site-radius)] border border-[var(--site-border)]'
 
@@ -502,7 +518,7 @@ function CallToAction(p: P) {
           <Link
             blocked={p.blocked}
             href={p.cta_href}
-            className="inline-flex min-h-12 items-center justify-center rounded-[var(--site-radius)] bg-[var(--site-bg)] px-5 text-[15px] font-semibold text-[var(--site-text)] max-md:w-full"
+            className="inline-flex min-h-12 items-center justify-center rounded-[var(--site-radius)] bg-[var(--site-bg)] px-5 text-[15px] font-semibold text-[var(--site-text)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-black focus-visible:ring-2 focus-visible:ring-white max-md:w-full"
           >
             {label}
           </Link>

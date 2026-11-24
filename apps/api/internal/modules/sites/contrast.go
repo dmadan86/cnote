@@ -48,7 +48,7 @@ func onColor(p rgb) rgb {
 	return rgb{255, 255, 255}
 }
 
-// themeIssues lists every drawn pair below 4.5:1 (text and UI indicators such as the focus ring need 3:1, which 4.5 covers).
+// themeIssues checks text at 4.5:1 and the two-tone focus ring at 3:1.
 func themeIssues(theme map[string]any) []string {
 	col := func(k string) (rgb, bool) {
 		s, ok := theme[k].(string)
@@ -76,5 +76,13 @@ func themeIssues(theme map[string]any) []string {
 	check("accent on tinted section", primary, tint)
 	check("button text on accent", on, primary)
 	check("banner text on accent", over(on, primary, .9), primary)
+	// Buttons have adjacent black and white focus rings, so at least one must
+	// contrast with each surface on which a button can appear.
+	for name, surface := range map[string]rgb{"background": bg, "tinted section": tint, "primary section": primary} {
+		r := math.Max(ratio(rgb{0, 0, 0}, surface), ratio(rgb{255, 255, 255}, surface))
+		if r < 3 {
+			out = append(out, fmt.Sprintf("focus ring on %s %.2f", name, r))
+		}
+	}
 	return out
 }

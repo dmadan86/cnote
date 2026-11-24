@@ -145,13 +145,24 @@ export function Start({
   const first = list[0]
   const preview = list.find((t) => t.key === previewKey)
   const palette = list.find((t) => t.key === paletteKey)?.palette
-  const themed = useCmd<Template[]>(
-    ws,
-    'site.templates',
-    { key: previewKey, brand, theme: palette },
-    !!previewKey && !!palette,
-  )
-  const shown = palette && themed.data?.[0]?.key === previewKey ? themed.data[0] : preview
+  const requestKey = JSON.stringify({ key: previewKey, brand, theme: palette })
+  const [result, setResult] = useState<{ key: string; template: Template }>()
+  useEffect(() => {
+    if (!previewKey) return
+    let live = true
+    siteApi
+      .templates(ws, JSON.parse(requestKey))
+      .then((templates) => {
+        if (live && templates[0]) setResult({ key: requestKey, template: templates[0] })
+      })
+      .catch((error) => {
+        if (live) setErr(error as Error)
+      })
+    return () => {
+      live = false
+    }
+  }, [ws, previewKey, requestKey])
+  const shown = result?.key === requestKey ? result.template : undefined
   const verticals = [...new Set(list.map((t) => t.vertical))]
   const styles = STYLES.filter((x) => list.some((t) => t.style === x))
   const match = (t: Template) => (!vertical || t.vertical === vertical) && (!style || t.style === style)
@@ -259,12 +270,12 @@ export function Start({
         </>
       )}
       <Modal
-        open={!!shown}
+        open={!!previewKey}
         onClose={() => setPreviewKey(null)}
         title={`Preview: ${shown?.name ?? ''}`}
         className="max-w-6xl"
       >
-        {shown && preview && (
+        {preview && (
           <div className="space-y-3">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <DeviceToggle mobile={mobile} onChange={setMobile} />
@@ -291,14 +302,18 @@ export function Start({
               <button
                 type="button"
                 className={btnPrimary}
-                disabled={busy}
-                onClick={() => use(preview, { theme: palette })}
+                disabled={busy || !shown}
+                onClick={() => shown && use(shown, { theme: palette })}
               >
                 Use this design
               </button>
             </div>
             <div className="overflow-hidden rounded-lg border border-line bg-hover">
-              <PreviewFrame data={shown.data} mobile={mobile} hints className="h-[70vh]" />
+              {shown ? (
+                <PreviewFrame data={shown.data} mobile={mobile} hints className="h-[70vh]" />
+              ) : (
+                <div className="h-[70vh]" />
+              )}
             </div>
           </div>
         )}
