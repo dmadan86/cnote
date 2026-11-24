@@ -22,6 +22,7 @@ const ALL = [
   'About',
   'Gallery',
   'Pricing',
+  'Catalogue',
   'FAQ',
   'CallToAction',
   'MapHours',
@@ -646,6 +647,10 @@ export function Embed(p: P) {
   )
 }
 
+export function Catalogue(_p: P) {
+  return null
+}
+
 /** A block added to the catalog without a component fails tsc (BlockType is the catalog's keys). */
 export const BLOCKS: Record<BlockType | (typeof ALL)[number], ComponentType<P>> = {
   Header,
@@ -654,6 +659,7 @@ export const BLOCKS: Record<BlockType | (typeof ALL)[number], ComponentType<P>> 
   About,
   Gallery,
   Pricing,
+  Catalogue,
   FAQ,
   CallToAction,
   MapHours,

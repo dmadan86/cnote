@@ -47,6 +47,8 @@ func (s *Server) sitesPublic(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	p := r.URL.Path
 	switch {
+	case (p == "/api/sites/public_posts" || p == "/api/sites/public_post") && r.Method == http.MethodPost:
+		s.siteBlogStub(w, r)
 	case p == "/api/sites/public_get" && r.Method == http.MethodPost:
 		s.sitePublicGet(w, r)
 	case strings.HasPrefix(p, "/api/sites/img/") && (r.Method == http.MethodGet || r.Method == http.MethodHead):

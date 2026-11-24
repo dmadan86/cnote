@@ -611,6 +611,36 @@
           "labels": ["Default"]
         }
       }
+    },
+    "Catalogue": {
+      "label": "Catalogue",
+      "max": 1,
+      "props": {
+        "title": {
+          "kind": "text",
+          "max": 80,
+          "label": "Title"
+        },
+        "intro": {
+          "kind": "longtext",
+          "max": 200,
+          "label": "Intro"
+        },
+        "variant": {
+          "kind": "enum",
+          "values": ["grid", "list"],
+          "optional": true,
+          "label": "Layout",
+          "labels": ["Grid", "List"]
+        },
+        "enquire": {
+          "kind": "enum",
+          "values": ["both", "whatsapp", "form"],
+          "optional": true,
+          "label": "Enquiry",
+          "labels": ["Both", "WhatsApp", "Form"]
+        }
+      }
     }
   },
   "pages": {

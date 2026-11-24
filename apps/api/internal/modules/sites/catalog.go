@@ -65,7 +65,7 @@ var slugPattern *regexp.Regexp
 var internalLink = regexp.MustCompile(`^/([a-z0-9-]{1,40})?(?:#([A-Za-z]+-[0-9a-f]{8}))?$`)
 
 // reservedSlugs can never be a page: the web server answers them itself.
-var reservedSlugs = map[string]bool{"api": true, "internal": true, "_next": true, "robots.txt": true, "sitemap.xml": true, "favicon.ico": true, "assets": true, "img": true, "published": true}
+var reservedSlugs = map[string]bool{"blog": true, "api": true, "internal": true, "_next": true, "robots.txt": true, "sitemap.xml": true, "favicon.ico": true, "assets": true, "img": true, "published": true}
 
 // maxDocBytes is below the column's 262144 because jsonb text is a little longer than compact JSON.
 const maxDocBytes = 240000
@@ -235,7 +235,7 @@ func Validate(data json.RawMessage) error {
 		if !slugPattern.MatchString(p.Slug) {
 			return fmt.Errorf("page %q: the address may use only a-z, 0-9 and hyphens, up to 40 characters", p.Slug)
 		}
-		if reservedSlugs[p.Slug] {
+		if reservedSlugs[p.Slug] && p.Slug != "blog" {
 			return fmt.Errorf("page %q: that address is reserved", p.Slug)
 		}
 		if slugs[p.Slug] {

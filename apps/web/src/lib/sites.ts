@@ -86,6 +86,19 @@ export type EditOp = { tool: string; input: Record<string, unknown> }
 
 /** Every write carries expected_version_id, the draft the person is looking at; a stale one answers `conflict`. */
 export const siteApi = {
+  // Phase 3a command interfaces; implementations arrive with the catalogue and blog backend.
+  catalogGet: (ws: string, id: string) => cmd<CatalogueState>(ws, 'site.catalog_get', { id }),
+  catalogSet: (ws: string, id: string, price_mode: CataloguePriceMode, items: CatalogueEntry[]) =>
+    cmd<CatalogueState>(ws, 'site.catalog_set', { id, price_mode, items }),
+  catalogSync: (ws: string, id: string) =>
+    cmd<{ synced_at: string; count: number }>(ws, 'site.catalog_sync', { id }),
+  postList: (ws: string, id: string) => cmd<SitePost[]>(ws, 'site.post_list', { id }),
+  postGet: (ws: string, id: string, post_id: string) => cmd<SitePost>(ws, 'site.post_get', { id, post_id }),
+  postSave: (ws: string, input: PostSaveInput) => cmd<SitePost>(ws, 'site.post_save', input),
+  postPublish: (ws: string, id: string, post_id: string, expected_rev: number, publish: boolean) =>
+    cmd<SitePost>(ws, 'site.post_publish', { id, post_id, expected_rev, publish }),
+  postDelete: (ws: string, id: string, post_id: string, expected_rev: number) =>
+    cmd<void>(ws, 'site.post_delete', { id, post_id, expected_rev }),
   addPage: (
     ws: string,
     id: string,
@@ -367,6 +380,7 @@ const HIT = new RegExp(`^/api/sites/hit/${UUID}$`)
 /** A page address: the same rule as Go (design 17.10). Reserved names never match a page, so they 404. */
 export const PAGE_SLUG = /^[a-z0-9]+(-[a-z0-9]+)*$/
 export const RESERVED_SLUGS = [
+  'blog',
   'api',
   'internal',
   '_next',
@@ -543,4 +557,61 @@ export function externalReferrerHost(referrer: string, own: string) {
   } catch {
     return ''
   }
+}
+
+// ---- Phase 3a catalogue and blog scaffolding ----
+export type CataloguePriceMode = 'show_incl' | 'show_plus' | 'hide'
+export type CatalogueEntry = {
+  item_id: string
+  category: string
+  description: string
+  image_id?: string
+  position: number
+}
+export type CatalogueSnapshotItem = CatalogueEntry & {
+  name: string
+  unit: string
+  price_minor?: number
+  mode: CataloguePriceMode
+}
+export type CatalogueState = {
+  price_mode: CataloguePriceMode
+  items: CatalogueEntry[]
+  synced_at: string | null
+}
+export type PostBodyDocument = { type: 'doc'; content?: PostNode[] }
+export type PostNode = {
+  type: string
+  attrs?: Record<string, unknown>
+  content?: PostNode[]
+  text?: string
+  marks?: { type: string; attrs?: Record<string, unknown> }[]
+}
+export type SitePost = {
+  id: string
+  site_id: string
+  workspace_id: string
+  slug: string
+  title: string
+  description: string
+  cover_image_id: string | null
+  og_image_id: string | null
+  body: PostBodyDocument
+  pending: Record<string, unknown> | null
+  status: 'draft' | 'published'
+  published_at: string | null
+  rev: number
+  created_by: string
+  created_at: string
+  updated_at: string
+}
+export type PostSaveInput = {
+  id: string
+  post_id?: string
+  expected_rev?: number
+  slug: string
+  title: string
+  description?: string
+  cover_image_id?: string | null
+  body: PostBodyDocument
 }

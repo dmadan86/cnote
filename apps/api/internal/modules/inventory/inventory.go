@@ -33,6 +33,7 @@ func Commands() []command.Command {
 		mk("stock_item.create", mi, command.Member, itemCreate),
 		mk("stock_item.update", mi, command.Member, itemUpdate),
 		mk("stock_item.list", rd, command.Member, itemList),
+		mk("stock_item.public_list", rd, command.Member, publicList),
 		mk("stock_item.get", rd, command.Member, itemGet),
 		mk("stock_location.list", rd, command.Member, locationList),
 		mk("stock_location.create", mi, command.Admin, locationCreate),
