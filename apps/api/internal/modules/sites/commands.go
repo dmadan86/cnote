@@ -147,7 +147,7 @@ func Commands() []command.Command {
 			commands[i].Handler = guardPublish(commands[i].Handler)
 		}
 	}
-	for _, group := range [][]command.Command{CatalogueCommands(), BlogCommands(), PagesCommands(), EditorCommands(), DomainsCommands(), StatsCommands(), ExportCommands()} {
+	for _, group := range [][]command.Command{CatalogueCommands(), BlogCommands(), PagesCommands(), EditorCommands(), DomainsCommands(), StatsCommands(), ExportCommands(), I18nCommands(), AbuseCommands(), WebRiskCommands(), CloudflareCommands()} {
 		commands = append(commands, group...)
 	}
 	return commands
