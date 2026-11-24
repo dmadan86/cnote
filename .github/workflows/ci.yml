@@ -194,6 +194,9 @@ jobs:
           MK=$(openssl rand -base64 32)
           echo "::add-mask::$MK"
           echo "CNOTE_MASTER_KEY=$MK" >> "$GITHUB_ENV" # per run; every process shares it
+          ST=$(openssl rand -hex 16)
+          echo "::add-mask::$ST"
+          echo "SITES_SERVER_TOKEN=$ST" >> "$GITHUB_ENV" # the web server's token for reading published sites
       - name: Migrate
         run: |
           (cd apps/api && go run ./cmd/api migrate)
@@ -211,9 +214,9 @@ jobs:
       - name: Start Go, collab and web
         run: |
           (cd apps/api && go build -o ../../cnote-api ./cmd/api)
-          PUBLIC_BASE_URL=http://localhost:3000 AUTH_SIGNUP_FREE=100000 AUTH_IP_FREE=100000 AI_ALLOW_PRIVATE_ENDPOINTS=1 PORT=4100 WITH_WORKER=1 COLLAB_URL=http://localhost:4300 CNOTE_PLATFORM_ADMINS=@example.test ./cnote-api > go-api.log 2>&1 &
+          PUBLIC_BASE_URL=http://localhost:3000 AUTH_SIGNUP_FREE=100000 AUTH_IP_FREE=100000 AI_ALLOW_PRIVATE_ENDPOINTS=1 PORT=4100 WITH_WORKER=1 COLLAB_URL=http://localhost:4300 CNOTE_PLATFORM_ADMINS=@example.test SITES_DOMAIN=localhost:3000 SITES_TEST_SKIP_VERIFY=1 SITES_SERVER_TOKEN=$SITES_SERVER_TOKEN ./cnote-api > go-api.log 2>&1 &
           COLLAB_PORT=4300 COLLAB_ALLOWED_ORIGINS=http://localhost:3000 pnpm --filter @cnote/collab start > collab.log 2>&1 &
-          pnpm --filter @cnote/web start > web.log 2>&1 &
+          SITES_DOMAIN=localhost:3000 SITES_SERVER_TOKEN=$SITES_SERVER_TOKEN PUBLIC_BASE_URL=http://localhost:3000 pnpm --filter @cnote/web start > web.log 2>&1 &
           npx --yes wait-on -t 120000 http://localhost:4100/healthz http://localhost:4300/healthz http://localhost:3000
       - run: pnpm e2e
         env:

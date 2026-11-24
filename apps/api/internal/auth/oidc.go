@@ -327,6 +327,7 @@ func (a *Auth) OIDCFinish(ctx context.Context, cookie, state, code, redirectURI 
 	if err != nil {
 		return "", "", "", err
 	}
+	a.markVerified(ctx, userID, email) // email_verified=true was required above
 	token, err = a.createSession(ctx, userID, "sso", cfg.WorkspaceID)
 	return userID, cfg.WorkspaceID, token, err
 }

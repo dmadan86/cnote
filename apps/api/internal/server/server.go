@@ -73,6 +73,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.ticketMail(w, r)
 	case strings.HasPrefix(r.URL.Path, portalPrefix):
 		s.portal(w, r)
+	case strings.HasPrefix(r.URL.Path, "/api/sites/"):
+		s.sitesPublic(w, r)
+	case isDraftImage(r):
+		s.siteDraftImage(w, r)
 	case strings.HasPrefix(r.URL.Path, "/api/public/"):
 		s.Public.ServeHTTP(w, r)
 	case r.Method == http.MethodGet && chatStreamRe.MatchString(r.URL.EscapedPath()):

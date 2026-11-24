@@ -38,6 +38,51 @@ type siteOut struct {
 	ParentVersionID *string   `json:"parent_version_id"`
 	CreatedAt       time.Time `json:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at"`
+
+	Subdomain          *string    `json:"subdomain"`
+	URL                *string    `json:"url"`
+	PublishedVersionID *string    `json:"published_version_id"`
+	PublishedAt        *time.Time `json:"published_at"`
+	TakenDown          *struct {
+		Reason string `json:"reason"`
+	} `json:"taken_down"`
+	Pro        bool `json:"pro"`
+	FormCount  int  `json:"form_count"`
+	FormPaused bool `json:"form_paused"`
+
+	down   bool
+	reason *string
+}
+
+// siteFields and siteFrom are the columns every site read shares; dest lists the scan targets in that order.
+const siteFields = `s.id::text, s.name, s.template, s.draft_version_id::text, v.parent_id::text, s.created_at, s.updated_at,
+	s.subdomain, s.published_version_id::text, s.published_at, s.form_count, s.form_paused, coalesce(p.pro, false), p.taken_down_at is not null, p.taken_down_reason`
+const siteFrom = ` from sites.sites s join sites.site_versions v on v.workspace_id = s.workspace_id and v.site_id = s.id and v.id = s.draft_version_id
+	left join sites.site_platform p on p.site_id = s.id `
+
+func (s *siteOut) dest(extra ...any) []any {
+	return append([]any{&s.ID, &s.Name, &s.Template, &s.DraftVersionID, &s.ParentVersionID, &s.CreatedAt, &s.UpdatedAt,
+		&s.Subdomain, &s.PublishedVersionID, &s.PublishedAt, &s.FormCount, &s.FormPaused, &s.Pro, &s.down, &s.reason}, extra...)
+}
+
+// done fills the fields derived from what was scanned.
+func (s *siteOut) done() {
+	if s.Subdomain != nil && SitesDomain() != "" {
+		u := SiteURL(*s.Subdomain)
+		s.URL = &u
+	}
+	if s.down {
+		s.TakenDown = &struct {
+			Reason string `json:"reason"`
+		}{Reason: firstNonEmpty(deref(s.reason), "This site was taken offline.")}
+	}
+}
+
+func deref(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
 }
 
 type turnOut struct {
@@ -54,30 +99,32 @@ type turnOut struct {
 	CreatedAt     time.Time       `json:"created_at"`
 }
 
+func mk(name string, g command.Group, role command.Role, person bool, desc string, schema json.RawMessage, h command.Handler) command.Command {
+	c := command.NewCommand(name, g, h)
+	c.MinRole, c.Description, c.Schema = role, desc, schema
+	if person { // a machine must not drive a paid model loop or publish to the internet
+		inner := h
+		c.Handler = func(c *command.Ctx, raw json.RawMessage) (any, error) {
+			if c.Principal.Kind != command.KindUser {
+				return nil, command.ErrForbidden("this is for people only; agents and API keys are refused")
+			}
+			return inner(c, raw)
+		}
+	}
+	return c
+}
+
+func str(d string) props { return props{"type": "string", "description": d} }
+func obj(req []string, p props) json.RawMessage {
+	b, _ := json.Marshal(props{"type": "object", "required": req, "properties": p, "additionalProperties": false})
+	return b
+}
+
 // Commands are the site.* commands (design section 4, revised by section 14).
 func Commands() []command.Command {
-	mk := func(name string, g command.Group, role command.Role, person bool, desc string, schema json.RawMessage, h command.Handler) command.Command {
-		c := command.NewCommand(name, g, h)
-		c.MinRole, c.Description, c.Schema = role, desc, schema
-		if person { // a machine must not drive a paid model loop
-			inner := h
-			c.Handler = func(c *command.Ctx, raw json.RawMessage) (any, error) {
-				if c.Principal.Kind != command.KindUser {
-					return nil, command.ErrForbidden("this is for people only; agents and API keys are refused")
-				}
-				return inner(c, raw)
-			}
-		}
-		return c
-	}
 	R, W, M := command.GroupRead, command.GroupWriteItems, command.Member
-	str := func(d string) props { return props{"type": "string", "description": d} }
-	obj := func(req []string, p props) json.RawMessage {
-		b, _ := json.Marshal(props{"type": "object", "required": req, "properties": p, "additionalProperties": false})
-		return b
-	}
 	id, ver := str("site id"), str("the draft version the person is looking at; a stale one is a conflict")
-	return []command.Command{
+	return append([]command.Command{
 		mk("site.templates", R, M, false, "List the website templates, each filled from the company profile. too_long names profile fields left empty because they do not fit the site.", obj(nil, props{}), templates),
 		mk("site.list", R, M, false, "List the workspace's websites (at most one in this version).", obj(nil, props{}), list),
 		mk("site.create", W, command.Admin, false, "Create the workspace's website from a template (admins only; one per workspace). brief queues a first AI edit.",
@@ -85,14 +132,14 @@ func Commands() []command.Command {
 		mk("site.get", R, M, false, "Open a website: the site, its draft (or one version's) page data and the recent chat turns, oldest first.",
 			obj([]string{"id"}, props{"id": id, "version_id": str("a version of this site; default the draft")}), get),
 		mk("site.chat", W, M, true, "Ask the AI to change the page. Starts a turn that runs in the background; poll site.turn_get.",
-			obj([]string{"id", "expected_version_id", "message"}, props{"id": id, "expected_version_id": ver, "message": str("what to change, up to 2000 characters"), "block_id": str("the selected block")}), chat),
+			obj([]string{"id", "expected_version_id", "message"}, props{"id": id, "expected_version_id": ver, "message": str("what to change, up to 2000 characters"), "block_id": str("the selected block"), "image_ids": props{"type": "array", "items": props{"type": "string"}, "description": "up to 4 photos just uploaded to this site"}}), chat),
 		mk("site.turn_get", R, M, false, "One chat turn; data is the new page once it is done and changed the page.", obj([]string{"id"}, props{"id": str("turn id")}), turnGet),
 		mk("site.turn_cancel", W, M, false, "Stop a chat turn that is queued or running.", obj([]string{"id"}, props{"id": str("turn id")}), turnCancel),
 		mk("site.edit", W, M, false, "Edit the page without the AI (move, duplicate or delete blocks) as a new version. ops are {tool, input}: update_block_props, add_block, remove_block, move_block, set_theme, duplicate_block {id}.",
 			obj([]string{"id", "expected_version_id", "ops"}, props{"id": id, "expected_version_id": ver, "ops": props{"type": "array", "items": props{"type": "object"}}}), edit),
 		mk("site.restore", W, M, false, "Make an older version of this site the draft (undo, redo, restore to here). Moves the draft pointer; nothing is deleted.",
 			obj([]string{"id", "expected_version_id", "version_id"}, props{"id": id, "expected_version_id": ver, "version_id": str("the version to make the draft")}), restore),
-	}
+	}, publishCommands(id, ver)...)
 }
 
 func uid(what, s string) error {
@@ -116,9 +163,7 @@ func userID(c *command.Ctx) (string, error) {
 	return *c.Principal.UserID, nil
 }
 
-const siteSQL = `select s.id::text, s.name, s.template, s.draft_version_id::text, v.parent_id::text, s.created_at, s.updated_at, v.data
-	from sites.sites s join sites.site_versions v on v.workspace_id = s.workspace_id and v.site_id = s.id and v.id = s.draft_version_id
-	where s.workspace_id = $1::uuid and s.id = $2::uuid`
+const siteSQL = `select ` + siteFields + `, v.data` + siteFrom + `where s.workspace_id = $1::uuid and s.id = $2::uuid`
 
 // loadSite reads the site and its draft; lock holds the site row until the transaction ends.
 func loadSite(c *command.Ctx, id string, lock bool) (siteOut, json.RawMessage, error) {
@@ -131,10 +176,11 @@ func loadSite(c *command.Ctx, id string, lock bool) (siteOut, json.RawMessage, e
 	}
 	var s siteOut
 	var data []byte
-	err := c.Tx.QueryRow(c.Context, q, c.WorkspaceID(), id).Scan(&s.ID, &s.Name, &s.Template, &s.DraftVersionID, &s.ParentVersionID, &s.CreatedAt, &s.UpdatedAt, &data)
+	err := c.Tx.QueryRow(c.Context, q, c.WorkspaceID(), id).Scan(s.dest(&data)...)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return s, nil, command.ErrNotFound("site")
 	}
+	s.done()
 	return s, data, command.DB(err)
 }
 
@@ -158,6 +204,9 @@ func addVersion(c *command.Ctx, siteID string, parent, turnID *string, source, s
 	}
 	user, err := userID(c)
 	if err != nil {
+		return "", err
+	}
+	if err := checkImages(c, siteID, data); err != nil {
 		return "", err
 	}
 	var id string
@@ -199,14 +248,14 @@ func activeTurn(c *command.Ctx, siteID string) (bool, error) {
 // ---------- sites ----------
 
 func list(c *command.Ctx, raw json.RawMessage) (any, error) {
-	rows, err := c.Tx.Query(c.Context, `select s.id::text, s.name, s.template, s.draft_version_id::text, v.parent_id::text, s.created_at, s.updated_at
-		from sites.sites s join sites.site_versions v on v.workspace_id = s.workspace_id and v.site_id = s.id and v.id = s.draft_version_id
-		where s.workspace_id = $1::uuid order by s.created_at desc`, c.WorkspaceID())
+	rows, err := c.Tx.Query(c.Context, `select `+siteFields+siteFrom+`where s.workspace_id = $1::uuid order by s.created_at desc`, c.WorkspaceID())
 	if err != nil {
 		return nil, command.DB(err)
 	}
 	out, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (s siteOut, err error) {
-		err = r.Scan(&s.ID, &s.Name, &s.Template, &s.DraftVersionID, &s.ParentVersionID, &s.CreatedAt, &s.UpdatedAt)
+		if err = r.Scan(s.dest()...); err == nil {
+			s.done()
+		}
 		return
 	})
 	if out == nil {
@@ -266,7 +315,7 @@ func create(c *command.Ctx, raw json.RawMessage) (any, error) {
 	}
 	out := props{"too_long": tooLong}
 	if brief != "" {
-		turn, err := queueTurn(c, siteID, version, brief, nil, "reasoning")
+		turn, err := queueTurn(c, siteID, version, brief, nil, "reasoning", nil)
 		if err != nil {
 			return nil, err
 		}
@@ -311,18 +360,25 @@ func get(c *command.Ctx, raw json.RawMessage) (any, error) {
 	if turns == nil {
 		turns = []turnOut{}
 	}
-	return props{"site": site, "data": data, "turns": turns}, command.DB(err)
+	if err != nil {
+		return nil, command.DB(err)
+	}
+	out := props{"site": site, "data": data, "turns": turns}
+	return out, getExtras(c, site, out)
 }
 
 // queueTurn inserts a turn and the long-lane job that runs it.
-func queueTurn(c *command.Ctx, siteID, base, message string, blockID *string, tier string) (string, error) {
+func queueTurn(c *command.Ctx, siteID, base, message string, blockID *string, tier string, images []string) (string, error) {
 	user, err := userID(c)
 	if err != nil {
 		return "", err
 	}
 	var id string
-	err = c.Tx.QueryRow(c.Context, `insert into sites.site_turns (workspace_id, site_id, created_by, message, block_id, tier, base_version_id)
-		values ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6, $7::uuid) returning id::text`, c.WorkspaceID(), siteID, user, message, blockID, tier, base).Scan(&id)
+	if images == nil {
+		images = []string{}
+	}
+	err = c.Tx.QueryRow(c.Context, `insert into sites.site_turns (workspace_id, site_id, created_by, message, block_id, tier, base_version_id, image_ids)
+		values ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6, $7::uuid, $8::text[]::uuid[]) returning id::text`, c.WorkspaceID(), siteID, user, message, blockID, tier, base, images).Scan(&id)
 	if err != nil {
 		return "", command.DB(err)
 	}
@@ -334,12 +390,16 @@ func queueTurn(c *command.Ctx, siteID, base, message string, blockID *string, ti
 func chat(c *command.Ctx, raw json.RawMessage) (any, error) {
 	var in struct {
 		ID                string
-		ExpectedVersionID string  `json:"expected_version_id"`
-		Message           string  `json:"message"`
-		BlockID           *string `json:"block_id"`
+		ExpectedVersionID string   `json:"expected_version_id"`
+		Message           string   `json:"message"`
+		BlockID           *string  `json:"block_id"`
+		ImageIDs          []string `json:"image_ids"`
 	}
 	if err := decode(raw, &in); err != nil {
 		return nil, err
+	}
+	if len(in.ImageIDs) > 4 {
+		return nil, command.ErrInvalid("attach at most 4 photos")
 	}
 	msg := strings.TrimSpace(in.Message)
 	if n := utf8.RuneCountInString(msg); n < 1 || n > 2000 {
@@ -367,7 +427,22 @@ func chat(c *command.Ctx, raw json.RawMessage) (any, error) {
 	if n >= dailyTurns {
 		return nil, command.NewError(command.PlanLimit, "This workspace has used its 200 website changes by chat for today. Try again tomorrow.")
 	}
-	turn, err := queueTurn(c, site.ID, site.DraftVersionID, msg, in.BlockID, "routine")
+	if err := checkAllowance(c, site); err != nil {
+		return nil, err
+	}
+	owned, err := siteImages(c, site.ID)
+	if err != nil {
+		return nil, err
+	}
+	for _, id := range in.ImageIDs {
+		if !uuidRe.MatchString(id) || !owned[strings.ToLower(id)] {
+			return nil, command.ErrInvalid("that photo is not on this website")
+		}
+	}
+	for i := range in.ImageIDs {
+		in.ImageIDs[i] = strings.ToLower(in.ImageIDs[i])
+	}
+	turn, err := queueTurn(c, site.ID, site.DraftVersionID, msg, in.BlockID, "routine", in.ImageIDs)
 	return props{"turn_id": turn}, err
 }
 
@@ -448,7 +523,7 @@ func turnCancel(c *command.Ctx, raw json.RawMessage) (any, error) {
 
 // ---------- edit and restore ----------
 
-var editVerb = map[string]string{"update_block_props": "Updated", "add_block": "Added", "remove_block": "Deleted", "move_block": "Moved", "duplicate_block": "Duplicated", "set_theme": "Changed the theme"}
+var editVerb = map[string]string{"update_block_props": "Updated", "add_block": "Added", "remove_block": "Deleted", "move_block": "Moved", "duplicate_block": "Duplicated", "set_theme": "Changed the theme", "set_page": "Changed the page title and description"}
 
 func edit(c *command.Ctx, raw json.RawMessage) (any, error) {
 	var in struct {

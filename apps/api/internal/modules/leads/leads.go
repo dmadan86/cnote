@@ -21,6 +21,7 @@ import (
 func Commands() []command.Command {
 	role := func(c command.Command, r command.Role) command.Command { c.MinRole = r; return c }
 	return append(append(ticketCommands(), supportCommands()...), []command.Command{
+		inquiryReceive(),
 		contactEmailCommand(),
 		command.NewCommand("activity.log", command.GroupManageCRM, activityLog),
 		command.NewCommand("activity.list", command.GroupRead, activityList), // guests read what page access lets them

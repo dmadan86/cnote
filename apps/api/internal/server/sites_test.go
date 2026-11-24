@@ -125,7 +125,7 @@ func TestSiteTemplateFilledFromCompany(t *testing.T) {
 	s.ok(s.owner, "company.update", map[string]any{"trade_name": "Sharma Dental", "phone": "+919876543210", "email": "hello@sharma.example.test",
 		"address": "12 MG Road, Pune", "pincode": "411001", "email_accent": "#0f766e"})
 	tpl := s.call(s.mia, "site.templates", map[string]any{}).jsonList()
-	if len(tpl) != 1 || tpl[0]["key"] != "services" || len(tpl[0]["too_long"].([]any)) != 0 {
+	if len(tpl) != 5 || tpl[0]["key"] != "services" || len(tpl[0]["too_long"].([]any)) != 0 {
 		t.Fatalf("templates: %v", tpl)
 	}
 	eq(t, propOf(tpl[0]["data"], "Hero", "title"), "Sharma Dental")
@@ -223,19 +223,19 @@ func TestSiteEditRestoreAndConflicts(t *testing.T) {
 	site := s.create()["site"].(map[string]any)
 	id, v1 := site["id"].(string), site["draft_version_id"].(string)
 	d := s.get(s.mia, id)["data"]
-	eq(t, order(d), "Header,Hero,Services,ContactForm,Footer")
+	eq(t, order(d), "Header,Hero,Services,About,Testimonials,FAQ,CallToAction,ContactForm,MapHours,Footer,WhatsAppButton")
 	hero, services := blockOf(d, "Hero"), blockOf(d, "Services")
 
 	r := s.editOps(s.mia, id, v1, map[string]any{"tool": "move_block", "input": map[string]any{"id": hero, "index": 0}}).json()
 	v2 := r["site"].(map[string]any)["draft_version_id"].(string)
-	eq(t, order(r["data"]), "Hero,Header,Services,ContactForm,Footer")
+	eq(t, order(r["data"]), "Hero,Header,Services,About,Testimonials,FAQ,CallToAction,ContactForm,MapHours,Footer,WhatsAppButton")
 	eq(t, r["site"].(map[string]any)["parent_version_id"], v1)
 	r = s.editOps(s.mia, id, v2, map[string]any{"tool": "duplicate_block", "input": map[string]any{"id": services}}).json()
 	v3 := r["site"].(map[string]any)["draft_version_id"].(string)
-	eq(t, order(r["data"]), "Hero,Header,Services,Services,ContactForm,Footer")
+	eq(t, order(r["data"]), "Hero,Header,Services,Services,About,Testimonials,FAQ,CallToAction,ContactForm,MapHours,Footer,WhatsAppButton")
 	r = s.editOps(s.mia, id, v3, map[string]any{"tool": "remove_block", "input": map[string]any{"id": services}}).json()
 	v4 := r["site"].(map[string]any)["draft_version_id"].(string)
-	eq(t, order(r["data"]), "Hero,Header,Services,ContactForm,Footer")
+	eq(t, order(r["data"]), "Hero,Header,Services,About,Testimonials,FAQ,CallToAction,ContactForm,MapHours,Footer,WhatsAppButton")
 	eq(t, s.versions(), "4")
 	eq(t, s.sql("select string_agg(summary, '|' order by seq) from sites.site_versions"), "Started from the template|Moved Hero|Duplicated Services|Deleted Services")
 
@@ -268,12 +268,12 @@ func TestSiteEditRestoreAndConflicts(t *testing.T) {
 		return s.ok(s.mia, "site.restore", map[string]any{"id": id, "expected_version_id": expected, "version_id": to})
 	}
 	u := restore(v4, v3)
-	eq(t, order(u["data"]), "Hero,Header,Services,Services,ContactForm,Footer")
+	eq(t, order(u["data"]), "Hero,Header,Services,Services,About,Testimonials,FAQ,CallToAction,ContactForm,MapHours,Footer,WhatsAppButton")
 	eq(t, s.draft(), v3)
 	restore(v3, v4)
 	eq(t, s.draft(), v4)
 	o := restore(v4, v1)
-	eq(t, order(o["data"]), "Header,Hero,Services,ContactForm,Footer")
+	eq(t, order(o["data"]), "Header,Hero,Services,About,Testimonials,FAQ,CallToAction,ContactForm,MapHours,Footer,WhatsAppButton")
 	eq(t, o["site"].(map[string]any)["parent_version_id"], nil)
 	eq(t, s.versions(), "4")
 	s.fail(s.mia, "site.restore", map[string]any{"id": id, "expected_version_id": v1, "version_id": missingID}, 404)
@@ -286,7 +286,7 @@ func TestSiteEditRestoreAndConflicts(t *testing.T) {
 	restore(v5, v4)
 	// a historical version can be read without moving the draft
 	old := s.ok(s.mia, "site.get", map[string]any{"id": id, "version_id": v2})
-	eq(t, order(old["data"]), "Hero,Header,Services,ContactForm,Footer")
+	eq(t, order(old["data"]), "Hero,Header,Services,About,Testimonials,FAQ,CallToAction,ContactForm,MapHours,Footer,WhatsAppButton")
 	eq(t, s.draft(), v4)
 }
 

@@ -201,9 +201,14 @@ func runCase(
 	}
 
 	start := time.Now()
+	imgs := make([]sites.Image, len(c.Images))
+	for i, ci := range c.Images {
+		imgs[i] = sites.Image{ID: ci.ID, Name: ci.Name}
+	}
 	in := sites.TurnInput{
 		Message:  c.Prompt,
 		Tier:     "routine",
+		Images:   imgs,
 		Business: c.Business,
 		History:  c.History,
 	}

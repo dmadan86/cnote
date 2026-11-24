@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -98,11 +99,12 @@ func (e *turnExec) start(ctx context.Context) (data json.RawMessage, in TurnInpu
 	sys := command.Principal{Kind: command.KindSystem, WorkspaceID: e.ws}
 	err = e.reg.WithTx(ctx, e.pool, sys, func(sc *command.Ctx) error {
 		var user, status, message string
+		var attached []string
 		var block *string
 		var created time.Time
-		err := sc.Tx.QueryRow(ctx, `select site_id::text, created_by::text, message, block_id, tier, status, base_version_id::text, calls, tokens_in + tokens_out, created_at
+		err := sc.Tx.QueryRow(ctx, `select site_id::text, created_by::text, message, block_id, tier, status, base_version_id::text, calls, tokens_in + tokens_out, created_at, image_ids::text[]
 			from sites.site_turns where workspace_id = $1::uuid and id = $2::uuid for update`, e.ws, e.turnID).
-			Scan(&e.siteID, &user, &message, &block, &e.tier, &status, &e.base, &e.calls, &e.tokens, &created)
+			Scan(&e.siteID, &user, &message, &block, &e.tier, &status, &e.base, &e.calls, &e.tokens, &created, &attached)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return errNotVisible
 		}
@@ -143,6 +145,21 @@ func (e *turnExec) start(ctx context.Context) (data json.RawMessage, in TurnInpu
 		in = TurnInput{Message: message, Tier: e.tier, Business: map[string]string{"name": b["name"], "phone": b["phone"], "email": b["email"], "address": b["address"]}}
 		if block != nil {
 			in.BlockID = *block
+		}
+		imgs, err := c.Call("file.image_list", props{"site_id": e.siteID})
+		if err != nil {
+			return err
+		}
+		var list []struct{ ID, Filename string }
+		if err := json.Unmarshal(imgs, &list); err != nil {
+			return err
+		}
+		for _, im := range list {
+			name := im.Filename
+			if slices.Contains(attached, im.ID) {
+				name += " (attached now)"
+			}
+			in.Images = append(in.Images, Image{ID: im.ID, Name: name})
 		}
 		rows, err := sc.Tx.Query(ctx, `select message, reply from sites.site_turns where workspace_id = $1::uuid and site_id = $2::uuid and status = 'done'
 			and coalesce(reply, '') <> '' and created_at < $3 order by created_at desc limit 6`, e.ws, e.siteID, created)

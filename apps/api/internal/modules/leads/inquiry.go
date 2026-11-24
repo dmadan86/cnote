@@ -2,6 +2,7 @@ package leads
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 
@@ -101,27 +102,66 @@ func Receive(ctx context.Context, pool *pgxpool.Pool, f Form, in Inquiry) error 
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	c := &command.Ctx{Context: ctx, Tx: tx, Principal: f.Principal()}
-	contact, err := ResolveContact(c, f, in, phone)
-	if err != nil {
-		return err
-	}
-	d, err := notes.InsertTypedNote(c, f.SpaceID, "Inquiry from "+in.Name, "deal", f.OwnerID)
-	if err != nil {
-		return err
-	}
-	if _, err = tx.Exec(ctx, `insert into crm.deals(note_id,workspace_id,stage,amount_minor,currency,contact_id,owner_id,probability,source) values($1::uuid,$2::uuid,'lead',0,'INR',$3::uuid,$4::uuid,10,'form')`, d.ID, f.WorkspaceID, contact, f.OwnerID); err != nil {
-		return command.DB(err)
-	}
-	if in.Message != "" {
-		if _, err = tx.Exec(ctx, `insert into crm.activities(workspace_id,note_id,kind,summary) values($1::uuid,$2::uuid,'note',$3)`, f.WorkspaceID, d.ID, in.Message); err != nil {
-			return command.DB(err)
-		}
-	}
-	if _, err = c.Emit("deal.created", &d.ID, map[string]any{"stage": "lead"}); err != nil {
-		return err
-	}
-	if _, err = c.Emit("inquiry.received", &d.ID, map[string]any{"contact_id": contact, "source": "form"}); err != nil {
+	if _, _, err = receiveOn(c, f, in, phone, "form", ""); err != nil {
 		return err
 	}
 	return command.DB(tx.Commit(ctx))
+}
+
+// receiveOn is the body of Receive on the caller's transaction: the contact, the lead (a deal in stage 'lead') and the
+// message and consent as its first activities. It returns the deal and contact ids.
+func receiveOn(c *command.Ctx, f Form, in Inquiry, phone, source, consent string) (string, string, error) {
+	tx, ctx := c.Tx, c.Context
+	contact, err := ResolveContact(c, f, in, phone)
+	if err != nil {
+		return "", "", err
+	}
+	d, err := notes.InsertTypedNote(c, f.SpaceID, "Inquiry from "+in.Name, "deal", f.OwnerID)
+	if err != nil {
+		return "", "", err
+	}
+	if _, err = tx.Exec(ctx, `insert into crm.deals(note_id,workspace_id,stage,amount_minor,currency,contact_id,owner_id,probability,source) values($1::uuid,$2::uuid,'lead',0,'INR',$3::uuid,$4::uuid,10,$5)`, d.ID, f.WorkspaceID, contact, f.OwnerID, source); err != nil {
+		return "", "", command.DB(err)
+	}
+	for _, text := range []string{in.Message, consent} {
+		if text == "" {
+			continue
+		}
+		if _, err = tx.Exec(ctx, `insert into crm.activities(workspace_id,note_id,kind,summary) values($1::uuid,$2::uuid,'note',$3)`, f.WorkspaceID, d.ID, text); err != nil {
+			return "", "", command.DB(err)
+		}
+	}
+	if _, err = c.Emit("deal.created", &d.ID, map[string]any{"stage": "lead"}); err != nil {
+		return "", "", err
+	}
+	if _, err = c.Emit("inquiry.received", &d.ID, map[string]any{"contact_id": contact, "source": source}); err != nil {
+		return "", "", err
+	}
+	return d.ID, contact, nil
+}
+
+// inquiryReceive is the internal command a public site form uses: the space is named by the caller (no
+// crm.inquiry_forms row), the owner is the principal, and consent is recorded as an activity on the lead.
+func inquiryReceive() command.Command {
+	c := command.NewCommand("inquiry.receive", command.GroupWriteItems, func(c *command.Ctx, raw json.RawMessage) (any, error) {
+		var in struct {
+			SpaceID                                      string `json:"space_id"`
+			Name, Phone, Email, Message, Source, Consent string
+		}
+		if err := json.Unmarshal(raw, &in); err != nil || in.Source == "" || len(in.Consent) > 500 {
+			return nil, command.ErrInvalid("invalid input")
+		}
+		q, phone, err := Clean(Inquiry{Name: in.Name, Phone: in.Phone, Email: in.Email, Message: in.Message})
+		if err != nil {
+			return nil, err
+		}
+		var ok bool
+		if err := c.Tx.QueryRow(c.Context, "select exists (select 1 from core.spaces where id = $1::uuid)", in.SpaceID).Scan(&ok); err != nil || !ok {
+			return nil, command.ErrNotFound("space")
+		}
+		deal, contact, err := receiveOn(c, Form{WorkspaceID: c.WorkspaceID(), SpaceID: in.SpaceID, OwnerID: c.Principal.UserID}, q, phone, in.Source, in.Consent)
+		return map[string]string{"deal_id": deal, "contact_id": contact}, err
+	})
+	c.Internal, c.MinRole = true, command.Admin
+	return c
 }

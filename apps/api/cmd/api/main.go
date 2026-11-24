@@ -21,6 +21,7 @@ import (
 	"github.com/cnote/api/internal/modules/billing"
 	"github.com/cnote/api/internal/modules/files"
 	"github.com/cnote/api/internal/modules/recurring"
+	"github.com/cnote/api/internal/modules/sites"
 	"github.com/cnote/api/internal/proxy"
 	"github.com/cnote/api/internal/server"
 	"github.com/cnote/api/internal/worker"
@@ -62,6 +63,10 @@ func main() {
 	}
 	defer pool.Close()
 
+	if err := sites.CheckEnv(); err != nil {
+		slog.Error("sites", "error", err)
+		os.Exit(1)
+	}
 	registry := modules.Registry()
 	sweepSecs, err := strconv.Atoi(env("RECURRING_SWEEP_SECS", "60"))
 	if err != nil || sweepSecs < 0 {

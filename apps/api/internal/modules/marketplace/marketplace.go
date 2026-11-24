@@ -86,6 +86,9 @@ func platform(c *command.Ctx) error {
 	if e := person(c); e != nil {
 		return e
 	}
+	if c.PlatformAdmin() == nil { // listed by user id
+		return nil
+	}
 	var email string
 	if e := c.Tx.QueryRow(c.Context, platformEmailSQL, c.Principal.UserID).Scan(&email); e != nil {
 		return e

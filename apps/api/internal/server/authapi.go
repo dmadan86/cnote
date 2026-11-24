@@ -68,6 +68,8 @@ func (s *Server) authSurface(w http.ResponseWriter, r *http.Request) bool {
 		s.logout(w, r)
 	case r.Method == http.MethodGet && path == "/api/auth/me":
 		s.me(w, r)
+	case r.Method == http.MethodPost && (path == "/api/auth/verify/request" || path == "/api/auth/verify/confirm"):
+		s.verifyEmail(w, r, strings.HasSuffix(path, "/confirm"))
 	case r.Method == http.MethodPost && path == "/api/workspaces":
 		s.createWorkspace(w, r)
 	case r.Method == http.MethodGet && path == "/api/commands":
@@ -298,8 +300,27 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 	for i, x := range wss {
 		list[i] = map[string]string{"id": x.ID, "name": x.Name, "slug": x.Slug, "role": x.Role}
 	}
-	out, _ := command.Marshal(map[string]any{"user": map[string]string{"id": u.ID, "email": u.Email, "name": u.Name}, "workspaces": list})
+	out, _ := command.Marshal(map[string]any{"user": map[string]any{"id": u.ID, "email": u.Email, "name": u.Name, "email_verified": u.EmailVerified}, "workspaces": list})
 	writeJSON(w, http.StatusOK, out)
+}
+
+// verifyEmail is POST /api/auth/verify/request (mail a code) and /confirm {code} (design 17.8). A session is required.
+func (s *Server) verifyEmail(w http.ResponseWriter, r *http.Request, confirm bool) {
+	u, err := s.Auth.SessionUser(r.Context(), r.Header)
+	if err == nil && confirm {
+		var code string
+		if !s.strictJSON(w, r, map[string]*string{"code": &code}, nil) {
+			return
+		}
+		err = s.Auth.ConfirmEmailCode(r.Context(), u.ID, code)
+	} else if err == nil {
+		err = s.Auth.RequestEmailCode(r.Context(), u.ID)
+	}
+	if err != nil {
+		s.writeThrottle(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, []byte(`{"ok":true}`))
 }
 
 func (s *Server) createWorkspace(w http.ResponseWriter, r *http.Request) {

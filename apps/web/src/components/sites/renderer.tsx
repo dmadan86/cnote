@@ -1,16 +1,9 @@
 'use client'
 import { Monitor, Smartphone } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
-import { hex, onColor, type SiteData } from '@/lib/sites'
-import { BLOCKS } from './blocks'
+import { type SiteData, themeStyle } from '@/lib/sites'
+import { BLOCKS, SiteBadge } from './blocks'
 import catalog from './catalog.json'
-
-const FONTS: Record<string, string> = {
-  sans: 'ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", sans-serif',
-  serif: 'ui-serif, Georgia, Cambria, "Times New Roman", "Noto Serif", serif',
-  rounded: 'ui-rounded, "Hiragino Maru Gothic ProN", "Nunito", system-ui, sans-serif',
-}
-const RADII: Record<string, string> = { none: '0px', sm: '4px', md: '8px', lg: '16px' }
 
 /** The page. No raw HTML anywhere: every value is a React text child. Without onSelect it is read-only. */
 export function Renderer({
@@ -18,27 +11,18 @@ export function Renderer({
   selectedId,
   onSelect,
   pulseId,
+  assetBase,
+  pro,
 }: {
   data: SiteData
   selectedId?: string | null
   onSelect?: (id: string | null) => void
   pulseId?: string | null
+  assetBase?: string
+  /** false shows the plan badge strip (the preview of a free site); undefined shows nothing. */
+  pro?: boolean
 }) {
-  const t = data.root?.props?.theme ?? {}
-  const primary = hex(t.primary, '#4f46e5')
-  const text = hex(t.text, '#111827')
-  const style = {
-    '--site-primary': primary,
-    '--site-on-primary': onColor(primary),
-    '--site-text': text,
-    '--site-bg': hex(t.background, '#ffffff'),
-    '--site-border': `color-mix(in srgb, ${text} 18%, transparent)`,
-    '--site-radius': RADII[t.radius ?? ''] ?? RADII.md,
-    '--site-font': FONTS[t.font ?? ''] ?? FONTS.sans,
-    background: 'var(--site-bg)',
-    color: 'var(--site-text)',
-    fontFamily: 'var(--site-font)',
-  } as React.CSSProperties
+  const style = themeStyle(data.root?.props?.theme)
   const known = (data.content ?? []).filter((b) => b.type in BLOCKS)
   // The preview never navigates (design 14.9): every click (modifier and middle too) and submit is cancelled;
   // in-page anchors scroll. Capture phase, so block selection's stopPropagation cannot let a link through.
@@ -108,10 +92,11 @@ export function Renderer({
                 {label}
               </span>
             )}
-            <C {...b.props} />
+            <C {...b.props} assetBase={assetBase} editing={!!onSelect} />
           </div>
         )
       })}
+      {pro === false && <SiteBadge pro={false} home="#" />}
     </div>
   )
 }
@@ -127,6 +112,8 @@ export function PreviewFrame({
   mobile,
   className = '',
   decorative,
+  assetBase,
+  pro,
 }: {
   data: SiteData
   selected?: string | null
@@ -134,6 +121,8 @@ export function PreviewFrame({
   mobile?: boolean
   className?: string
   decorative?: boolean
+  assetBase?: string
+  pro?: boolean
 }) {
   const ref = useRef<HTMLIFrameElement>(null)
   const [ready, setReady] = useState(false)
@@ -153,10 +142,10 @@ export function PreviewFrame({
   useEffect(() => {
     if (ready)
       ref.current?.contentWindow?.postMessage(
-        { type: 'site:data', data, selected: selected ?? null },
+        { type: 'site:data', data, selected: selected ?? null, assetBase, pro },
         location.origin,
       )
-  }, [ready, data, selected])
+  }, [ready, data, selected, assetBase, pro])
   return (
     <iframe
       ref={ref}
