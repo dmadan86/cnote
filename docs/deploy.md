@@ -30,7 +30,7 @@ client IP. Never set `OAUTH_CIMD_ALLOW_PRIVATE`. See docs/mcp-oauth.md.
 
 ## Web (Vercel)
 Project root `apps/web` (vercel.json installs from the monorepo root). Environment:
-- `API_URL` — the backend's public URL (the app rewrites `/api/*` to it so cookies stay first-party)
+- `API_URL` — the backend's public URL (the app rewrites `/api/*` to it so cookies stay first-party). Set it at build time (rewrites) and at run time (published sites read the API server-side).
 - `NEXT_PUBLIC_COLLAB_URL` — `wss://<backend host>`
 - `NEXT_PUBLIC_TLDRAW_LICENSE_KEY` — required by tldraw in production
 Serve web and API under one site (e.g. `app.example.com` and `api.example.com`) so the session cookie is shared, or
