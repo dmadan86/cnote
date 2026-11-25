@@ -19,6 +19,7 @@ import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { auth, cmd, type Me, type Member, type Note, type SharedNote, type Space } from '@/lib/api'
+import type { SpaceB1 } from '@/lib/docs'
 import { MODULES, moduleOn } from '@/lib/modules'
 import { prependWidget } from '@/lib/screen-config'
 import { AskPanel } from './ai/ask-panel'
@@ -298,7 +299,7 @@ function SpaceHead({ s, base, open }: { s: Space; base: string; open: boolean })
     <div
       data-row-id={spaceRowId(s.id)}
       data-row-space={s.id}
-      className="relative flex items-center rounded hover:bg-hover"
+      className="group/space relative flex items-center rounded hover:bg-hover"
     >
       <FoldButton id={s.id} label={s.name} open={open} dflt />
       <Link
@@ -308,6 +309,15 @@ function SpaceHead({ s, base, open }: { s: Space; base: string; open: boolean })
         <span className="rounded bg-hover px-1 text-[10px] font-bold text-muted">{s.key}</span>
         <span className="truncate">{s.name}</span>
       </Link>
+      {(s as Partial<SpaceB1>).my_role === 'admin' && (
+        <Link
+          href={`${base}/s/${s.id}/settings`}
+          aria-label={`${s.name} settings`}
+          className="mr-1 rounded p-1 text-muted hover:bg-hover focus-visible:opacity-100 md:opacity-0 md:group-hover/space:opacity-100"
+        >
+          <Settings size={13} />
+        </Link>
+      )}
       <DropMarker zone={zone} />
     </div>
   )
@@ -639,6 +649,13 @@ export function ShellView({
                   </button>
                 </div>
                 <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
+                  <Link
+                    href={`${base}/tasks`}
+                    aria-current={path === `${base}/tasks` ? 'page' : undefined}
+                    className="mb-1 flex items-center gap-1.5 rounded px-2 py-1 text-[13px] hover:bg-hover aria-[current=page]:bg-hover"
+                  >
+                    <ClipboardCheck size={13} /> My tasks
+                  </Link>
                   <MineSections ws={ws} />
                   <div className="flex items-center justify-between px-2 py-1 text-[11px] font-semibold uppercase tracking-wide text-muted">
                     Spaces

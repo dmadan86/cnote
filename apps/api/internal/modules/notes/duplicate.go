@@ -40,7 +40,7 @@ func noteDuplicate(c *command.Ctx, input json.RawMessage) (any, error) {
 	if ok, err := canEditParent(c, space, src.ParentID); err != nil {
 		return nil, err
 	} else if !ok {
-		return nil, errRestricted()
+		return nil, errRestrictedIn(c, space)
 	}
 	// A restricted source (its own restriction or an inherited one) is copied only by someone who could manage that restriction.
 	_, chain, err := chainDepth(c, &id)
@@ -54,7 +54,7 @@ func noteDuplicate(c *command.Ctx, input json.RawMessage) (any, error) {
 		if ok, err := canManage(c, space, a.Owner); err != nil {
 			return nil, err
 		} else if !ok {
-			return nil, errRestricted()
+			return nil, errRestrictedIn(c, space)
 		}
 	}
 	if d, _, err := chainDepth(c, src.ParentID); err != nil {

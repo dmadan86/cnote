@@ -60,8 +60,11 @@ var DigestExtras func(c *command.Ctx, userID string) ([]string, error)
 // EnqueueNotifyMail marks the notifications queued and puts the job in the outbox, in the caller's transaction, so a
 // rollback sends nothing and a retry cannot enqueue twice. The caller must hold the rows (FOR UPDATE).
 func EnqueueNotifyMail(ctx context.Context, tx pgx.Tx, ws, user, mode string, ids []string) error {
-	if len(ids) == 0 {
+	if len(ids) == 0 && mode != ModeDigest { // a digest with no notifications still carries the person's due tasks
 		return nil
+	}
+	if ids == nil {
+		ids = []string{}
 	}
 	if _, err := tx.Exec(ctx, `update core.notifications set emailed_at = now(), email_state = 'queued' where id = any($1::uuid[]) and user_id = $2::uuid`, ids, user); err != nil {
 		return err
@@ -85,7 +88,7 @@ type mailItem struct {
 // notifyMailJob rebuilds the mail from references and sends it, or sends nothing.
 func notifyMailJob(c *command.Ctx, payload json.RawMessage) error {
 	var ref notifyMailRef
-	if json.Unmarshal(payload, &ref) != nil || !isUUID(ref.UserID) || len(ref.Notifications) == 0 {
+	if json.Unmarshal(payload, &ref) != nil || !isUUID(ref.UserID) || (len(ref.Notifications) == 0 && ref.Mode != ModeDigest) { // a digest may hold only due tasks
 		return command.ErrInvalid("notify mail payload")
 	}
 	if ref.Sent != "" {
@@ -376,40 +379,62 @@ func directSweepWorkspace(ctx context.Context, w *Worker, ws string, now time.Ti
 // directSweepTx claims and queues one workspace's direct mail inside tx; the caller commits.
 func directSweepTx(ctx context.Context, tx pgx.Tx, ws string, now time.Time) error {
 	rows, err := tx.Query(ctx,
-		`select n.id::text, n.user_id::text,
-		        coalesce((select p.email_mode = 'smart' and not p.direct_off from core.notify_prefs p where p.user_id = n.user_id), true)
+		`select n.id::text, n.user_id::text, n.kind,
+		        coalesce((select case when p.email_mode = 'off' or (p.email_mode = 'smart' and p.direct_off) then 'suppress'
+		                              when p.email_mode = 'digest' then 'leave' else 'send' end
+		                  from core.notify_prefs p where p.user_id = n.user_id and p.workspace_id = $5::uuid), 'send')
 		 from core.notifications n
 		 where n.emailed_at is null and n.read_at is null and n.kind = any($1::text[])
 		   and n.created_at <= $2::timestamptz - make_interval(secs => $3) and n.created_at > $2::timestamptz - make_interval(secs => $4)
 		 order by n.user_id, n.created_at limit 500
-		 for update of n skip locked`, DirectKinds, now, directMinAge.Seconds(), directMaxAge.Seconds())
+		 for update of n skip locked`, DirectKinds, now, directMinAge.Seconds(), directMaxAge.Seconds(), ws)
 	if err != nil {
 		return err
 	}
-	byUser := map[string][]string{}
-	var order []string
-	var off []string
+	type row struct{ id, user, kind, what string }
+	var all []row
 	for rows.Next() {
-		var id, user string
-		var on bool
-		if err := rows.Scan(&id, &user, &on); err != nil {
+		var x row
+		if err := rows.Scan(&x.id, &x.user, &x.kind, &x.what); err != nil {
 			rows.Close()
 			return err
 		}
-		if !on {
-			off = append(off, id)
-			continue
-		}
-		if _, ok := byUser[user]; !ok {
-			order = append(order, user)
-		}
-		byUser[user] = append(byUser[user], id)
+		all = append(all, x)
 	}
 	rows.Close()
 	if rows.Err() != nil {
 		return rows.Err()
 	}
-	if len(off) > 0 { // a person who does not want direct mail: handled, never mailed
+	day := now.In(digestZone).Format("2006-01-02")
+	byUser := map[string][]string{}
+	var order, off []string
+	accessDone := map[string]bool{} // has this person had an access request mailed today (or in this batch)
+	for _, x := range all {
+		switch x.what {
+		case "suppress": // a person who does not want direct mail: handled, never mailed
+			off = append(off, x.id)
+			continue
+		case "leave": // digest mode: the digest sweep takes these
+			continue
+		}
+		if x.kind == "access_request" { // the first one each day goes out directly; later ones wait for the digest
+			done, ok := accessDone[x.user]
+			if !ok {
+				if done, err = AccessRequestMailedToday(ctx, tx, x.user, day); err != nil {
+					return err
+				}
+			}
+			accessDone[x.user] = true
+			if done {
+				continue
+			}
+		}
+		if _, ok := byUser[x.user]; !ok {
+			order = append(order, x.user)
+		}
+		byUser[x.user] = append(byUser[x.user], x.id)
+	}
+	if len(off) > 0 {
 		if _, err := tx.Exec(ctx, `update core.notifications set emailed_at = now(), email_state = 'suppressed' where id = any($1::uuid[])`, off); err != nil {
 			return err
 		}

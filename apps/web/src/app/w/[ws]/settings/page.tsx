@@ -1,5 +1,6 @@
 'use client'
 import {
+  Bell,
   Bot,
   Building2,
   Cpu,
@@ -35,6 +36,7 @@ import { CompanyProfile } from '@/components/business-type'
 import { CompanyTab } from '@/components/company/profile'
 import { HooksTab } from '@/components/hooks-settings'
 import { CustomerMessages } from '@/components/messages/customer-messages'
+import { NotificationSettings } from '@/components/notification-settings'
 import { Secret } from '@/components/secret'
 import { SignInSecurity } from '@/components/security/sign-in'
 import { useShell } from '@/components/shell'
@@ -72,6 +74,12 @@ const SECTIONS: { group: string; tabs: SettingsTab[] }[] = [
         icon: Users,
         label: 'Members',
         desc: 'Who is in this workspace and what they can do.',
+      },
+      {
+        key: 'Notifications',
+        icon: Bell,
+        label: 'Notifications',
+        desc: 'When C Note emails you, and what about.',
       },
       { key: 'Usage', icon: Gauge, label: 'Usage', desc: 'What this workspace used in the last 30 days.' },
       {
@@ -776,6 +784,7 @@ export default function Settings() {
           {tab === 'Confirmations' && <ConfirmationsTab ws={ws} />}
           {tab === 'Connected apps' && <AppsTab ws={ws} />}
           {tab === 'Webhooks' && <HooksTab ws={ws} />}
+          {tab === 'Notifications' && <NotificationSettings ws={ws} />}
           {tab === 'Usage' && <UsageTab ws={ws} />}
           {tab === 'Import' && (
             <Link

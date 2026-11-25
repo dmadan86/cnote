@@ -1,5 +1,6 @@
 'use client'
 import { Bell } from 'lucide-react'
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { EmptyState } from '@/components/ui'
@@ -30,6 +31,9 @@ const text = (n: Item) => {
     return n.note_title // the server wrote the sentence
   if (n.kind === 'comment') return `${who} commented on ${n.note_title || 'Untitled'}`
   if (n.kind === 'page_updated') return `${who} updated ${n.note_title || 'Untitled'}`
+  if (n.kind === 'shared') return `${who} shared ${n.note_title || 'Untitled'} with you`
+  if (n.kind === 'assigned') return `${who} assigned you a task in ${n.note_title || 'Untitled'}`
+  if (n.kind === 'access_request') return `${who} asked for access to ${n.note_title || 'Untitled'}`
   if (n.kind === 'chat_mention') return `${who} mentioned you in ${n.note_title}`
   return `${who} mentioned you in ${n.note_title || 'Untitled'}`
 }
@@ -110,6 +114,13 @@ export function NotificationBell({ ws }: { ws: string }) {
         <div className="absolute right-0 z-30 mt-1 w-80 rounded-md border border-line bg-canvas shadow-lg">
           <div className="flex items-center justify-between border-b border-line px-3 py-2">
             <span className="text-[13px] font-semibold">Notifications</span>
+            <Link
+              href={`/w/${ws}/settings?tab=Notifications`}
+              onClick={() => setOpen(false)}
+              className="text-[12px] text-muted hover:text-fg"
+            >
+              Email settings
+            </Link>
             <button
               type="button"
               disabled={count === 0}

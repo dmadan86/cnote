@@ -29,23 +29,40 @@ type Comment struct {
 	ParentID       *string     `json:"parent_id"`
 	ResolvedAt     *command.Ts `json:"resolved_at"`
 	ResolvedByName *string     `json:"resolved_by_name"`
+	EditedAt       *command.Ts `json:"edited_at"`
+	Deleted        bool        `json:"deleted"`
+	Reactions      []Reaction  `json:"reactions"`
 }
 
+// A deleted comment (a tombstone) shows no body, author or anchor.
 const commentCols = `c.id::text, c.note_id::text, c.author_id::text, c.author_name, c.body, c.created_at, c.anchor_text,
-	c.anchor_prefix, c.parent_id::text, c.resolved_at, (select name from core.users where id = c.resolved_by) as resolved_by_name`
+	c.anchor_prefix, c.parent_id::text, c.resolved_at, (select name from core.users where id = c.resolved_by) as resolved_by_name,
+	c.edited_at, c.deleted_at is not null`
 
 func scanComment(row pgx.Row) (Comment, error) {
 	var m Comment
 	var created time.Time
-	var resolved *time.Time
+	var resolved, edited *time.Time
 	err := row.Scan(&m.ID, &m.NoteID, &m.AuthorID, &m.AuthorName, &m.Body, &created, &m.AnchorText,
-		&m.AnchorPrefix, &m.ParentID, &resolved, &m.ResolvedByName)
-	m.CreatedAt, m.ResolvedAt = command.Ts(created), command.TsPtr(resolved)
+		&m.AnchorPrefix, &m.ParentID, &resolved, &m.ResolvedByName, &edited, &m.Deleted)
+	m.CreatedAt, m.ResolvedAt, m.EditedAt = command.Ts(created), command.TsPtr(resolved), command.TsPtr(edited)
+	m.Reactions = []Reaction{}
+	if m.Deleted {
+		m.Body, m.AuthorID, m.AuthorName, m.AnchorText, m.AnchorPrefix = "", nil, nil, nil, nil
+	}
 	return m, err
 }
 
 func commentByID(c *command.Ctx, id string) (Comment, error) {
-	return scanComment(c.Tx.QueryRow(c.Context, "select "+commentCols+" from core.comments c where c.id = $1::uuid", id))
+	m, err := scanComment(c.Tx.QueryRow(c.Context, "select "+commentCols+" from core.comments c where c.id = $1::uuid", id))
+	if err != nil {
+		return m, err
+	}
+	rs, err := reactionsFor(c, []string{id})
+	if rs[id] != nil {
+		m.Reactions = rs[id]
+	}
+	return m, err
 }
 
 func commentAdd(c *command.Ctx, input json.RawMessage) (any, error) {
@@ -96,7 +113,7 @@ func commentAdd(c *command.Ctx, input json.RawMessage) (any, error) {
 			return nil, command.ErrInvalid("a reply cannot have its own anchor")
 		}
 		var top *bool
-		err := c.Tx.QueryRow(c.Context, "select parent_id is null from core.comments where id = $1::uuid and note_id = $2::uuid", *parent, noteID).Scan(&top)
+		err := c.Tx.QueryRow(c.Context, "select parent_id is null from core.comments where id = $1::uuid and note_id = $2::uuid and deleted_at is null", *parent, noteID).Scan(&top)
 		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return nil, err
 		}
@@ -184,7 +201,10 @@ func commentList(c *command.Ctx, input json.RawMessage) (any, error) {
 	if _, err := access.AssertNoteAccess(c, noteID, false); err != nil {
 		return nil, err
 	}
-	rows, err := c.Tx.Query(c.Context, "select "+commentCols+" from core.comments c where c.note_id = $1::uuid order by c.created_at", noteID)
+	// A deleted comment stays only as the head of a thread that still has a live reply.
+	rows, err := c.Tx.Query(c.Context, "select "+commentCols+` from core.comments c where c.note_id = $1::uuid
+		and (c.deleted_at is null or (c.parent_id is null and exists(select 1 from core.comments r where r.parent_id = c.id and r.deleted_at is null)))
+		order by c.created_at`, noteID)
 	if err != nil {
 		return nil, err
 	}
@@ -197,5 +217,23 @@ func commentList(c *command.Ctx, input json.RawMessage) (any, error) {
 		}
 		out = append(out, m)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(out))
+	for _, m := range out {
+		if !m.Deleted {
+			ids = append(ids, m.ID)
+		}
+	}
+	rs, err := reactionsFor(c, ids) // after the page-access check above, so a reader of the page only (7.6)
+	if err != nil {
+		return nil, err
+	}
+	for i := range out {
+		if r := rs[out[i].ID]; r != nil {
+			out[i].Reactions = r
+		}
+	}
+	return out, nil
 }

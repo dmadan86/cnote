@@ -46,7 +46,7 @@ func noteDelete(c *command.Ctx, input json.RawMessage) (any, error) {
 	if ok, err := canEdit(c, space, ids, false); err != nil {
 		return nil, err
 	} else if !ok {
-		return nil, errRestricted()
+		return nil, errRestrictedIn(c, space)
 	}
 	for _, p := range ids { // every page is fenced, pending edits or not: the fence is what keeps a racing edit out
 		if err := foldNote(c, p, true); err != nil {

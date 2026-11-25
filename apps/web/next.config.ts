@@ -15,6 +15,14 @@ const config: NextConfig = {
       },
       // The form link is the credential: never leak it through a referrer.
       { source: '/tf/:path*', headers: [{ key: 'Referrer-Policy', value: 'no-referrer' }] },
+      // A public page link is a credential too, and the page is not for search engines.
+      {
+        source: '/pg/:path*',
+        headers: [
+          { key: 'Referrer-Policy', value: 'no-referrer' },
+          { key: 'X-Robots-Tag', value: 'noindex, nofollow' },
+        ],
+      },
     ]
   },
   // Same-origin API so the session cookie is first-party.
