@@ -14,6 +14,7 @@ import { WebsocketProvider } from 'y-websocket'
 import * as Y from 'yjs'
 import { cmd } from '@/lib/api'
 import { CLOSE_RELOAD, DOC_SCHEMA } from '@/lib/doc-schema'
+import { CLOSE_DELETED } from '@/lib/docs'
 import { blockExtensions, ImageUpload, setGatewayMinSchema } from './editor/blocks'
 import { AlignHeading, AlignParagraph, ColorText, HtmlTable, SafeImage } from './editor/formats'
 import { InlineComments, setThreads, type Thread } from './editor/inline-comments'
@@ -45,6 +46,7 @@ export function NoteEditor({
   comments,
   epoch,
   onStale,
+  onDeleted,
 }: {
   ws: string
   id: string
@@ -58,11 +60,15 @@ export function NoteEditor({
   epoch?: number
   /** The page was restored elsewhere: this document is obsolete (server closed it with 4409). */
   onStale?: () => void
+  /** The page was moved to the trash while open (close code 4411): final, never reconnect. */
+  onDeleted?: () => void
 }) {
   const [mode, setMode] = useState<Mode>('connecting')
   const doc = useRef<Y.Doc>(null)
   const onStaleRef = useRef(onStale)
   onStaleRef.current = onStale
+  const onDeletedRef = useRef(onDeleted)
+  onDeletedRef.current = onDeleted
   const provider = useRef<WebsocketProvider>(null)
 
   useEffect(() => {
@@ -79,6 +85,11 @@ export function NoteEditor({
       if (e?.code === STALE_EPOCH) {
         p.destroy()
         onStaleRef.current?.()
+      }
+      // 4412 (an edit was refused during a delete fence) is deliberately not handled: the provider reconnects and the resync resends it.
+      if (e?.code === CLOSE_DELETED) {
+        p.destroy()
+        onDeletedRef.current?.()
       }
       if (e?.code === CLOSE_RELOAD) {
         // The gateway needs a newer editor than this tab runs: stop rather than save over newer content.

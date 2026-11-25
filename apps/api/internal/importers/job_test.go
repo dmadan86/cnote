@@ -452,3 +452,22 @@ func TestBadRecordIsSkipped(t *testing.T) {
 		t.Error(n)
 	}
 }
+
+// An import link that would make a cycle goes through the same check as note.move: it is skipped with a warning.
+func TestImportLinkThatWouldCycleIsSkipped(t *testing.T) {
+	ten := newEnv(t).newTenant()
+	g := ten.goRun()
+	id := g.start("notion", `{"pages":[{"id":"a","title":"A","parent_id":"b","body":"<p>a</p>"},{"id":"b","title":"B","parent_id":"a","body":"<p>b</p>"},{"id":"c","title":"C","parent_id":"b","body":"<p>c</p>"}]}`, nil, nil)
+	g.all(id)
+	r := g.status(id)["report"].(map[string]any)
+	if !warnHas(r, "skipped: a page cannot move under itself") {
+		t.Fatalf("%v", r)
+	}
+	// Exactly one of the two cycle links survives, so the tree has a root; C hangs under B.
+	if n := q1[int64](t, g.tx, "select count(*) from core.notes where source_system = 'notion' and parent_id is null"); n != 1 {
+		t.Errorf("roots %d", n)
+	}
+	if n := q1[int64](t, g.tx, "select count(*) from core.notes c join core.notes b on b.id = c.parent_id where c.source_id = 'c' and b.source_id = 'b'"); n != 1 {
+		t.Error("c under b")
+	}
+}

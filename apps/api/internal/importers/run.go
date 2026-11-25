@@ -494,8 +494,20 @@ func link(c *command.Ctx, j *job, rec *Rec, report *Report) error {
 		switch {
 		case p != nil && *p != *me:
 			if rec.Item == nil {
-				if _, err := c.Tx.Exec(c.Context, "update core.notes set parent_id = $1::uuid where id = $2::uuid and parent_id is distinct from $1::uuid", *p, *me); err != nil {
+				// Same lock, cycle and depth check as note.move; a link that would break the tree is skipped, not fatal.
+				var already bool
+				if err := c.Tx.QueryRow(c.Context, "select coalesce(parent_id = $1::uuid, false) from core.notes where id = $2::uuid", *p, *me).Scan(&already); err != nil && !errors.Is(err, pgx.ErrNoRows) {
 					return command.DB(err)
+				}
+				if !already {
+					if err := notes.MoveUnder(c, *me, *p); err != nil {
+						var ce *command.Error
+						if !errors.As(err, &ce) || ce.Code != command.Invalid {
+							return err
+						}
+						report.warn(fmt.Sprintf("parent %s skipped: %s", *rec.Parent, ce.Message))
+						break
+					}
 				}
 			}
 			if err := relate(c, *p, *me, "child", report); err != nil {

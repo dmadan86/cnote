@@ -419,3 +419,17 @@ dialog::backdrop {
   font-size: 13px;
   box-shadow: 0 8px 24px rgb(0 0 0 / 0.2);
 }
+
+/* Docs A2 export (docs-parity 7.9): the resolved page is shown in #print-root only while printing. */
+#print-root {
+  display: none;
+}
+@media print {
+  /* Only while an export is printing; every other page (public invoices, payslips) prints as before. */
+  body:has(> #print-root) > *:not(#print-root) {
+    display: none;
+  }
+  #print-root {
+    display: block;
+  }
+}

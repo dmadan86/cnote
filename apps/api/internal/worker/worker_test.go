@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -624,5 +626,58 @@ func TestSearchPlainTriggerAndBackfill(t *testing.T) {
 	}
 	if filled {
 		t.Fatal("rows still unfilled after the sweep")
+	}
+}
+
+// Migration 1334 (docs A2): pages deleted before it get one deletion_id each from the sweep, in small batches, and keep
+// no restore evidence. New deletions and live pages are left alone.
+func TestA2DeletionBackfill(t *testing.T) {
+	e := newEnv(t)
+	// the pages live in the open transaction of newGoSide, which a gateway cannot see: a stand-in gateway accepts the fence
+	gw := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(`{"ok":true}`)) }))
+	defer gw.Close()
+	t.Setenv("COLLAB_URL", gw.URL)
+	t.Setenv("COLLAB_INTERNAL_SECRET", "x")
+	w := e.signup("Bea")
+	e.settle(w.ws)
+	g := e.newGoSide(w)
+	sp := str(g.cmd("space.create", map[string]any{"key": "BKF", "name": "Bkf", "visibility": "open"}), "id")
+	var old []string
+	for i := 0; i < 5; i++ {
+		old = append(old, str(g.cmd("note.create", map[string]any{"space_id": sp, "title": fmt.Sprintf("Old %d", i)}), "id"))
+	}
+	live := str(g.cmd("note.create", map[string]any{"space_id": sp, "title": "Live"}), "id")
+	fresh := str(g.cmd("note.create", map[string]any{"space_id": sp, "title": "Fresh"}), "id")
+	g.cmd("note.delete", map[string]any{"id": fresh})                                                                                       // a deletion made by A2 code already has its columns
+	if _, err := g.c.Tx.Exec(g.c.Context, "update core.notes set deleted_at = now() where id = any($1::text[]::uuid[])", old); err != nil { // the pre-A2 delete
+		t.Fatal(err)
+	}
+	if err := g.c.Tx.Commit(g.c.Context); err != nil {
+		t.Fatal(err)
+	}
+	n, err := A2DeletionBackfillRun(context.Background(), e.w, 2, 100) // batches of 2
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n < 5 {
+		t.Fatalf("backfilled %d", n)
+	}
+	tx, err := db.BeginTenant(context.Background(), e.pool, w.ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(context.Background()) //nolint:errcheck
+	var distinct, nulls, liveSet, freshKept int
+	if err := tx.QueryRow(context.Background(),
+		`select count(distinct deletion_id), count(*) filter (where deleted_restricted_by is null),
+		   (select count(*) from core.notes where id = $2::uuid and deletion_id is not null),
+		   (select count(*) from core.notes where id = $3::uuid and deleted_restricted_by is not null) from core.notes where id = any($1::text[]::uuid[])`, old, live, fresh).Scan(&distinct, &nulls, &liveSet, &freshKept); err != nil {
+		t.Fatal(err)
+	}
+	if distinct != 5 || nulls != 5 || liveSet != 0 || freshKept != 1 {
+		t.Fatalf("distinct %d nulls %d live %d fresh %d", distinct, nulls, liveSet, freshKept)
+	}
+	if n2, err := A2DeletionBackfillRun(context.Background(), e.w, 2, 100); err != nil || n2 != 0 {
+		t.Fatalf("second run: %d %v", n2, err)
 	}
 }

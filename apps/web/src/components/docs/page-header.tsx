@@ -305,4 +305,5 @@ export function MineSections({ ws }: { ws: string }) {
   )
 }
 
+export { ExportMenu } from './export-menu'
 export type { NoteChrome }

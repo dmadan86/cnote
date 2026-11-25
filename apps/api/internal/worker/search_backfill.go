@@ -47,7 +47,7 @@ func searchPlainBatch(ctx context.Context, w *Worker, ws string, batch int) (int
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	tag, err := tx.Exec(ctx,
 		`update core.notes set search_plain = core.note_search_vector(title, content_md)
-		 where id in (select id from core.notes where search_plain is null order by id limit $1 for update skip locked)`, batch)
+		 where id in (select id from core.notes where search_plain is null and deleted_at is null order by id limit $1 for update skip locked)`, batch)
 	if err != nil {
 		return 0, err
 	}

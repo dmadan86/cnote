@@ -5,12 +5,14 @@ import {
   ClipboardCheck,
   FileText,
   Lock,
+  MoreHorizontal,
   PanelLeft,
   Plus,
   Search,
   Settings,
   Sparkles,
   Store,
+  Trash2,
   UsersRound,
 } from 'lucide-react'
 import Link from 'next/link'
@@ -21,7 +23,10 @@ import { MODULES, moduleOn } from '@/lib/modules'
 import { prependWidget } from '@/lib/screen-config'
 import { AskPanel } from './ai/ask-panel'
 import { ChatNavLink } from './chat/nav'
+import { TreeActionsProvider, useTreeActions } from './docs/page-actions'
 import { MineSections } from './docs/page-header'
+import { DropMarker, spaceRowId, TreeDnd, useDropZone, useRowDnd } from './docs/tree-dnd'
+import { kidKey } from './docs/tree-model'
 import { NotificationBell } from './notifications'
 import { Palette } from './palette'
 import { PersonHoverLayer } from './person'
@@ -160,59 +165,151 @@ function FoldButton({ id, label, open, dflt }: { id: string; label: string; open
 
 function Tree({
   spaceId,
-  notes,
   parent,
   depth,
+  label,
 }: {
   spaceId: string
-  notes: Note[]
   parent: string | null
   depth: number
+  /** Set on the top list of a tree: it becomes the tree widget; nested lists are groups. */
+  label?: string
 }) {
+  const { kids } = useTreeActions()
+  const list = kids.get(kidKey(spaceId, parent)) ?? []
+  return (
+    <ul role={label ? 'tree' : 'group'} aria-label={label}>
+      {list.map((n, i) => (
+        <TreeRow key={n.id} n={n} depth={depth} pos={i + 1} size={list.length} />
+      ))}
+    </ul>
+  )
+}
+
+function TreeRow({ n, depth, pos, size }: { n: Note; depth: number; pos: number; size: number }) {
   const path = usePathname()
   const { ws } = useShell()
   const fold = useContext(FoldCtx)
-  const kids = notes.filter((n) => n.space_id === spaceId && n.parent_id === parent)
+  const a = useTreeActions()
+  const { setNodeRef, listeners, isDragging, zone } = useRowDnd(n.id)
+  const hasKids = (a.kids.get(n.id)?.length ?? 0) > 0
+  const open = hasKids && fold.isOpen(n.id, false)
+  const current = path.endsWith(`/n/${n.id}`)
+  const menuAt = (e: React.MouseEvent | React.KeyboardEvent, el: HTMLElement) => {
+    const r = el.getBoundingClientRect()
+    const m = e as React.MouseEvent
+    const kb = !m.clientX && !m.clientY
+    a.openMenu(n, { x: kb ? r.left + 24 : m.clientX, y: kb ? r.bottom : m.clientY }, el)
+  }
+  // ARIA tree keys on the row link; Alt+Up and Alt+Down reorder (docs-parity 7.9).
+  const keys = (e: React.KeyboardEvent<HTMLAnchorElement>) => {
+    const links = [
+      ...(e.currentTarget.closest('aside')?.querySelectorAll<HTMLElement>('a[data-treelink]') ?? []),
+    ]
+    const i = links.indexOf(e.currentTarget)
+    const go = (l?: HTMLElement | null) => l?.focus()
+    if (e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) a.step(n, e.key === 'ArrowUp' ? -1 : 1)
+    else if (e.altKey || e.ctrlKey || e.metaKey) return
+    else if (e.key === 'ArrowDown') go(links[i + 1])
+    else if (e.key === 'ArrowUp') go(links[i - 1])
+    else if (e.key === 'Home') go(links[0])
+    else if (e.key === 'End') go(links[links.length - 1])
+    else if (e.key === 'ArrowRight' && hasKids) {
+      if (open) go(links[i + 1])
+      else fold.toggle(n.id, false)
+    } else if (e.key === 'ArrowLeft') {
+      if (open) fold.toggle(n.id, false)
+      else go(e.currentTarget.closest('ul')?.closest('li')?.querySelector<HTMLElement>('a[data-treelink]'))
+    } else if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) menuAt(e, e.currentTarget)
+    else return
+    e.preventDefault()
+  }
   return (
-    <ul>
-      {kids.map((n) => {
-        const hasKids = notes.some((c) => c.parent_id === n.id)
-        const open = hasKids && fold.isOpen(n.id, false)
-        const current = path.endsWith(`/n/${n.id}`)
-        return (
-          <li key={n.id}>
-            <div
-              style={{ paddingLeft: depth * 12 - 8 }}
-              className={`flex items-center rounded hover:bg-hover ${current ? 'bg-hover font-medium' : ''}`}
-            >
-              {hasKids ? (
-                <FoldButton id={n.id} label={n.title || 'Untitled'} open={open} dflt={false} />
-              ) : (
-                <span className="w-4 shrink-0" />
-              )}
-              <Link
-                href={`/w/${ws}/n/${n.id}`}
-                aria-current={current ? 'page' : undefined}
-                className="flex min-w-0 flex-1 items-center gap-1.5 py-1 pr-2 pl-0.5 text-[13px]"
-              >
-                {(n as { icon?: string | null }).icon ? (
-                  <span aria-hidden="true" className="w-[13px] shrink-0 text-center text-[12px] leading-none">
-                    {(n as { icon?: string | null }).icon}
-                  </span>
-                ) : (
-                  <FileText size={13} className="shrink-0 text-muted" />
-                )}
-                <span className="truncate">{n.title || 'Untitled'}</span>
-                {n.restriction !== 'none' && (
-                  <Lock size={11} className="shrink-0 text-muted" aria-label="Restricted page" />
-                )}
-              </Link>
-            </div>
-            {open && <Tree spaceId={spaceId} notes={notes} parent={n.id} depth={depth + 1} />}
-          </li>
-        )
-      })}
-    </ul>
+    // biome-ignore lint/a11y/useFocusableInteractive: roving focus lives on the row link
+    <li
+      role="treeitem"
+      aria-level={depth}
+      aria-setsize={size}
+      aria-posinset={pos}
+      aria-expanded={hasKids ? open : undefined}
+      aria-selected={current}
+      aria-label={n.title || 'Untitled'}
+    >
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: pointer drag and context menu; keys live on the link */}
+      <div
+        ref={setNodeRef}
+        {...listeners}
+        data-row-id={n.id}
+        data-row-space={n.space_id}
+        onContextMenu={(e) => {
+          e.preventDefault()
+          menuAt(e, e.currentTarget.querySelector<HTMLElement>('a') ?? e.currentTarget)
+        }}
+        style={{ paddingLeft: depth * 12 - 8 }}
+        className={`group relative flex items-center rounded hover:bg-hover ${current ? 'bg-hover font-medium' : ''} ${isDragging ? 'opacity-40' : ''}`}
+      >
+        {hasKids ? (
+          <FoldButton id={n.id} label={n.title || 'Untitled'} open={open} dflt={false} />
+        ) : (
+          <span className="w-4 shrink-0" />
+        )}
+        <Link
+          href={`/w/${ws}/n/${n.id}`}
+          draggable={false}
+          data-treelink={n.id}
+          tabIndex={a.tabStop === n.id ? 0 : -1}
+          onFocus={() => a.setTabStop(n.id)}
+          onKeyDown={keys}
+          aria-current={current ? 'page' : undefined}
+          className="flex min-w-0 flex-1 items-center gap-1.5 py-1 pr-2 pl-0.5 text-[13px]"
+        >
+          {n.icon ? (
+            <span aria-hidden="true" className="w-[13px] shrink-0 text-center text-[12px] leading-none">
+              {n.icon}
+            </span>
+          ) : (
+            <FileText size={13} className="shrink-0 text-muted" />
+          )}
+          <span className="truncate">{n.title || 'Untitled'}</span>
+          {n.restriction !== 'none' && (
+            <Lock size={11} className="shrink-0 text-muted" aria-label="Restricted page" />
+          )}
+        </Link>
+        <button
+          type="button"
+          aria-label={`Actions for ${n.title || 'Untitled'}`}
+          aria-haspopup="menu"
+          tabIndex={-1}
+          onClick={(e) => menuAt(e, e.currentTarget)}
+          className="mr-1 shrink-0 rounded p-0.5 text-muted opacity-0 hover:bg-line focus:opacity-100 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100"
+        >
+          <MoreHorizontal size={14} />
+        </button>
+        <DropMarker zone={zone} />
+      </div>
+      {open && <Tree spaceId={n.space_id} parent={n.id} depth={depth + 1} />}
+    </li>
+  )
+}
+
+function SpaceHead({ s, base, open }: { s: Space; base: string; open: boolean }) {
+  const zone = useDropZone(spaceRowId(s.id))
+  return (
+    <div
+      data-row-id={spaceRowId(s.id)}
+      data-row-space={s.id}
+      className="relative flex items-center rounded hover:bg-hover"
+    >
+      <FoldButton id={s.id} label={s.name} open={open} dflt />
+      <Link
+        href={`${base}/s/${s.id}`}
+        className="flex min-w-0 flex-1 items-center gap-1.5 py-1 pr-2 pl-0.5 text-[13px] font-medium"
+      >
+        <span className="rounded bg-hover px-1 text-[10px] font-bold text-muted">{s.key}</span>
+        <span className="truncate">{s.name}</span>
+      </Link>
+      <DropMarker zone={zone} />
+    </div>
   )
 }
 
@@ -418,256 +515,264 @@ export function ShellView({
   return (
     <Ctx.Provider value={shell}>
       <FoldCtx.Provider value={fold}>
-        <div className="flex h-screen">
-          <nav
-            aria-label="Modules"
-            className="flex w-12 shrink-0 flex-col items-center gap-1 border-r border-line bg-side py-2"
-          >
-            <button
-              type="button"
-              aria-label="Spaces"
-              aria-expanded={spacesOpen}
-              aria-controls="spaces-panel"
-              onClick={() => setSpacesOpen((o) => !o)}
-              className="grid h-11 w-11 place-items-center rounded-md text-muted hover:bg-hover hover:text-fg md:hidden"
-            >
-              <PanelLeft size={18} aria-hidden />
-            </button>
-            {MODULES.filter((m) => moduleOn(modules, m.key)).map((m) => (
-              <Link
-                key={m.key}
-                href={hrefFor(m.key)}
-                aria-label={m.label}
-                title={m.label}
-                aria-current={active(m.key) ? 'page' : undefined}
-                className="rounded-md p-2 text-muted hover:bg-hover aria-[current=page]:bg-hover aria-[current=page]:text-fg"
+        <TreeActionsProvider>
+          <TreeDnd onOpen={(id) => !fold.isOpen(id, false) && fold.toggle(id, false)}>
+            <div className="flex h-screen">
+              <nav
+                aria-label="Modules"
+                className="flex w-12 shrink-0 flex-col items-center gap-1 border-r border-line bg-side py-2"
               >
-                <m.icon size={18} />
-              </Link>
-            ))}
-            <Link
-              href={`${base}/marketplace`}
-              aria-label="Marketplace"
-              title="Marketplace"
-              aria-current={active('marketplace') ? 'page' : undefined}
-              className="rounded-md p-2 text-muted hover:bg-hover aria-[current=page]:bg-hover aria-[current=page]:text-fg"
-            >
-              <Store size={18} />
-            </Link>
-            <div className="mt-auto flex flex-col gap-1">
-              <ChatNavLink ws={ws} active={active('chat')} />
-            </div>
-            <Link
-              href={`${base}/people`}
-              aria-label="People"
-              title="People"
-              aria-current={active('people') ? 'page' : undefined}
-              className="rounded-md p-2 text-muted hover:bg-hover aria-[current=page]:bg-hover aria-[current=page]:text-fg"
-            >
-              <UsersRound size={18} />
-            </Link>
-            <Link
-              href={`${base}/approvals`}
-              aria-label="Approvals"
-              title="Approvals"
-              aria-current={active('approvals') ? 'page' : undefined}
-              className="rounded-md p-2 text-muted hover:bg-hover aria-[current=page]:bg-hover aria-[current=page]:text-fg"
-            >
-              <ClipboardCheck size={18} />
-            </Link>
-            <Link
-              href={`${base}/settings`}
-              aria-label="Settings"
-              title="Settings"
-              aria-current={active('settings') ? 'page' : undefined}
-              className="rounded-md p-2 text-muted hover:bg-hover aria-[current=page]:bg-hover aria-[current=page]:text-fg"
-            >
-              <Settings size={18} />
-            </Link>
-          </nav>
-
-          <aside
-            id="spaces-panel"
-            aria-label="Spaces"
-            className={`${spacesOpen ? 'fixed inset-y-0 left-12 z-40 flex shadow-lg' : 'hidden'} w-60 shrink-0 flex-col border-r border-line bg-side md:static md:flex md:shadow-none`}
-          >
-            <div className="p-2">
-              <Menu
-                label="Switch workspace"
-                trigger={
-                  <>
-                    <span className="flex h-5 w-5 items-center justify-center rounded bg-accent text-[11px] font-bold text-accent-fg">
-                      {current?.name[0]?.toUpperCase()}
-                    </span>
-                    <span className="max-w-32 truncate text-[13px] font-semibold">{current?.name}</span>
-                    <ChevronDown size={14} className="text-muted" />
-                  </>
-                }
-              >
-                {(close) => (
-                  <>
-                    {me.workspaces.map((w) => (
-                      <Link
-                        key={w.id}
-                        href={`/w/${w.id}`}
-                        onClick={close}
-                        role="menuitem"
-                        className={menuItem}
-                      >
-                        {w.name}
-                      </Link>
-                    ))}
-                    <button
-                      type="button"
-                      role="menuitem"
-                      className={menuItem}
-                      onClick={async () => {
-                        const name = window.prompt('Workspace name')
-                        close()
-                        if (name?.trim()) router.push(`/w/${(await auth.createWorkspace(name.trim())).id}`)
-                      }}
-                    >
-                      <Plus size={14} /> New workspace
-                    </button>
-                  </>
-                )}
-              </Menu>
-            </div>
-            <div className="px-2 pb-2">
-              <button type="button" onClick={() => newPage()} className={`${btnPrimary} w-full`}>
-                <Plus size={14} /> New page
-              </button>
-            </div>
-            <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
-              <MineSections ws={ws} />
-              <div className="flex items-center justify-between px-2 py-1 text-[11px] font-semibold uppercase tracking-wide text-muted">
-                Spaces
                 <button
                   type="button"
-                  aria-label="New space"
-                  onClick={() => setSpaceDialog(true)}
-                  className="rounded p-0.5 hover:bg-hover"
+                  aria-label="Spaces"
+                  aria-expanded={spacesOpen}
+                  aria-controls="spaces-panel"
+                  onClick={() => setSpacesOpen((o) => !o)}
+                  className="grid h-11 w-11 place-items-center rounded-md text-muted hover:bg-hover hover:text-fg md:hidden"
                 >
-                  <Plus size={13} />
+                  <PanelLeft size={18} aria-hidden />
                 </button>
-              </div>
-              {spaces.length === 0 && <p className="px-2 text-[13px] text-muted">No spaces yet.</p>}
-              {shared.length > 0 && (
-                <div className="mb-1" data-testid="shared-with-me">
-                  <div className="px-2 py-1 text-[11px] font-semibold uppercase tracking-wide text-muted">
-                    Shared with me
-                  </div>
-                  <ul>
-                    {shared.map((n) => (
-                      <li key={n.id}>
-                        <Link
-                          href={`${base}/n/${n.id}`}
-                          className="flex items-center gap-1.5 rounded py-1 pr-2 pl-4 text-[13px] hover:bg-hover"
-                        >
-                          <FileText size={13} className="shrink-0 text-muted" />
-                          <span className="truncate">{n.title || 'Untitled'}</span>
-                        </Link>
-                        <Tree spaceId={n.space_id} notes={notes} parent={n.id} depth={2} />
-                      </li>
-                    ))}
-                  </ul>
+                {MODULES.filter((m) => moduleOn(modules, m.key)).map((m) => (
+                  <Link
+                    key={m.key}
+                    href={hrefFor(m.key)}
+                    aria-label={m.label}
+                    title={m.label}
+                    aria-current={active(m.key) ? 'page' : undefined}
+                    className="rounded-md p-2 text-muted hover:bg-hover aria-[current=page]:bg-hover aria-[current=page]:text-fg"
+                  >
+                    <m.icon size={18} />
+                  </Link>
+                ))}
+                <Link
+                  href={`${base}/marketplace`}
+                  aria-label="Marketplace"
+                  title="Marketplace"
+                  aria-current={active('marketplace') ? 'page' : undefined}
+                  className="rounded-md p-2 text-muted hover:bg-hover aria-[current=page]:bg-hover aria-[current=page]:text-fg"
+                >
+                  <Store size={18} />
+                </Link>
+                <div className="mt-auto flex flex-col gap-1">
+                  <ChatNavLink ws={ws} active={active('chat')} />
                 </div>
-              )}
-              {spaces.map((s) => {
-                const open = fold.isOpen(s.id, true)
-                return (
-                  <div key={s.id} className="mb-1">
-                    <div className="flex items-center rounded hover:bg-hover">
-                      <FoldButton id={s.id} label={s.name} open={open} dflt />
-                      <Link
-                        href={`${base}/s/${s.id}`}
-                        className="flex min-w-0 flex-1 items-center gap-1.5 py-1 pr-2 pl-0.5 text-[13px] font-medium"
-                      >
-                        <span className="rounded bg-hover px-1 text-[10px] font-bold text-muted">
-                          {s.key}
-                        </span>
-                        <span className="truncate">{s.name}</span>
-                      </Link>
-                    </div>
-                    {open && <Tree spaceId={s.id} notes={notes} parent={null} depth={1} />}
-                  </div>
-                )
-              })}
-            </div>
-          </aside>
+                <Link
+                  href={`${base}/people`}
+                  aria-label="People"
+                  title="People"
+                  aria-current={active('people') ? 'page' : undefined}
+                  className="rounded-md p-2 text-muted hover:bg-hover aria-[current=page]:bg-hover aria-[current=page]:text-fg"
+                >
+                  <UsersRound size={18} />
+                </Link>
+                <Link
+                  href={`${base}/approvals`}
+                  aria-label="Approvals"
+                  title="Approvals"
+                  aria-current={active('approvals') ? 'page' : undefined}
+                  className="rounded-md p-2 text-muted hover:bg-hover aria-[current=page]:bg-hover aria-[current=page]:text-fg"
+                >
+                  <ClipboardCheck size={18} />
+                </Link>
+                <Link
+                  href={`${base}/settings`}
+                  aria-label="Settings"
+                  title="Settings"
+                  aria-current={active('settings') ? 'page' : undefined}
+                  className="rounded-md p-2 text-muted hover:bg-hover aria-[current=page]:bg-hover aria-[current=page]:text-fg"
+                >
+                  <Settings size={18} />
+                </Link>
+              </nav>
 
-          <div className="flex min-w-0 flex-1 flex-col">
-            <header className="flex h-11 shrink-0 items-center gap-3 border-b border-line px-4">
-              <div className="min-w-0 flex-1">
-                <Breadcrumb s={shell} />
-              </div>
-              <button
-                type="button"
-                onClick={() => setPalette(true)}
-                className="flex w-64 items-center gap-2 rounded-md border border-line px-2.5 py-1 text-[13px] text-muted hover:bg-hover"
+              <aside
+                id="spaces-panel"
+                aria-label="Spaces"
+                className={`${spacesOpen ? 'fixed inset-y-0 left-12 z-40 flex shadow-lg' : 'hidden'} w-60 shrink-0 flex-col border-r border-line bg-side md:static md:flex md:shadow-none`}
               >
-                <Search size={14} /> Search or jump to...
-                <kbd className="ml-auto rounded border border-line px-1 text-[11px]">⌘K</kbd>
-              </button>
-              <button
-                type="button"
-                onClick={() => setAsk((a) => !a)}
-                aria-label="Ask your business"
-                aria-keyshortcuts="Meta+J Control+J"
-                className="flex items-center gap-1.5 rounded-md border border-line px-2.5 py-1 text-[13px] hover:bg-hover"
-              >
-                <Sparkles size={14} /> Ask
-              </button>
-              <NotificationBell ws={ws} />
-              <Menu label="User menu" align="right" trigger={<Avatar name={me.user.name} />}>
-                {(close) => (
-                  <>
-                    <div className="px-2 py-1.5 text-[12px] text-muted">
-                      {me.user.name}
-                      <br />
-                      {me.user.email}
-                    </div>
-                    {isAdmin && homeWidgets && (
-                      <button
-                        type="button"
-                        role="menuitem"
-                        className={menuItem}
-                        onClick={async () => {
-                          close()
-                          // best effort: Home still opens if the layout cannot be saved
-                          await prependWidget(ws, 'home', { id: 'setup', type: 'setup', size: 'l' }).catch(
-                            () => {},
-                          )
-                          router.push(base)
-                        }}
-                      >
-                        Setup guide
-                      </button>
+                <div className="p-2">
+                  <Menu
+                    label="Switch workspace"
+                    trigger={
+                      <>
+                        <span className="flex h-5 w-5 items-center justify-center rounded bg-accent text-[11px] font-bold text-accent-fg">
+                          {current?.name[0]?.toUpperCase()}
+                        </span>
+                        <span className="max-w-32 truncate text-[13px] font-semibold">{current?.name}</span>
+                        <ChevronDown size={14} className="text-muted" />
+                      </>
+                    }
+                  >
+                    {(close) => (
+                      <>
+                        {me.workspaces.map((w) => (
+                          <Link
+                            key={w.id}
+                            href={`/w/${w.id}`}
+                            onClick={close}
+                            role="menuitem"
+                            className={menuItem}
+                          >
+                            {w.name}
+                          </Link>
+                        ))}
+                        <button
+                          type="button"
+                          role="menuitem"
+                          className={menuItem}
+                          onClick={async () => {
+                            const name = window.prompt('Workspace name')
+                            close()
+                            if (name?.trim())
+                              router.push(`/w/${(await auth.createWorkspace(name.trim())).id}`)
+                          }}
+                        >
+                          <Plus size={14} /> New workspace
+                        </button>
+                      </>
                     )}
-                    <Link href={`${base}/settings`} onClick={close} role="menuitem" className={menuItem}>
-                      Settings
-                    </Link>
-                    <Link href="/account/security" onClick={close} role="menuitem" className={menuItem}>
-                      Account security
-                    </Link>
+                  </Menu>
+                </div>
+                <div className="px-2 pb-2">
+                  <button type="button" onClick={() => newPage()} className={`${btnPrimary} w-full`}>
+                    <Plus size={14} /> New page
+                  </button>
+                </div>
+                <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
+                  <MineSections ws={ws} />
+                  <div className="flex items-center justify-between px-2 py-1 text-[11px] font-semibold uppercase tracking-wide text-muted">
+                    Spaces
                     <button
                       type="button"
-                      role="menuitem"
-                      className={menuItem}
-                      onClick={async () => {
-                        await auth.logout()
-                        router.push('/login')
-                      }}
+                      aria-label="New space"
+                      onClick={() => setSpaceDialog(true)}
+                      className="rounded p-0.5 hover:bg-hover"
                     >
-                      Log out
+                      <Plus size={13} />
                     </button>
-                  </>
-                )}
-              </Menu>
-            </header>
-            <main className="min-h-0 flex-1 overflow-y-auto">{children}</main>
-          </div>
-        </div>
+                  </div>
+                  {spaces.length === 0 && <p className="px-2 text-[13px] text-muted">No spaces yet.</p>}
+                  {shared.length > 0 && (
+                    <div className="mb-1" data-testid="shared-with-me">
+                      <div className="px-2 py-1 text-[11px] font-semibold uppercase tracking-wide text-muted">
+                        Shared with me
+                      </div>
+                      <ul>
+                        {shared.map((n) => (
+                          <li key={n.id}>
+                            <Link
+                              href={`${base}/n/${n.id}`}
+                              className="flex items-center gap-1.5 rounded py-1 pr-2 pl-4 text-[13px] hover:bg-hover"
+                            >
+                              <FileText size={13} className="shrink-0 text-muted" />
+                              <span className="truncate">{n.title || 'Untitled'}</span>
+                            </Link>
+                            <Tree
+                              spaceId={n.space_id}
+                              parent={n.id}
+                              depth={2}
+                              label={`${n.title || 'Untitled'} sub-pages`}
+                            />
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  {spaces.map((s) => {
+                    const open = fold.isOpen(s.id, true)
+                    return (
+                      <div key={s.id} className="mb-1">
+                        <SpaceHead s={s} base={base} open={open} />
+                        {open && <Tree spaceId={s.id} parent={null} depth={1} label={`${s.name} pages`} />}
+                      </div>
+                    )
+                  })}
+                  <Link
+                    href={`${base}/trash`}
+                    aria-current={path === `${base}/trash` ? 'page' : undefined}
+                    className="mt-1 flex items-center gap-1.5 rounded px-2 py-1 text-[13px] text-muted hover:bg-hover aria-[current=page]:bg-hover aria-[current=page]:text-fg"
+                  >
+                    <Trash2 size={13} /> Trash
+                  </Link>
+                </div>
+              </aside>
+
+              <div className="flex min-w-0 flex-1 flex-col">
+                <header className="flex h-11 shrink-0 items-center gap-3 border-b border-line px-4">
+                  <div className="min-w-0 flex-1">
+                    <Breadcrumb s={shell} />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setPalette(true)}
+                    className="flex w-64 items-center gap-2 rounded-md border border-line px-2.5 py-1 text-[13px] text-muted hover:bg-hover"
+                  >
+                    <Search size={14} /> Search or jump to...
+                    <kbd className="ml-auto rounded border border-line px-1 text-[11px]">⌘K</kbd>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAsk((a) => !a)}
+                    aria-label="Ask your business"
+                    aria-keyshortcuts="Meta+J Control+J"
+                    className="flex items-center gap-1.5 rounded-md border border-line px-2.5 py-1 text-[13px] hover:bg-hover"
+                  >
+                    <Sparkles size={14} /> Ask
+                  </button>
+                  <NotificationBell ws={ws} />
+                  <Menu label="User menu" align="right" trigger={<Avatar name={me.user.name} />}>
+                    {(close) => (
+                      <>
+                        <div className="px-2 py-1.5 text-[12px] text-muted">
+                          {me.user.name}
+                          <br />
+                          {me.user.email}
+                        </div>
+                        {isAdmin && homeWidgets && (
+                          <button
+                            type="button"
+                            role="menuitem"
+                            className={menuItem}
+                            onClick={async () => {
+                              close()
+                              // best effort: Home still opens if the layout cannot be saved
+                              await prependWidget(ws, 'home', {
+                                id: 'setup',
+                                type: 'setup',
+                                size: 'l',
+                              }).catch(() => {})
+                              router.push(base)
+                            }}
+                          >
+                            Setup guide
+                          </button>
+                        )}
+                        <Link href={`${base}/settings`} onClick={close} role="menuitem" className={menuItem}>
+                          Settings
+                        </Link>
+                        <Link href="/account/security" onClick={close} role="menuitem" className={menuItem}>
+                          Account security
+                        </Link>
+                        <button
+                          type="button"
+                          role="menuitem"
+                          className={menuItem}
+                          onClick={async () => {
+                            await auth.logout()
+                            router.push('/login')
+                          }}
+                        >
+                          Log out
+                        </button>
+                      </>
+                    )}
+                  </Menu>
+                </header>
+                <main className="min-h-0 flex-1 overflow-y-auto">{children}</main>
+              </div>
+            </div>
+          </TreeDnd>
+        </TreeActionsProvider>
         <SpaceDialog open={spaceDialog} onClose={() => setSpaceDialog(false)} />
         <AskPanel open={ask} onClose={() => setAsk(false)} seed={askSeed} />
         <Palette open={palette} onClose={() => setPalette(false)} />

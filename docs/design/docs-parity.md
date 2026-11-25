@@ -503,3 +503,202 @@ Package notes.
 **Release order.** Gateway (min 0), API, web (all four packages), then `COLLAB_MIN_SCHEMA=2` the same day (7.3). Mobile sends `schema: 2` and `expected_epoch` already (step 0), so the app release can go first.
 
 **Integration (lead, after the four land).** Merge W1 first, then W2, W3, W4. Run the full e2e suite and the rollout rehearsal: an old tab (no `schema`) open during the minimum raise must be closed with the reload message and must not change the page.
+
+### 7.9 A2 contracts (binding)
+
+Overrides 5.3 to 5.6 and extends 7.5 for Phase A2. Builders L1, L2 and L3 work in parallel against this text. Step 0 (done) left in place: migrations 1334 to 1336, the five command stubs in `notes/a2_commands.go`, the internal stub `file.copy_for_note` in `files/a2_copy.go`, `Note.position` in `notes.go` and `lib/api.ts`, the web wrappers and types in `apps/web/src/lib/docs.ts`, and `note.delete` already writing `deletion_id` and `deleted_by` (L1 replaces it). Command names follow 5.4, with one change: restore is `note.undelete`, because `note.restore` is already version restore in the revisions module.
+
+**Decisions the owner may override (also listed in the hand-off):**
+
+1. **No cross-space move in A2.** The API refuses it today ("a page's parent must be in the same space") and keeps refusing. A cross-space move changes who can read the page, its files and its restrictions, so it needs its own design. `note.move` has no `space_id`.
+2. **Typed pages (invoice, deal, expense and the like) are not part of A2.** `note.duplicate` refuses a page with a non-empty `types`; `note.delete` refuses a subtree that holds one below its root; `note.trash` and `note.undelete` handle plain pages only (`types = '{}'`). A typed page deleted by `note.delete` behaves exactly as it does today, except that it now gets a `deletion_id`, so it can be listed later.
+3. **Guests never run these commands**, even on pages shared with them: each one acts on other pages (children, siblings, parents).
+
+#### Data model (migrations 1334 to 1336)
+
+| Column or object | Meaning |
+|---|---|
+| `core.notes.position integer NOT NULL DEFAULT 0` | Order among siblings, i.e. rows with the same `(space_id, parent_id)`. Sort key everywhere: `position, created_at, id`. Gaps of 1024 |
+| `core.notes.deletion_id uuid`, `deleted_by uuid` | Set together with `deleted_at` on exactly the pages one delete took; all three are null on live pages (`notes_deletion_consistent` CHECK). Pages deleted before A2 got one `deletion_id` each, `deleted_by` null |
+| Trigger `notes_default_position` | On insert, `position = 0` becomes `max(sibling position) + 1024`. Every insert path (create, duplicate, templates, importers) lands last without knowing about order. Legacy pages stay at 0 and sort by creation time until a reorder renumbers their siblings |
+| `core.note_access_any(note, uid, is_admin, space_readable)` | Same as `note_access` but the starting page may be in the trash. Trash and restore ask "could this person edit it as it was". Ancestors are walked the same way, deleted ones included |
+| Indexes `notes_siblings (space_id, parent_id, position) WHERE deleted_at IS NULL`, `notes_deletion (workspace_id, deletion_id, deleted_at DESC) WHERE deletion_id IS NOT NULL` | Both built `CONCURRENTLY` in their own files |
+
+`parent_id` stays untouched when a page is deleted, so restore can find its original parent. A live page whose parent is in the trash can only exist from pre-A2 deletes (A2 delete takes the subtree); the tree shows such a page at the space root and does not change its row.
+
+#### Shared rules
+
+- **Edit check on a page** = `access.AssertNoteAccess(c, id, true)` semantics: `core.note_access(...) = 'edit'` plus `AssertSpaceAccess(space, write)` (a space viewer cannot edit). **On the space root** = `AssertSpaceAccess(space, true)`.
+- **Subtree** = the page and all live descendants (recursive on `parent_id`, `deleted_at IS NULL`), at most 500 pages. More than that fails with "This page has too many sub-pages for one step; move or delete them in parts" (`invalid`). The query takes the rows `FOR UPDATE` in `id` order, then checks access on the locked set.
+- **The generic refusal.** Whenever any page of the subtree, or a parent involved, fails the edit check or is invisible to the caller, the command fails with `forbidden` and the message `Some pages here are restricted` (constant `RESTRICTED_MESSAGE` in `docs.ts`). The message, the code and the response never name, count or hint at which page or how many; the same text is returned for "cannot see" and "cannot edit", so a hidden page cannot be probed. A missing id is `not_found` only when the caller could not tell it from a hidden one anyway (the page the caller named is checked first with `AssertNoteAccess` and a failure there is `not_found`, as today).
+- **Row locks and order.** Take locks in this order everywhere: the space's parent chain is never locked; lock subtree rows ordered by `id`; then, for a move, the new parent row `FOR SHARE`. A move also locks all siblings of the destination parent (`FOR UPDATE`, ordered by `id`) only when it renumbers.
+- **Epoch.** A move or reorder does not touch `collab_epoch` or the Yjs document. Delete does not bump it (the room is closed); restore bumps it.
+- **No purge.** Hooks left for Phase C: `deleted_by` and `deletion_id` are kept forever, `core.events` keeps `note.deleted` and `note.undeleted`, and nothing hard-deletes in A2. The DB `ON DELETE SET NULL` on `parent_id` is not used by A2 code.
+
+#### `note.move` and `note.reorder` (L1)
+
+`note.move {id, parent_id: uuid|null, before_id?: uuid|null}` returns `{id, space_id, parent_id, position}`. Group `write_notes`, member.
+
+1. Load the page (`not_found` if not live or not readable). Reject a `parent_id` in another space with the existing "a page's parent must be in the same space"; reject a parent inside the page's own subtree with the existing cycle message (the shared `checkMove` stays; L1 moves it to a new file and keeps its name).
+2. Edit check on every page of the subtree, on the old parent (or the space root), and on the new parent (or the space root). Any failure is the generic refusal.
+3. **Inherited restrictions.** Let `A` be the restricted ancestors of the old parent, including the old parent (restriction `edit` or `view`), and `B` the same for the new parent. For each ancestor in `A` that is not in `B`, the pages become more visible or editable, and the actor must be that ancestor's owner (`owner_id`, or `created_by` when null) or a space admin or workspace admin. If not, the generic refusal. Moving into a restricted parent needs nothing extra beyond the new-parent edit check. A page's own restriction and its `note_permissions` and shares never change in a move. `restrictions_released` is true in the event when `A` minus `B` is not empty.
+4. **Position.** `before_id` null or omitted: `position = max(sibling position) + 1024` among live siblings in the new parent. `before_id` set: it must be a live sibling in the new parent (else `invalid`), and the page gets the midpoint between the previous sibling's position (0 when first) and `before_id`'s position. If the integer gap is below 2, renumber all live siblings of that parent to 1024, 2048, and so on, in `(position, created_at, id)` order, in the same transaction, then place the page. Siblings the caller cannot see are renumbered too (order only, nothing exposed).
+5. Update `parent_id`, `position`, `updated_at`, `version + 1`. Emit `note.moved` on the page: `{from_parent, to_parent, space_id, position, restrictions_released}`. Moving to the same parent with no `before_id` is allowed and acts like "send to end".
+6. `note.update` with `parent_id` must call the same function (one code path) so edit-only callers cannot bypass the subtree check. A `parent_id: null` in `note.update` keeps meaning "unchanged"; moving to the root is `note.move` only.
+
+`note.reorder {id, before_id: uuid|null}` returns `{id, parent_id, position}`. Group `write_notes`, member. Edit check on the page and on its parent (or the space root); not on the whole subtree (the children do not change). Position rule as step 4, within the current parent. `before_id` must be a live sibling or `invalid`. Emits `note.reordered` `{parent_id, position}`. A page that is not moving between parents never triggers the restriction rule.
+
+**Web:** drag-and-drop is `note.move` (drop on a page = last child; drop between rows = `before_id` of the row below, with that row's parent). The keyboard alternative is the context menu and the page menu: "Move to..." opens a tree picker (same space, excluding the page's own subtree), and "Move up" and "Move down" call `note.reorder` with the neighbour. Keyboard: Alt+Up and Alt+Down on a focused tree row do the same.
+
+#### `note.delete` (L1; replaces `noteDelete` in `write.go`)
+
+Input `{id}`; output `{deleted: true, deletion_id, count}` (the old `deleted: true` key stays, so current callers keep working). Group `destructive`, member; agents have it off by default.
+
+1. Page must be live and editable by the caller (`AssertNoteAccess(write)`); else `not_found` or `forbidden` as today.
+2. Lock the subtree rows `FOR UPDATE`. Check the edit rule on every live page; a failure is the generic refusal. A typed page below the root fails with "This page has items that cannot be deleted with it" (decision 2).
+3. One statement: `UPDATE core.notes SET deleted_at = now(), deletion_id = $new, deleted_by = $actor, updated_at = now() WHERE id = ANY(subtree)` (same `now()` for all). Pages already in the trash are not in the subtree set and keep their own `deletion_id`, `deleted_by` and `deleted_at`.
+4. **Events.** One `note.deleted` per deleted page, `note_id` set, payload `{deletion_id, root_id, count}` (emitted in subtree order, root first). There is no `pg_notify`: the gateway finds out through the fence poll and the periodic recheck (below). **As built:** the LISTEN design was dropped.
+5. Related rows stay: comments, relations, revisions, watches, stars, labels, attachments and shares are not touched. Search, AI context, `note.mine`, labels and mentions already filter `deleted_at IS NULL`; L1 greps for any reader that does not and fixes it in its own files only (otherwise reports to the lead).
+6. A checkpoint revision is written for each page that has unsaved changes (`checkpoint(c, id, actor, 0)` with reason `edit`), so the content at deletion is in history.
+
+**Gateway (L1, `apps/collab/src/server.ts` and `apps/collab/test`).**
+- **As built (LISTEN dropped):** no `LISTEN`. A fenced fold (`POST /internal/fold` with `fence: true`, body `{note_id, workspace_id, fence}`; `workspace_id` is required) marks the room closed to writes for up to 60 s and starts a short poll of the fenced pages. When the poll (or the periodic recheck) sees the page deleted, it runs steps (b) to (d) below. An unfinished delete lifts the fence when it expires.
+- When a note with an open room is found deleted: (a) stop applying new frames to the room; (b) persist (fold logged updates into `content_ydoc` and `content_md`) **allowing a deleted page**: the snapshot `UPDATE` guard `deleted_at is null` is relaxed to `(deleted_at is null OR deletion_id IS NOT NULL)` for the final snapshot only, and the fold-on-start path also folds trashed pages; live edits (`note_updates` inserts) stay guarded by `deleted_at is null`; (c) close every socket with code `4411` (`CLOSE_DELETED`, reason `page deleted`); (d) drop the room and release its advisory lock.
+- The periodic recheck (`recheckMs`) also tests `deleted_at`; a room found deleted is flushed and closed the same way. A socket that connects to a deleted page is closed with 4411 immediately.
+- The web editor treats 4411 as final: no reconnect loop; it shows "This page was moved to the trash" with a link to Trash.
+- Tests (gateway): delete with two peers closes both with 4411 after the last edit is saved in `content_md`; restore later shows that edit; reconnect to a deleted page is refused; a delete the poll missed is caught by the recheck.
+
+#### `note.trash` (L1)
+
+Input `{space_id?, limit?, before?}`; output in `docs.ts` `TrashEntry[]`. Group `read`, member (set explicitly; guests excluded). One row per `deletion_id`, newest `deleted_at` first, `limit` default 50, max 200, the cursor is `before` (the last row's `deleted_at`) plus `before_id` (its `deletion_id`); with only `before`, everything strictly older. 7.10 item 9 describes the scan.
+
+- A deletion is **listed** only if `note_access_any(page, ...)` is `edit` for every page in it (plain pages only) and `AssertSpaceAccess(space, write)` passes for its space. A deletion with any page the caller cannot edit is not listed at all, and nothing says it exists.
+- `root` is the page whose `parent_id` is not in the same deletion (for a legacy single-page deletion, that page). `page_count` counts the deletion's pages. `deleted_by` is null for legacy deletions or when the person left.
+- `restore_to` and `blocked_reason` are computed exactly as restore would decide them (below), so the UI can disable Restore with the reason: `original` when the original parent is live, `space_root` when it is gone but allowed, `blocked` otherwise with reason text from the table below.
+- Indexed by `notes_deletion`; the access check runs on the paged set (at most `limit` deletions), not on the whole trash.
+
+#### `note.undelete` (L1; named `note.undelete` because `note.restore` is version restore)
+
+Input `{deletion_id}`; output `{deletion_id, root_id, space_id, count, placed: "original" | "space_root"}`. Group `write_notes`, member.
+
+1. Lock the deletion's rows `FOR UPDATE` (order by `id`). None found: `not_found` ("note"). Pages must all be plain pages; the caller needs `note_access_any = 'edit'` on every page and space write access, else the generic refusal (a deletion the caller could not list is `not_found`, never `forbidden`).
+2. Find the root (as in `note.trash`). If its `parent_id` is null: `placed = original` (the space root is always live). If the parent is live (`deleted_at IS NULL`): `placed = original`, `parent_id` unchanged; the caller also needs the edit check on that parent (generic refusal otherwise).
+3. If the parent is gone (in the trash under another deletion, or no longer there): the root goes to the space root (`parent_id = null`, `placed = space_root`), with `position` last, but **only if** the root was not under an inherited restriction (no ancestor of the old parent, deleted or not, has `restriction <> 'none'`; ancestors are read through `parent_id` as stored) **or** the caller is a space admin or workspace admin. Otherwise fail with `conflict`: `blocked_reason` text from this table.
+
+   | Case | `blocked_reason` and error text |
+   |---|---|
+   | Parent in the trash, under a restriction, caller not admin | "The parent page is in the trash and this page was inside a restricted area. Restore the parent first, or ask a space admin." |
+   | Parent no longer exists, same restriction rule | "The parent page no longer exists and this page was inside a restricted area. Ask a space admin." |
+   | Pages are still being saved | "This page is still being saved. Try again in a moment." (see step 5) |
+
+4. Update the whole set in one statement: `deleted_at = null, deletion_id = null, deleted_by = null, collab_epoch = collab_epoch + 1, version = version + 1, updated_at = now()`; plus the root's `parent_id` and `position` when it moved or the old position collides (then `max + 1024`). Own restrictions come back with the pages untouched.
+5. **No unsaved edits may be orphaned by the epoch bump.** If any page has rows in `core.note_updates` with `epoch = collab_epoch` (the gateway has not folded them), fail with `conflict` "This page is still being saved. Try again in a moment." The gateway's final flush on delete normally makes this empty.
+6. Emit `note.undeleted` per page (`{deletion_id, root_id, placed}`). No notification is sent. Gateways close rooms whose epoch no longer matches (existing 4409 path).
+
+#### `note.duplicate` (L1)
+
+Input `{id}`; output `{id, space_id, parent_id, title, position, attachments_copied}`. Group `write_notes`, member. **Sibling only**: same space, same `parent_id`, `position` = `max + 1024` (last), no `before_id`.
+
+- Needs view access to the source (`AssertNoteAccess(read)`) and edit access to the parent (or `AssertSpaceAccess(write)` for the space root); else the generic refusal. A page with `types` refuses (decision 2): "Only plain pages can be duplicated".
+- **Copied:** `title || ' (copy)'` (cap 200 chars as `note.create`), `content_md`, `icon`, `wide`, `page_status` is not copied (null), labels, the page's own `restriction` and its `note_permissions` rows (copied as `granted_by` = the actor; the actor is added with `edit` when `restriction <> 'none'` so nobody is locked out, as `note.restrict` does). The copy lies under the same parent, so it inherits the parent's restrictions by position and access never widens. **Not copied:** children, comments, revisions (the copy starts with version 1 and gets its first revision on first save), shares (`note.share` rows), stars, watches (the actor watches as creator), views, relations other than the `child` link to the parent, verify and freshness state (`freshness 'fresh'`, default `verify_by`), `content_ydoc` (null; the gateway builds the room from `content_md`, as for imports). Owner and `created_by` are the actor.
+- **Attachments.** After the insert, call the internal command `file.copy_for_note {from_note_id, to_note_id}` with `c.Call` (the files module owns `core.attachments` and the object store; `notes` must not import it, per `boundaries_test.go` and the service-boundary rule). It runs the same guards as an upload on both pages, inserts new `core.attachments` rows for the copy (new ids, same filename, content type and size, `created_by` = actor) and copies the bytes: the `data` column for Postgres storage, or a server-side object copy to a new key `<workspace>/<new id>` for object storage (a failed copy rolls the whole transaction back). It returns `[{from_id, to_id}]`. The count obeys the per-page limit of the files module. L1 then rewrites every occurrence of `/api/w/<workspace>/files/<from_id>` in the copy's `content_md` to the `to_id`, with an exact-id match (a simple `strings.NewReplacer` over the pairs), and updates `content_md` and `search_plain` through the same helper `note.update` uses. Attachments the source does not own are left as they are.
+- Events: `note.created` for the copy with `{title, types: [], space_id, duplicate_of: <source id>}` (so search and index consumers behave as for a new page), and nothing else.
+- **Live edits shortcut:** the source's `content_md` is the last gateway snapshot, which can lag typing by about two seconds. `shortcut: duplicate copies the saved snapshot; upgrade to a gateway-rendered copy if people duplicate pages while typing in them (the web flushes by waiting for the editor's "saved" state before calling).`
+
+#### Roles, guests, AI scope, events and audit (every command)
+
+| Command | Group | Minimum role | Guest | Page checks | In read-only AI scope | Events (audit trail `core.events`) |
+|---|---|---|---|---|---|---|
+| `note.move` | `write_notes` | member | no | edit on subtree, old and new parent; manage rule for released restrictions | no | `note.moved` |
+| `note.reorder` | `write_notes` | member | no | edit on page and parent | no | `note.reordered` |
+| `note.delete` | `destructive` | member | no | edit on the whole subtree | no (agents: group off by default) | `note.deleted` per page |
+| `note.trash` | `read` | member | no | edit on every page of a listed deletion | yes (lists only what the caller could restore; a read scope adds no reach) | none |
+| `note.undelete` | `write_notes` | member | no | edit on every page as it was, parent edit when restored in place | no | `note.undeleted` per page |
+| `note.duplicate` | `write_notes` | member | no | view on source, edit on parent | no | `note.created` |
+
+- **Audit.** `core.events` is the append-only audit trail and carries the actor, an agent's `on_behalf_of` and the page id; the audit module already lists every kind. No new audit table. Commands refused for an agent or API key are written as `command.denied` by the gate. There is no separate audit write in the handlers.
+- **Agent and API key principals** have the same page checks as the person they act for. Approval and confirmation rules are unchanged (`note.delete` stays unconfirmed for people; an approval rule can still hold it).
+- **Event consumers.** The gateway does not read a notification channel (see the fence poll above); the worker consumers from 7.6 treat `note.deleted` as "stop notifying about this page" (they already skip deleted pages at send time). Nothing in A2 consumes `note.moved`; it is there for audit and for Phase B.
+
+#### Export (L3, client only)
+
+One page, built on the client from the live editor state; no server command, no new permission, no children, no public links, no share links.
+
+- **Entry point.** The page "..." menu "Export" with "PDF (print)", "Markdown (.md)", "HTML (.html)". Available whenever the reader can see the page; the editor state in the open tab is the source (`editor.getJSON()`, `getHTML()`, and the existing Markdown serializer), so it reflects unsaved typing and every co-editor's change. A reader without a live editor (view-only open) uses the same read-only editor instance.
+- **One builder** `apps/web/src/components/docs/export.ts`: `buildExportDom(editor, opts) -> HTMLElement` produces a detached, fully resolved copy used by all three outputs.
+  - **Collapsed expands are opened**: each `details` gets `open` and its summary stays a heading line.
+  - **TOC resolved**: each Toc block is replaced by a static nested list of the page's current headings (text and level, with `#id` anchors on the headings, as in the page), not the live component.
+  - **Code keeps its language**: each `pre code` keeps `class="language-x"` and a small visible label with the language name on top of the block (print and HTML both).
+  - **Images embedded**: every `img` whose source is `/api/w/<ws>/files/<id>` or `data:` is converted to a `data:` URI by fetching with the user's session cookie; a fetch failure keeps a visible placeholder with the alt text and shows a notice listing how many images could not be embedded. External `http(s)` images are fetched with `fetch` first; if the browser blocks it (CORS), they are left as links. Total embedded image bytes are capped at 25 MB: past the cap the remaining images become links and the notice says so.
+  - Panels, status chips, date chips, tables and task lists render as in the page, with colours inlined (`style` attributes), because the downloaded HTML has no app stylesheet.
+  - Comment highlights, cursors, selection and editor chrome are removed.
+- **Markdown**: the editor's Markdown serializer output (`.md`), with embedded images left as the stored `/api/w/<ws>/files/<id>` form (a note in the file header comment is not added); file name `<title>.md`, title cleaned to `[A-Za-z0-9 _-]` and capped at 80 characters, `page` when empty.
+- **HTML**: one self-contained file, `<!doctype html>` with `<meta charset>`, the title, the resolved DOM, a small embedded stylesheet (the print stylesheet below plus screen basics) and data URIs; no script. File name `<title>.html`. Built with a `Blob` and an `a[download]`.
+- **PDF**: the resolved DOM is shown in a hidden print container (`#print-root`, in `app/globals.css`, which L3 owns for this block only) and `window.print()` runs; `@media print` hides everything else, sets A4 with 18 mm margins, avoids breaks inside headings, tables rows, panels and images, and prints link URLs after link text only for external links. Mobile browsers use the same path. `shortcut: the browser's "Save as PDF"; no running header or page numbers; upgrade to a server renderer with branded PDF in Phase C.`
+- **Safe by construction**: the export DOM is made from the editor's own output, never from raw stored HTML; any text goes through the DOM, not string concatenation, and the filename is sanitised as above.
+- **Tests (L3)**: unit tests over fixtures from `apps/collab/test/fixtures/blocks.json` (collapsed expand, TOC, nested panel, status inside a table, code with a language, image), an e2e `export.spec.ts` (download Markdown, download HTML with a data-URI image, print view shows an opened expand and a resolved TOC and hides the shell).
+
+#### Mobile impact
+
+- Lists from `note.list` and `note.mine` already exclude trashed pages; a trashed page opened from a stale list returns `not_found`. Show the existing "page not found" state.
+- The gateway closes a room with 4411 when the page is deleted while open; the mobile editor must treat 4411 as "page deleted" (no reconnect) when mobile gets the collab editor in Phase D. Mobile does not use `note.delete` today.
+- `Note` gains `position`; the mobile page list keeps its current order (`updated_at`) and may ignore it. No A2 command is required of mobile and none is called from it. Mobile stays in Phase D.
+
+#### Work packages (disjoint file ownership; step 0 owns everything else)
+
+| | L1 backend lifecycle and gateway | L2 web tree, Trash, restore, duplicate | L3 export |
+|---|---|---|---|
+| **Creates** | `notes/lifecycle.go` (move, reorder, delete, shared checks), `notes/trash.go` (`note.trash`, `note.undelete`), `notes/duplicate.go`, `files/a2_copy.go` body (`file.copy_for_note`, edit in place), `apps/api/internal/server/docs_a2_test.go`, `apps/collab/test/lifecycle.test.ts` | `apps/web/src/components/docs/page-actions.tsx` (menu items and dialogs), `docs/move-dialog.tsx`, `docs/tree-dnd.tsx`, `app/w/[ws]/trash/page.tsx`, `e2e/page-tree.spec.ts`, `e2e/trash.spec.ts` | `apps/web/src/components/docs/export.ts`, `docs/export-menu.tsx`, `apps/web/src/test/export.test.ts`, `e2e/export.spec.ts` |
+| **Edits** | `notes/write.go` (`noteDelete` replaced; `noteUpdate` parent branch calls the shared move check; `checkMove` moves out; nothing else), `notes/a2_commands.go` (swap stub for `a2Handlers[...]` only through init()), `apps/collab/src/server.ts` (listener, final flush, 4411), `apps/collab/src/doc-schema.ts` (`CLOSE_DELETED = 4411` beside the other codes) | `components/shell.tsx` (tree order by `bySiblingOrder`, orphan at root, drag and drop, row menu, Trash link under each space, TREE_EVENT reload), `app/w/[ws]/n/[id]/page.tsx` (menu entries Move, Duplicate, Delete, 4411 notice), `components/note-editor.tsx` (4411 handling only) | `components/docs/page-header.tsx` (add the Export menu entry only), `app/globals.css` (the print block only) |
+| **Must not touch** | web | API, gateway | API, gateway, `shell.tsx` |
+
+If L2 and L3 both need a line in `n/[id]/page.tsx` or `page-header.tsx`, L2 adds the Export menu mount point once (`<ExportMenu editor={...} />` imported from L3's file) and L3 only fills the component. The shared files stay with the lead: `a2_commands.go` schemas, `docs.ts`, `api.ts`, migrations, `notes/notes.go`, `command/*`, `e2e/helpers.ts`. A change there is a request to the lead.
+
+#### Tests (what must exist before merge)
+
+- **API (`docs_a2_test.go`)**: move with a restricted new parent, a restricted old parent (released restriction needs owner or admin), a hidden page in the subtree (generic refusal, same text for hidden and read-only), a cycle, another space; reorder with the gap exhausted (renumber) and with siblings the caller cannot see; legacy all-zero positions then reorder; delete with a subtree, with an already-trashed child (keeps its own deletion), with a hidden descendant (refused), with a typed descendant; trash visibility (not listed when one page is not editable); undelete in place, with a trashed parent (blocked and allowed variants, admin override), epoch bump, with unfolded `note_updates` (refused); duplicate (restrictions copied, permissions copied, attachments new rows and new bytes, body links rewritten, children not copied, typed page refused, guest refused); the AI read scope cannot call the write commands; events and `deleted_by` written; two concurrent deletes of overlapping subtrees (no page gets two deletions); two concurrent moves into each other (one refused as a cycle).
+- **QA**: `TestQARLSSweep`, the foreign-key tests and the module boundary test stay green (no `notes -> files` import).
+- **Gateway**: as listed under `note.delete`.
+- **e2e**: drag to move and reorder, the keyboard alternative, context menu, delete then restore from Trash with sub-pages, restore blocked with the reason, duplicate with an image, export downloads and the print view.
+
+### 7.10 A2 binding revisions (design review of 7.9)
+
+This section overrides 7.9 wherever they disagree. The numbers in brackets point to the review findings.
+
+1. **One structural lock (review 1, 9).** Every structural writer takes `pg_advisory_xact_lock(hashtextextended('notes.tree:' || space_id::text, 0))` first, then works out the subtree, ancestry, permissions, cycle check and positions under that lock.
+   - Structural writers are: create with a parent, `note.update` changing `parent_id`, move, reorder, delete, undelete and duplicate.
+   - Lock order: the space lock first, then note rows by `id`.
+   - The insert trigger that assigns `position` runs under the same lock, because the create path takes it before inserting.
+   - Tests: opposing moves (A under B, B under A) leave no cycle; an insert into a subtree racing a delete of that subtree; concurrent reorders keep positions unique.
+2. **Parent changes only through move (review 2).** `note.update` with a `parent_id` change calls the move implementation, and also requires everything `note.move` requires: a person at Member or above, never a guest, and never the read-only AI scope. Otherwise it is refused. Direct `parent_id` writes are removed from `write.go`. Tests go through `note.update` for a guest, an API key and an AI employee.
+3. **Duplicate permissions (review 3, 8).**
+   - If the source has its own or an inherited restriction, the caller must be able to manage that restriction (owner of the restricting page, or a space or workspace admin). Without a restriction, view access is enough.
+   - Permission rows are copied server side and never returned.
+   - Attachments: the source is checked with the file **read** guard and the destination with the **write** guard. Object copies use the Tables `core.file_objects` intent lifecycle (write the intent, copy the object, mark it live in the record transaction; the sweep collects intents left by rollbacks).
+4. **Coordinated fold before delete and duplicate (review 4, 5, 7).** The API calls a new internal gateway endpoint, `POST /internal/fold`, with `{note_id, fence: true|false}`.
+   - The gateway drains in-flight frames for that note, folds the snapshot plus every committed log update for the current epoch into `content_md` and the snapshot (using the existing render path, so it works with no open room), and returns the folded version.
+   - With `fence: true`, it first marks the room closed to writes, so no update can be accepted after the fold.
+   - Delete calls fold with the fence for each page in the subtree that has pending updates, then commits the deletion with a revision checkpoint taken from the folded content.
+   - If the fold fails or the gateway is unreachable while updates are pending, delete is refused with "Couldn't save the latest edits. Try again." Nothing is stranded.
+   - Duplicate calls fold without the fence and copies the folded content.
+   - Undelete is allowed only when no pending updates exist for the page, which always holds after a successful fenced fold. It bumps the epoch.
+   - Tests: an owner crash between edit and delete, a failed fold, no open room, and a restart.
+5. **Restore keeps restriction evidence (review 6).**
+   - At deletion, store per deleted page `deleted_parent_id` and `deleted_restricted_by uuid[]`: the ancestors whose restrictions applied at that time.
+   - Restore in place is allowed only if the current inherited restriction set contains the stored one. Otherwise it is treated as a move that releases a restriction, and needs that authority.
+   - If the parent or an ancestor has been purged, or the evidence is missing (pages deleted before A2), restore goes to the space root only for a space or workspace admin. Otherwise it is refused.
+6. **Positions (review 9).**
+   - `position` is a bigint with gaps of 1024.
+   - Positions are renumbered when a gap is smaller than 2, under the structural lock.
+   - `before_id == id` is a no-op.
+   - An empty sibling set starts at 1024.
+7. **Staged migration (review 10).**
+   - 1334 only adds nullable columns and the new tables. It adds no constraint and no backfill, and starts with `SET lock_timeout = '5s'`.
+   - The application writes the new columns from this release on.
+   - A worker sweep fills `deletion_id` for already-deleted rows in batches of 500.
+   - The consistency constraint is added `NOT VALID` in a later migration in this same release only if every writer sets the columns. `VALIDATE CONSTRAINT` comes in a following release. Write that follow-up release down in docs/deploy.md.
+8. **Tree depth (review 11).**
+   - Structural writes refuse a result deeper than 50 levels.
+   - Both access functions treat a chain longer than 50, or a cycle, as **restricted** (fail closed). Make this change in a new migration that recreates the functions.
+   - Check existing data for deeper trees in a test fixture and say so.
+9. **Trash paging (review 12).** The cursor is `(deleted_at, deletion_id)`. The server scans in batches until it has the requested number of entries the caller can restore, or the input is exhausted. Filtered entries are never counted or revealed.

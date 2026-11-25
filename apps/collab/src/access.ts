@@ -64,3 +64,18 @@ export async function mayWrite(tx: Tx, p: Principal, noteId: string): Promise<bo
     return false
   }
 }
+
+/** True when the page is in the trash and the caller could see it as it was: the socket then closes with CLOSE_DELETED. */
+export async function trashedVisible(tx: Tx, p: Principal, noteId: string): Promise<boolean> {
+  const n = await tx.query('select deleted_at is not null as gone from core.notes where id = $1::uuid', [
+    noteId,
+  ])
+  if (!n.rows[0]?.gone) return false
+  const lv = await tx.query('select core.note_access_any($1::uuid,$2::uuid,$3,$4::text[]::uuid[]) as level', [
+    noteId,
+    p.userId,
+    p.role >= ADMIN,
+    await readableSpaces(tx, p),
+  ])
+  return lv.rows[0].level !== 'none'
+}

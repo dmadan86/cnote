@@ -11,19 +11,35 @@ import * as encoding from 'lib0/encoding'
 import pg from 'pg'
 import { WebSocket, WebSocketServer } from 'ws'
 import * as Y from 'yjs'
-import { mayWrite } from './access.ts'
+import { mayWrite, trashedVisible } from './access.ts'
 import { authenticate, type Principal } from './auth.ts'
 import { CmdError, tenant } from './db.ts'
 import { buildDoc, loadDoc } from './doc.ts'
-import { CLOSE_RELOAD } from './doc-schema.ts'
+import { CLOSE_DELETED, CLOSE_RELOAD, CLOSE_RETRY } from './doc-schema.ts'
 import * as md from './md.ts'
 
 export const CLOSE_STALE_EPOCH = 4409
+/** How long a fold with fence:true keeps a page closed to writes (core.notes.fenced_until) while the API finishes deleting it. */
+const FENCE_MS = 60_000
 const MAX_FRAME = 8 << 20
 const CHECKPOINT_EVERY_SECS = 600
 const MSG_SYNC = 0
 const MSG_AWARENESS = 1
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/** The page is fenced for a delete: the edit was not logged. The peer closes with CLOSE_RETRY and resends after reconnecting. */
+class FencedError extends CmdError {
+  constructor() {
+    super('conflict', 'page is being deleted')
+  }
+}
+
+/** The page was moved to the trash: its sockets close with CLOSE_DELETED, not CLOSE_STALE_EPOCH. */
+class GoneError extends CmdError {
+  constructor() {
+    super('conflict', 'page deleted')
+  }
+}
 
 type Awareness = Map<number, { clock: number; json: string }>
 
@@ -53,6 +69,8 @@ interface Room {
   /** Fires 'stale' when the room is fenced out (restored elsewhere): every connection then closes. */
   events: EventEmitter
   retired: boolean
+  /** WebSocket close code of the 'stale' fence; CLOSE_DELETED when the page was deleted. */
+  closeCode: number
   /** The note's advisory lock has been released (or handed back); set once. */
   unlocked: boolean
   /** Serialises persists so an older snapshot never overwrites a newer one. */
@@ -154,6 +172,12 @@ export function createServer(opts: Options) {
     void lockQuery('unlock', room.note).catch(() => {})
   }
 
+  /** The page is in the trash: close every socket of its room with CLOSE_DELETED and drop the room. */
+  function retireGone(room: Room) {
+    room.closeCode = CLOSE_DELETED
+    retire(room)
+  }
+
   /** Fence a room out: drop it from the map (if still there) and close all of its connections. */
   function retire(room: Room) {
     if (rooms.get(room.key) === room) rooms.delete(room.key)
@@ -204,6 +228,7 @@ export function createServer(opts: Options) {
       applied: l.ids,
       events: new EventEmitter().setMaxListeners(0),
       retired: false,
+      closeCode: CLOSE_STALE_EPOCH,
       unlocked: false,
       persisting: Promise.resolve(),
     }
@@ -222,8 +247,12 @@ export function createServer(opts: Options) {
   /** Sharing can change while a socket is open: a revoked user stops reading, a downgraded one stops writing. */
   async function recheck(p: Principal, room: Room): Promise<boolean> {
     return tenant(pool, room.ws, async (tx) => {
+      const e = await tx.query(
+        'select collab_epoch, deleted_at is not null as gone from core.notes where id = $1',
+        [room.note],
+      )
+      if (e.rows[0]?.gone) throw new GoneError()
       const w = await mayWrite(tx, p, room.note)
-      const e = await tx.query('select collab_epoch from core.notes where id = $1', [room.note])
       if (e.rows[0]?.collab_epoch !== room.epoch) throw new CmdError('conflict', 'page restored')
       return w
     })
@@ -232,17 +261,29 @@ export function createServer(opts: Options) {
   /** Commit one update to the log, fenced on the room's epoch. Conflict means the page was restored since. */
   async function logUpdate(room: Room, update: Uint8Array): Promise<string> {
     const id = await tenant(pool, room.ws, async (tx) => {
+      // FOR SHARE: a delete holds the page row FOR UPDATE, so an edit is either logged before it (and found there) or refused after it.
       const r = await tx.query(
         `insert into core.note_updates (workspace_id, note_id, epoch, update)
          select workspace_id, id, collab_epoch, $3 from core.notes
-         where id = $1 and collab_epoch = $2 and deleted_at is null
+         where id = $1 and collab_epoch = $2 and deleted_at is null and (fenced_until is null or fenced_until <= now())
+         for share
          returning id`,
         [room.note, room.epoch, Buffer.from(update)],
       )
-      return r.rows[0]?.id as string | undefined
+      if (r.rows[0]) return { id: r.rows[0].id as string }
+      const g = await tx.query(
+        'select deleted_at is not null as gone, collab_epoch = $2 and fenced_until > now() as fenced from core.notes where id = $1',
+        [room.note, room.epoch],
+      )
+      return { gone: !!g.rows[0]?.gone, fenced: !!g.rows[0]?.fenced }
     })
-    if (id === undefined) throw new CmdError('conflict', 'page restored')
-    return String(id)
+    if ('gone' in id)
+      throw id.gone
+        ? new GoneError()
+        : id.fenced
+          ? new FencedError()
+          : new CmdError('conflict', 'page restored')
+    return String(id.id)
   }
 
   /** Start the idle timer for this room unless one is already running. */
@@ -326,7 +367,20 @@ export function createServer(opts: Options) {
           }
           return true
         })
-        if (!written) retire(room)
+        if (!written) {
+          const g = await tenant(
+            pool,
+            room.ws,
+            async (tx) =>
+              (
+                await tx.query('select deleted_at is not null as gone from core.notes where id = $1', [
+                  room.note,
+                ])
+              ).rows[0]?.gone,
+          )
+          if (g) retireGone(room)
+          else retire(room)
+        }
       } catch (e) {
         console.error('collab persist failed', room.note, e)
         room.dirty = true
@@ -377,7 +431,7 @@ export function createServer(opts: Options) {
       sendAll(room, me, data)
       for (const [client, clock, json] of msg.entries) peer.awareness.set(client, { clock, json })
     } else {
-      if (!write) return // read-only: their edits never reach the shared doc
+      if (!write) return // read-only
       // The doc's own emitted update, not msg.body: an out-of-order update that completes parked ones carries them too.
       let changed: Uint8Array | null = null
       const mark = (u: Uint8Array) => {
@@ -421,7 +475,9 @@ export function createServer(opts: Options) {
       fenced = true
       cleanup()
       retire(room)
-      socket.close(CLOSE_STALE_EPOCH, 'page restored')
+      if (room.closeCode === CLOSE_DELETED) socket.close(CLOSE_DELETED, 'page deleted')
+      else if (room.closeCode === CLOSE_RETRY) socket.close(CLOSE_RETRY, 'page is being deleted, retry')
+      else socket.close(CLOSE_STALE_EPOCH, 'page restored')
     }
     const cleanup = () => {
       if (done) return
@@ -455,7 +511,10 @@ export function createServer(opts: Options) {
           write = write && w
         },
         (e) => {
-          if (e instanceof CmdError && e.code === 'conflict') fence()
+          if (e instanceof GoneError) {
+            room.closeCode = CLOSE_DELETED
+            fence()
+          } else if (e instanceof CmdError && e.code === 'conflict') fence()
           else if (e instanceof CmdError && (e.code === 'not_found' || e.code === 'forbidden')) socket.close()
           // else transient database error: keep the connection, retry next tick
         },
@@ -473,6 +532,9 @@ export function createServer(opts: Options) {
         try {
           await onFrame(room, me, p, write, new Uint8Array(buf.buffer, buf.byteOffset, buf.length))
         } catch (e) {
+          if (e instanceof GoneError) room.closeCode = CLOSE_DELETED
+          // The room's doc already holds the refused edit: drop the room unsaved; every client keeps its edit and resyncs.
+          if (e instanceof FencedError) room.closeCode = CLOSE_RETRY
           if (e instanceof CmdError && e.code === 'conflict') return fence()
           // Not logged, so not relayed: the client still has the edit and resends it on reconnect.
           console.error('collab update not persisted', room.note, e)
@@ -576,6 +638,92 @@ export function createServer(opts: Options) {
     })
   }
 
+  /** Fold a page's snapshot plus every logged edit of its current epoch into content_md and the snapshot, in one transaction
+   * that locks the page row. Works with no open room (it reads only the database). With fence the room first stops
+   * accepting writes (fenced_until), so nothing can be logged after the fold. */
+  async function foldNote(ws: string, note: string, fence: boolean) {
+    const room = rooms.get(`${ws}/${note}`)
+    if (room) {
+      // Frames already queued finish and are logged before the fence takes effect (it is set in the transaction below).
+      await Promise.allSettled([...room.peers.values()].map((p) => chains.get(p.ws)))
+      await room.persisting
+    }
+    return tenant(pool, ws, async (tx) => {
+      const n = await tx.query(
+        'select content_md, content_ydoc, collab_epoch, version from core.notes where id = $1 for update',
+        [note],
+      )
+      if (!n.rows[0]) throw new CmdError('not_found', 'note')
+      // The fence is a database fact: logUpdate on every gateway instance refuses while it is in the future.
+      if (fence)
+        await tx.query(
+          'update core.notes set fenced_until = now() + make_interval(secs => $2) where id = $1',
+          [note, FENCE_MS / 1000],
+        )
+      const { content_md: mdText, content_ydoc: ydoc, collab_epoch: epoch, version } = n.rows[0]
+      const log = await tx.query(
+        'select id, update from core.note_updates where note_id = $1 and epoch = $2 order by id',
+        [note, epoch],
+      )
+      if (log.rows.length === 0) return { folded: 0, version: version as number }
+      const doc = buildDoc(
+        note,
+        mdText,
+        ydoc,
+        log.rows.map((r) => r.update),
+      )
+      const v = await tx.query(
+        'update core.notes set content_ydoc = $2, content_md = $3, version = version + 1, updated_at = now() where id = $1 returning version',
+        [note, Buffer.from(Y.encodeStateAsUpdate(doc)), md.toMarkdown(doc)],
+      )
+      await tx.query('delete from core.note_updates where id = any($1::bigint[])', [
+        log.rows.map((r) => String(r.id)),
+      ])
+      return { folded: log.rows.length, version: v.rows[0].version as number }
+    })
+  }
+
+  function fold(req: http.IncomingMessage, res: http.ServerResponse) {
+    const send = (status: number, body: string) => {
+      res.statusCode = status
+      res.setHeader('content-type', 'application/json')
+      res.end(body)
+    }
+    if (!authorised(req)) return send(opts.internalSecret ? 401 : 404, '{"error":"unauthorized"}')
+    let raw = ''
+    req.on('data', (c: Buffer) => {
+      if (raw.length < 4096) raw += c
+    })
+    req.on('end', async () => {
+      let b: { note_id?: unknown; workspace_id?: unknown; fence?: unknown }
+      try {
+        b = JSON.parse(raw)
+        if (
+          typeof b.note_id !== 'string' ||
+          !UUID.test(b.note_id) ||
+          typeof b.workspace_id !== 'string' ||
+          !UUID.test(b.workspace_id) ||
+          typeof b.fence !== 'boolean'
+        )
+          throw new Error('bad')
+      } catch {
+        return send(400, '{"error":"bad request"}')
+      }
+      try {
+        const r = await foldNote(
+          (b.workspace_id as string).toLowerCase(),
+          (b.note_id as string).toLowerCase(),
+          b.fence as boolean,
+        )
+        send(200, JSON.stringify({ ok: true, ...r }))
+      } catch (e) {
+        if (e instanceof CmdError) return send(e.status, JSON.stringify({ error: e.message }))
+        console.error('collab fold failed', e)
+        send(500, '{"error":"internal"}')
+      }
+    })
+  }
+
   const server = http.createServer((req, res) => {
     if (req.url === '/healthz') return void res.end('ok')
     if (req.method === 'GET' && req.url === '/collab/min-schema') {
@@ -585,6 +733,7 @@ export function createServer(opts: Options) {
       return void res.end(JSON.stringify({ min: reportedMin }))
     }
     if (req.method === 'POST' && req.url === '/internal/render') return render(req, res)
+    if (req.method === 'POST' && req.url === '/internal/fold') return fold(req, res)
     if (req.method === 'POST' && req.url === '/internal/min-schema') return setMin(req, res)
     res.statusCode = 426
     res.end('WebSocket upgrade required')
@@ -607,6 +756,10 @@ export function createServer(opts: Options) {
         return wss.handleUpgrade(req, socket, head, (s) => s.close(CLOSE_RELOAD, 'reload'))
       }
       const p = await authenticate(pool, req.headers, url.searchParams.get('token'), ws)
+      if (await tenant(pool, ws, (tx) => trashedVisible(tx, p, note))) {
+        // The page is in the trash: accept the upgrade just to close with the final code (a browser cannot read an HTTP refusal).
+        return wss.handleUpgrade(req, socket, head, (s) => s.close(CLOSE_DELETED, 'page deleted'))
+      }
       const { room, write } = await prepare(p, ws, note)
       wss.handleUpgrade(req, socket, head, (s) => {
         schemaOf.set(s, schema)

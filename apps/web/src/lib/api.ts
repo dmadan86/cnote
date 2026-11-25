@@ -100,6 +100,9 @@ export type Note = {
   status?: PageStatus | null
   icon?: string | null
   wide?: boolean
+  /** Docs parity A2 (lib/docs.ts): sibling order inside (space, parent); sort by position, then created_at, then id. */
+  position?: number
+  created_at?: string
 }
 
 export type SharedNote = Note & { level: 'view' | 'edit' }

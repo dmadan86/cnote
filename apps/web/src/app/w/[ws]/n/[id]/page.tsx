@@ -7,8 +7,10 @@ import { Suspense, use, useEffect, useMemo, useRef, useState } from 'react'
 import { type Anchor, type Comment, CommentsTab, openThreads } from '@/components/comments-panel'
 import { LabelChips } from '@/components/docs/labels'
 import { DocActions, Proposals } from '@/components/docs/note-tools'
+import { PageMenuButton } from '@/components/docs/page-actions'
 import {
   EmojiPicker,
+  ExportMenu,
   StarButton,
   StatusMenu,
   useRecordViewed,
@@ -26,7 +28,7 @@ import { VersionsTab } from '@/components/versions-panel'
 import { WatchButton } from '@/components/watch-button'
 import { activity, activityRest, type Evt } from '@/lib/activity'
 import { cmd, type NoteDetail } from '@/lib/api'
-import type { NoteChrome } from '@/lib/docs'
+import { type NoteChrome, STATUS_LABEL } from '@/lib/docs'
 import { ago, useCmd } from '@/lib/hooks'
 
 type Tab = 'relations' | 'history' | 'versions' | 'comments'
@@ -137,6 +139,7 @@ function NotePageInner({ params }: { params: Promise<{ id: string }> }) {
   }
   const [rev, setRev] = useState(0) // bumps when an approved proposal rewrites the content
   const [restored, setRestored] = useState(false)
+  const [deleted, setDeleted] = useState(false) // closed by the gateway with CLOSE_DELETED
   const [title, setTitle] = useState('')
   const editorRef = useRef<Editor | null>(null)
 
@@ -146,6 +149,16 @@ function NotePageInner({ params }: { params: Promise<{ id: string }> }) {
     if (note) setTitle(note.title)
   }, [note?.id])
 
+  if (deleted)
+    return (
+      <div role="alert" className="mx-auto max-w-xl space-y-2 px-6 py-16 text-center">
+        <h1 className="text-lg font-semibold">This page was deleted</h1>
+        <p className="text-muted">It is in Trash. Anyone who could edit it can restore it from there.</p>
+        <Link href={`/w/${ws}/trash`} className={btn}>
+          Open Trash
+        </Link>
+      </div>
+    )
   if (error)
     return <p className="p-6 text-muted">This page does not exist or you do not have access to it.</p>
   if (!note) return null
@@ -204,6 +217,19 @@ function NotePageInner({ params }: { params: Promise<{ id: string }> }) {
                 reload()
               }}
             />
+            <ExportMenu
+              editorRef={editorRef}
+              meta={{
+                title,
+                status: note.status ? STATUS_LABEL[note.status] : null,
+                labels: note.labels ?? [],
+                updatedAt: new Date(note.updated_at).toLocaleDateString('en-GB', {
+                  day: 'numeric',
+                  month: 'short',
+                  year: 'numeric',
+                }),
+              }}
+            />
             <StarButton ws={ws} id={id} />
             <WatchButton ws={ws} noteId={id} />
             {canEdit && <WideToggle ws={ws} id={id} wide={note.wide} onChange={reloadNote} />}
@@ -214,6 +240,7 @@ function NotePageInner({ params }: { params: Promise<{ id: string }> }) {
             >
               <Plus size={14} /> Sub-page
             </button>
+            {canEdit && <PageMenuButton note={note} />}
             <button
               type="button"
               aria-label="Toggle details panel"
@@ -279,6 +306,10 @@ function NotePageInner({ params }: { params: Promise<{ id: string }> }) {
             ws={ws}
             id={id}
             epoch={note.collab_epoch}
+            onDeleted={() => {
+              setDeleted(true)
+              reload()
+            }}
             onStale={() => {
               setRestored(true)
               reloadNote()
