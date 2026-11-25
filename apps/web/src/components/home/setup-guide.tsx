@@ -15,6 +15,7 @@ const LABEL: Record<string, string> = {
   website: 'Publish your website',
   table: 'Create your first table',
   import: 'Import your data',
+  team: 'Invite your team',
 }
 const SHOWN = 5
 const Box = ({ children }: { children: React.ReactNode }) => (

@@ -88,6 +88,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.tablesForm(w, r)
 	case strings.HasPrefix(r.URL.Path, pagePublicPrefix):
 		s.pagePublic(w, r)
+	case strings.HasPrefix(r.URL.Path, invitePrefix):
+		s.invite(w, r)
 	case strings.HasPrefix(r.URL.Path, unsubscribePrefix):
 		s.unsubscribe(w, r)
 	case strings.HasPrefix(r.URL.Path, "/api/public/"):

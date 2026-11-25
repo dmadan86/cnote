@@ -19,7 +19,6 @@ import {
   ShieldCheck,
   Sparkles,
   Upload,
-  UserPlus,
   Users,
   Webhook,
   Zap,
@@ -35,6 +34,7 @@ import { Privacy } from '@/components/audit/privacy'
 import { CompanyProfile } from '@/components/business-type'
 import { CompanyTab } from '@/components/company/profile'
 import { HooksTab } from '@/components/hooks-settings'
+import { InvitePeople } from '@/components/invites/invite-people'
 import { CustomerMessages } from '@/components/messages/customer-messages'
 import { NotificationSettings } from '@/components/notification-settings'
 import { Secret } from '@/components/secret'
@@ -260,59 +260,7 @@ function MembersTab({ ws }: { ws: string }) {
   }
   return (
     <div className="space-y-6">
-      {canManage && (
-        <form
-          className="rounded-lg border border-line p-4"
-          onSubmit={async (e) => {
-            e.preventDefault()
-            const form = e.currentTarget
-            const f = new FormData(form)
-            try {
-              await cmd(ws, 'member.add', { email: f.get('email'), role: f.get('role') })
-              form.reset()
-              setErr(undefined)
-              reload()
-            } catch (x) {
-              setErr((x as Error).message)
-            }
-          }}
-        >
-          <h3 className="text-[14px] font-medium">Invite someone</h3>
-          <p className="mt-0.5 mb-3 text-[12px] text-muted">
-            They join this workspace with the role you pick.
-          </p>
-          <div className="flex flex-wrap items-end gap-2">
-            <div className="min-w-56 flex-1">
-              <Field label="Email">
-                {(id) => (
-                  <input
-                    id={id}
-                    name="email"
-                    type="email"
-                    required
-                    placeholder="name@company.com"
-                    className={inputCls}
-                  />
-                )}
-              </Field>
-            </div>
-            <Field label="Role">
-              {(id) => (
-                <select id={id} name="role" defaultValue="member" className={inputCls}>
-                  {ROLES.map((r) => (
-                    <option key={r.value} value={r.value}>
-                      {r.label} · {r.hint}
-                    </option>
-                  ))}
-                </select>
-              )}
-            </Field>
-            <button type="submit" className={btnPrimary}>
-              <UserPlus size={14} aria-hidden /> Add member
-            </button>
-          </div>
-        </form>
-      )}
+      {canManage && <InvitePeople ws={ws} owner={myRole === 'owner'} />}
       <ErrorText error={err} />
       <section>
         <h3 className="mb-2 text-[13px] font-medium">

@@ -177,18 +177,18 @@ test.describe('the "Get set up" guide', () => {
   test('rows tick from real actions, open items first', async ({ page }) => {
     await signup(page)
     const guide = page.getByRole('region', { name: 'Get set up' })
-    await expect(guide.getByText('0 of 6 done')).toBeVisible()
+    await expect(guide.getByText('0 of 7 done')).toBeVisible()
     // at most five rows, then "Show all"
     await expect(guide.getByRole('link')).toHaveCount(5 + 1) // five rows and "Finish setup"
-    await guide.getByRole('button', { name: 'Show all (6)' }).click()
-    await expect(guide.getByRole('link')).toHaveCount(6 + 1)
+    await guide.getByRole('button', { name: 'Show all (7)' }).click()
+    await expect(guide.getByRole('link')).toHaveCount(7 + 1)
 
     const space = (await run<{ id: string }[]>(page, 'space.list'))[0].id
     await run(page, 'contact.create', { space_id: space, name: `Buyer ${uniq()}`, kind: 'company' })
     await run(page, 'company.update', { legal_name: 'Sharma Electricals', state_code: '27' })
     await page.reload()
-    await expect(guide.getByText('2 of 6 done')).toBeVisible()
-    await guide.getByRole('button', { name: 'Show all (6)' }).click()
+    await expect(guide.getByText('2 of 7 done')).toBeVisible()
+    await guide.getByRole('button', { name: 'Show all (7)' }).click()
     await expect(guide.getByRole('link', { name: /Done: Add your first customer/ })).toBeVisible()
     await expect(guide.getByRole('link', { name: /Done: Add your business name and state/ })).toBeVisible()
     await expect(guide.getByRole('link', { name: /To do: Send your first invoice/ })).toBeVisible()
