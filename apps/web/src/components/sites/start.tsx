@@ -211,14 +211,18 @@ export function Start({
   if (!canCreate)
     return (
       <div className="p-6">
-        <EmptyState icon={Globe} title="Ask an admin to create your website." />
+        <EmptyState icon={Globe} title="No website yet">
+          Ask an admin to create it. It takes a few minutes.
+        </EmptyState>
       </div>
     )
   return (
     <div className="mx-auto max-w-5xl space-y-5 p-6">
       <div>
         <h1 className="text-xl font-semibold">Create your website</h1>
-        <p className="text-[13px] text-muted">Pick a design. We'll fill in your business details.</p>
+        <p className="text-[13px] text-muted">
+          No website yet. Pick a design and get a first draft to edit. We will fill in your business details.
+        </p>
       </div>
       {first && (
         <div className="flex items-start gap-3 rounded-lg border border-line p-3">

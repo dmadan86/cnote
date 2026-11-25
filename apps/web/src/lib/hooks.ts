@@ -1,5 +1,6 @@
 'use client'
-import { useCallback, useEffect, useState } from 'react'
+import { usePathname, useRouter, useSearchParams } from 'next/navigation'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { cmd } from './api'
 
 /** Tiny fetch hook: runs a command, re-runs on key change or reload(). */
@@ -25,6 +26,25 @@ export function useCmd<T>(ws: string, name: string, input: unknown = {}, enabled
   }, [ws, name, key, tick, enabled])
   const reload = useCallback(() => setTick((t) => t + 1), [])
   return { data, error, reload, loading: !data && !error }
+}
+
+/** Finance access of the signed-in person: the server's own check, the one `invoice.create_draft` is gated by. False until known. */
+export function useFinance(ws: string) {
+  return useCmd<{ finance: boolean }>(ws, 'access.me').data?.finance === true
+}
+
+/** `?new=1` opens a create dialog once (setup links use it), then drops the parameter. `ready` waits for what the dialog needs. */
+export function useOpenOnNew(ready: boolean, open: () => void) {
+  const wanted = useSearchParams().get('new') === '1'
+  const router = useRouter()
+  const path = usePathname()
+  const fn = useRef(open)
+  fn.current = open
+  useEffect(() => {
+    if (!wanted || !ready) return
+    fn.current()
+    router.replace(path)
+  }, [wanted, ready, router, path])
 }
 
 export const ago = (iso: string) => {

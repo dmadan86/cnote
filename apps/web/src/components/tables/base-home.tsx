@@ -3,15 +3,16 @@ import { Plus, Table2 } from 'lucide-react'
 import Link from 'next/link'
 import { useState } from 'react'
 import { useShell } from '@/components/shell'
-import { btn, btnPrimary, EmptyState, ErrorText } from '@/components/ui'
-import { useCmd } from '@/lib/hooks'
+import { btnPrimary, EmptyState, ErrorText } from '@/components/ui'
+import { useCmd, useOpenOnNew } from '@/lib/hooks'
 import type { Base } from '@/lib/tables'
 import { NewBase, type Start } from './new-base'
 
 const plural = (n: number, w: string) => `${n.toLocaleString('en-IN')} ${w}${n === 1 ? '' : 's'}`
 
 export function BaseHome() {
-  const { ws, spaces } = useShell()
+  const { ws, spaces, me } = useShell()
+  const canAdd = spaces.length > 0 && me.workspaces.find((w) => w.id === ws)?.role !== 'guest'
   const bases = useCmd<Base[]>(ws, 'base.list', {})
   const [dlg, setDlg] = useState<Start>()
   const [last, setLast] = useState<Start>('blank')
@@ -20,6 +21,7 @@ export function BaseHome() {
     setDlg(s)
   }
   const list = bases.data ?? []
+  useOpenOnNew(canAdd, () => open('blank'))
   return (
     <div className="px-6 py-6">
       <div className="mb-4 flex items-center justify-between gap-2">
@@ -33,22 +35,25 @@ export function BaseHome() {
       {bases.data && list.length === 0 && (
         <EmptyState
           icon={Table2}
-          title="No bases yet"
+          title="No tables yet"
           action={
-            <>
-              <button type="button" onClick={() => open('blank')} className={btnPrimary}>
-                Blank base
-              </button>
-              <button type="button" onClick={() => open('template')} className={btn}>
-                From a template
-              </button>
-              <button type="button" onClick={() => open('csv')} className={btn}>
-                Import a CSV
-              </button>
-            </>
+            canAdd ? (
+              <>
+                <button type="button" onClick={() => open('template')} className={btnPrimary}>
+                  Start from a template
+                </button>
+                <button
+                  type="button"
+                  onClick={() => open('blank')}
+                  className="text-[13px] text-muted underline"
+                >
+                  Start blank
+                </button>
+              </>
+            ) : undefined
           }
         >
-          A base holds your tables: orders, stock, follow-ups.
+          Keep any list your way: orders, assets, vendors.
         </EmptyState>
       )}
       {list.length > 0 && (

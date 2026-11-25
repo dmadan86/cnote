@@ -254,3 +254,57 @@ export function useScreenConfig<T extends { v: number }>(
     clearError,
   }
 }
+
+type Layout = { v?: number; widgets?: { type?: string }[] }
+type Widget = { id: string; type: string; size: string }
+/** The layout can take the widget: version 1, a widget list, and the widget is not in it yet. */
+const addable = (c: Layout | null | undefined, w: Widget): c is Layout & { widgets: { type?: string }[] } =>
+  !!c && c.v === 1 && Array.isArray(c.widgets) && !c.widgets.some((x) => x?.type === w.type)
+
+/**
+ * Puts one widget at the top of a screen's saved layout without touching the rest, and updates any open copy of that
+ * layout. Does nothing when the person has no saved layout (they see the default, which the caller owns), when the
+ * widget is already in it, or when the layout is from a newer app version.
+ *
+ * It goes through the same per-screen save path as every other layout write: it is applied on top of the latest local
+ * state, including edits that are still waiting to be saved, and is saved by the same queue, so a pending save can
+ * neither drop it nor overwrite it.
+ */
+export async function prependWidget(ws: string, screen: string, widget: Widget) {
+  const open = [...entries.values()].filter((e) => e.ws === ws && e.screen === screen && !e.locked)
+  const jobs: Promise<void>[] = []
+  for (const e of open) {
+    if (e.pending !== undefined || e.ready) {
+      const base = (e.pending ?? e.config) as Layout | undefined
+      if (!(e.customised || e.pending !== undefined || e.saving) || !addable(base, widget)) continue
+      const next = { ...base, widgets: [widget, ...base.widgets] }
+      e.seq++
+      e.config = e.pending = next
+      e.error = undefined
+      jobs.push(new Promise<void>((resolve, reject) => e.waiters.push({ resolve, reject })))
+      writeNow(e)
+    } else {
+      // still loading: read and write inside this screen's queue
+      const run = e.chain
+        .catch(() => {})
+        .then(async () => {
+          const cfg = (await server.get(ws, screen)).config as Layout | null
+          if (!addable(cfg, widget)) return
+          const next = { ...cfg, widgets: [widget, ...cfg.widgets] }
+          await server.set(ws, screen, next)
+          e.seq++
+          e.config = e.saved = next
+          e.customised = true
+          emit(e)
+        })
+      e.chain = run
+      jobs.push(run)
+    }
+  }
+  if (open.length === 0) {
+    // nothing open for this screen, so nothing local can be pending
+    const cfg = (await server.get(ws, screen)).config as Layout | null
+    if (addable(cfg, widget)) await server.set(ws, screen, { ...cfg, widgets: [widget, ...cfg.widgets] })
+  }
+  await Promise.all(jobs)
+}

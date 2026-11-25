@@ -8,7 +8,7 @@ import { NeedSpace } from '@/components/crm/contacts'
 import { type Column, ListTable } from '@/components/list-table'
 import { useShell } from '@/components/shell'
 import { btn, btnPrimary, EmptyState, ErrorText, Field, inputCls, Modal, Pill } from '@/components/ui'
-import { useCmd } from '@/lib/hooks'
+import { useCmd, useFinance, useOpenOnNew } from '@/lib/hooks'
 import { hits, newDraft, SearchBox } from './bits'
 import { FilterBanner, today } from './filter'
 import { type Contact, type Invoice, money, STATUS_LABEL, STATUS_TONE } from './fmt'
@@ -111,8 +111,13 @@ const outstanding = (i: Invoice) =>
 const LIMIT = 500
 
 export function InvoiceList() {
-  const { ws, spaces } = useShell()
+  const { ws, spaces, me } = useShell()
+  const role = me.workspaces.find((w) => w.id === ws)?.role
+  // creating an invoice needs a member with finance access, like invoice.create_draft
+  const finance = useFinance(ws)
+  const canAdd = spaces.length > 0 && role !== 'guest' && finance
   const [adding, setAdding] = useState(false)
+  useOpenOnNew(canAdd, () => setAdding(true))
   const [branch, setBranch] = useState('')
   const [q, setQ] = useState('')
   const { data: all, error } = useCmd<Invoice[]>(ws, 'invoice.list', {
@@ -221,19 +226,18 @@ export function InvoiceList() {
         ),
       )
     : base
+  // really empty only when no search, status filter or branch narrowed the list
+  const narrowed = data !== all || !!branch
   return (
     <div>
       <div className="mb-3 flex items-center gap-2">
         <SearchBox label="Search invoices" value={q} onChange={setQ} loaded={all?.length} />
         <BranchSelect ws={ws} value={branch} onChange={setBranch} />
-        <button
-          type="button"
-          className={`${btnPrimary} ml-auto`}
-          disabled={!spaces.length}
-          onClick={() => setAdding(true)}
-        >
-          <Plus size={14} /> New invoice
-        </button>
+        {canAdd && (
+          <button type="button" className={`${btnPrimary} ml-auto`} onClick={() => setAdding(true)}>
+            <Plus size={14} /> New invoice
+          </button>
+        )}
       </div>
       {base !== all && (
         <FilterBanner
@@ -261,18 +265,25 @@ export function InvoiceList() {
           spaces.length > 0 && data?.length === 0 ? (
             <EmptyState
               icon={FileText}
-              title={data !== all ? 'No invoices match' : 'No invoices yet'}
+              title={narrowed ? 'No invoices match' : 'No invoices yet'}
               action={
-                data !== all ? undefined : (
-                  <button type="button" className={btnPrimary} onClick={() => setAdding(true)}>
-                    <Plus size={14} /> Create first invoice
-                  </button>
+                narrowed || !canAdd ? undefined : (
+                  <>
+                    <button type="button" className={btnPrimary} onClick={() => setAdding(true)}>
+                      <Plus size={14} /> Create your first invoice
+                    </button>
+                    {(role === 'owner' || role === 'admin') && (
+                      <Link href={`/w/${ws}/import/tally`} className="text-[13px] text-muted underline">
+                        Import from Tally
+                      </Link>
+                    )}
+                  </>
                 )
               }
             >
-              {data !== all
+              {narrowed
                 ? 'Nothing fits this filter.'
-                : 'Invoices you send to customers, and what they owe, show up here.'}
+                : 'Make a GST invoice in under a minute and send it by WhatsApp or email.'}
             </EmptyState>
           ) : undefined
         }

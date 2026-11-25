@@ -7,7 +7,7 @@ import { type Column, ListTable } from '@/components/list-table'
 import { useShell } from '@/components/shell'
 import { btn, btnPrimary, EmptyState, ErrorText, Field, inputCls, Modal } from '@/components/ui'
 import { cmd } from '@/lib/api'
-import { useCmd } from '@/lib/hooks'
+import { useCmd, useOpenOnNew } from '@/lib/hooks'
 
 export function ContactForm({
   contact,
@@ -142,9 +142,12 @@ export function NeedSpace() {
 const LIMIT = 500
 
 export function ContactsList() {
-  const { ws, spaces } = useShell()
+  const { ws, spaces, me } = useShell()
+  const role = me.workspaces.find((w) => w.id === ws)?.role
+  const canAdd = spaces.length > 0 && role !== 'guest'
   const [q, setQ] = useState('')
   const [adding, setAdding] = useState(false)
+  useOpenOnNew(canAdd, () => setAdding(true))
   const { data, error, reload } = useCmd<Contact[]>(ws, 'contact.list', { q, limit: LIMIT })
   const columns = useMemo<Column<Contact>[]>(
     () => [
@@ -204,12 +207,7 @@ export function ContactsList() {
         <Link href={`/w/${ws}/import/contacts`} className={`${btn} ml-auto`}>
           Import
         </Link>
-        <button
-          type="button"
-          className={btnPrimary}
-          disabled={!spaces.length}
-          onClick={() => setAdding(true)}
-        >
+        <button type="button" className={btnPrimary} disabled={!canAdd} onClick={() => setAdding(true)}>
           <Plus size={14} /> New contact
         </button>
       </div>
@@ -228,18 +226,23 @@ export function ContactsList() {
           spaces.length > 0 ? (
             <EmptyState
               icon={q ? Search : Users}
-              title={q ? 'No contacts match' : 'No contacts yet'}
+              title={q ? 'No contacts match' : 'No customers yet'}
               action={
-                q ? undefined : (
-                  <button type="button" className={btnPrimary} onClick={() => setAdding(true)}>
-                    <Plus size={14} /> Add first contact
-                  </button>
+                q || !canAdd ? undefined : (
+                  <>
+                    <button type="button" className={btnPrimary} onClick={() => setAdding(true)}>
+                      <Plus size={14} /> Add customer
+                    </button>
+                    {(role === 'owner' || role === 'admin') && (
+                      <Link href={`/w/${ws}/import/contacts`} className="text-[13px] text-muted underline">
+                        Import a CSV file
+                      </Link>
+                    )}
+                  </>
                 )
               }
             >
-              {q
-                ? 'Try a different name, email or GSTIN.'
-                : 'Customers, vendors and leads you deal with live here.'}
+              {q ? 'Try a different name, email or GSTIN.' : 'Add the people you sell to and buy from.'}
             </EmptyState>
           ) : undefined
         }

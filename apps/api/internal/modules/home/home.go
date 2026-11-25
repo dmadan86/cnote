@@ -1,7 +1,7 @@
 // Package home is the workspace home dashboard: one read command, home.summary, with the tiles and the
 // "needs your attention" list. Every query reuses the visibility rules of the list commands it summarizes
 // (readable spaces, core.note_access, the Member gate of report.*), and a module switched off in
-// settings.modules contributes nothing.
+// settings.hidden_modules contributes nothing.
 package home
 
 import (
@@ -20,7 +20,7 @@ import (
 )
 
 func Commands() []command.Command {
-	return []command.Command{command.NewCommand("home.summary", command.GroupRead, summary)}
+	return append([]command.Command{command.NewCommand("home.summary", command.GroupRead, summary)}, setupCommands()...)
 }
 
 const attentionMax = 10
@@ -82,10 +82,10 @@ func summary(c *command.Ctx, input json.RawMessage) (any, error) {
 		return nil, command.DB(err)
 	}
 	var st struct {
-		Modules *[]string `json:"modules"`
+		Hidden []string `json:"hidden_modules"`
 	}
 	_ = json.Unmarshal(raw, &st)
-	on := func(k string) bool { return st.Modules == nil || slices.Contains(*st.Modules, k) }
+	on := func(k string) bool { return !slices.Contains(st.Hidden, k) }
 
 	spaces, err := access.ReadableSpaceIDs(c)
 	if err != nil {

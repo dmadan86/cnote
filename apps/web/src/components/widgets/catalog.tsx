@@ -4,12 +4,14 @@ import Link from 'next/link'
 import { useState } from 'react'
 import { dayIST, money } from '@/components/billing/fmt'
 import { AskCard, GROUPS, KIND, plural, type Summary, summaryTiles } from '@/components/home/dashboard'
+import { SetupGuide } from '@/components/home/setup-guide'
 import { CheckInCard } from '@/components/hr/checkin'
 import type { Spec } from '@/components/reports/lib'
 import { useShell } from '@/components/shell'
 import { EmptyState } from '@/components/ui'
 import { cmd } from '@/lib/api'
 import { moduleOn } from '@/lib/modules'
+import { GOALS } from '@/lib/onboarding'
 import type { SiteStats } from '@/lib/sites'
 import { full, HBars, type Point, Sparkline, short, TrendChart } from './charts'
 import { useFetched } from './data'
@@ -485,6 +487,15 @@ const ATTN = (
 })
 
 export const homeWidgets: WidgetDef[] = [
+  {
+    type: 'setup',
+    title: 'Get set up',
+    group: 'Shortcuts',
+    sizes: ['l'],
+    command: 'setup.status',
+    available: (c) => c.role === 'owner' || c.role === 'admin',
+    render: ({ ctx }) => <SetupGuide ctx={ctx} />,
+  },
   ...tileWidgets,
   {
     type: 'kpi.sales',
@@ -622,7 +633,21 @@ const ALL_TILES = [
 const tiles = (...keep: string[]) => ALL_TILES.filter(([t]) => !keep.length || keep.includes(t))
 
 /** Starting layout by role; widgets whose module is off or that the person cannot use are dropped at render time. */
-export function homeDefaults(c: Pick<Ctx, 'role' | 'finance'>): [string, WidgetDef['sizes'][number]][] {
+export function homeDefaults(
+  c: Pick<Ctx, 'role' | 'finance'>,
+  goal?: string | null,
+): [string, WidgetDef['sizes'][number]][] {
+  const list = roleDefaults(c)
+  // the first goal chosen in setup moves its widgets up, right under the guide; saved layouts are never touched
+  const up: readonly string[] = GOALS.find((g) => g.id === goal)?.widgets ?? []
+  if (!up.length) return list
+  const first = list.filter(([t]) => up.includes(t))
+  const rest = list.filter(([t]) => !up.includes(t))
+  const at = rest.findIndex(([t]) => t === 'setup') + 1
+  return [...rest.slice(0, at), ...first, ...rest.slice(at)]
+}
+
+function roleDefaults(c: Pick<Ctx, 'role' | 'finance'>): [string, WidgetDef['sizes'][number]][] {
   const head: [string, 's' | 'm' | 'l'][] = [
     ['ask', 'l'],
     ['check_in', 'l'],
@@ -630,6 +655,7 @@ export function homeDefaults(c: Pick<Ctx, 'role' | 'finance'>): [string, WidgetD
   if (c.role === 'guest') return [...head, ...tiles('tile.tasks'), ['list.attention', 'l']]
   if (c.role === 'owner' || c.role === 'admin')
     return [
+      ['setup', 'l'],
       ...head,
       ...tiles().slice(0, 1),
       ['kpi.sales', 's'],

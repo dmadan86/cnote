@@ -16,8 +16,8 @@ func buildEnv(c *command.Ctx) (Env, error) {
 		return Env{}, command.DB(err)
 	}
 	var st struct {
-		Modules      *[]string `json:"modules"`
-		FYStartMonth int       `json:"fy_start_month"`
+		Hidden       []string `json:"hidden_modules"`
+		FYStartMonth int      `json:"fy_start_month"`
 	}
 	_ = json.Unmarshal(raw, &st)
 	if st.FYStartMonth < 1 || st.FYStartMonth > 12 {
@@ -34,7 +34,7 @@ func buildEnv(c *command.Ctx) (Env, error) {
 	uid, admin := access.Viewer(c)
 	return Env{
 		Spaces: spaces, UserID: uid, Admin: admin, Role: int(c.Principal.Role), Finance: fin,
-		ModuleOn:     func(k string) bool { return st.Modules == nil || slices.Contains(*st.Modules, k) },
+		ModuleOn:     func(k string) bool { return !slices.Contains(st.Hidden, k) },
 		FYStartMonth: st.FYStartMonth, Today: billing.TodayIST(),
 	}, nil
 }

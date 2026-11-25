@@ -150,10 +150,16 @@ function Browse({ ws, isAdmin }: { ws: string; isAdmin: boolean }) {
   }
   const toggleOfficial = (o: Official) =>
     run(async () => {
-      const w = await cmd<{ settings: { modules?: string[] } }>(ws, 'workspace.get')
+      const w = await cmd<{ settings: { modules?: string[]; hidden_modules?: string[] } }>(
+        ws,
+        'workspace.get',
+      )
+      // hidden_modules drives the sidebar; modules is still read by Home and Reports on the server
       const cur = w.settings.modules ?? OFFICIAL.map((x) => x.key)
       const modules = cur.includes(o.key) ? cur.filter((k) => k !== o.key) : [...cur, o.key]
-      await cmd(ws, 'workspace.update', { settings: { ...w.settings, modules } })
+      const off = w.settings.hidden_modules ?? []
+      const hidden_modules = off.includes(o.key) ? off.filter((k) => k !== o.key) : [...off, o.key]
+      await cmd(ws, 'workspace.update', { settings: { modules, hidden_modules } })
       shell.reload()
     })
   const close = () => {

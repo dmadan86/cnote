@@ -149,6 +149,7 @@ func Commands() []command.Command {
 	for _, group := range [][]command.Command{CatalogueCommands(), BlogCommands(), PagesCommands(), EditorCommands(), DomainsCommands(), StatsCommands(), ExportCommands(), I18nCommands(), AbuseCommands(), WebRiskCommands(), CloudflareCommands()} {
 		commands = append(commands, group...)
 	}
+	commands = append(commands, command.Exists("setup.site_exists", "select 1 from sites.sites where workspace_id = $1::uuid and published_version_id is not null"))
 	return commands
 }
 
