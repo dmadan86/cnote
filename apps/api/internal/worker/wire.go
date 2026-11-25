@@ -48,7 +48,7 @@ func New(pool *pgxpool.Pool, reg *command.Registry) *Worker {
 	w.OnEvent("invoice.", reminders.OnEvent)
 	w.OnEvent("credit_note.", reminders.OnEvent)
 	reminders.Pool = pool
-	MailHooks["reminder"] = MailHook{Before: reminders.BeforeSend, After: reminders.AfterSend, Failed: reminders.SendFailed}
+	registerMailHook("reminder", MailHook{Before: reminders.BeforeSend, After: reminders.AfterSend, Failed: reminders.SendFailed})
 	w.OnJob("ai.index_note", ai.IndexJob)
 	w.OnJob("docs.propose_edit", proposeEditJob)
 	w.OnJob("hook.deliver", hooks.DeliverJob)

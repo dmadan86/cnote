@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -27,6 +28,14 @@ type b1fix struct {
 	note     string
 }
 
+func setMailHook(h func(string) error) {
+	if h == nil {
+		mailHook.Store(nil)
+	} else {
+		mailHook.Store(&h)
+	}
+}
+
 func b1fixSetup(t *testing.T) b1fix {
 	smtp := startSMTP(t)
 	t.Setenv("SMTP_URL", "smtp://"+smtp.ln.Addr().String())
@@ -41,7 +50,7 @@ func b1fixSetup(t *testing.T) b1fix {
 	sp := str(e.apiCmd(tess, "space.create", map[string]any{"key": "DOC", "name": "Docs", "visibility": "open"}), "id")
 	note := str(e.apiCmd(tess, "note.create", map[string]any{"space_id": sp, "title": "Plan", "content_md": "hi"}), "id")
 	e.settle(tess.ws)
-	t.Cleanup(func() { mailHook = nil; smtpTimeoutNS.Store(int64(20 * time.Second)) })
+	t.Cleanup(func() { setMailHook(nil); smtpTimeoutNS.Store(int64(20 * time.Second)) })
 	return b1fix{e, smtp, tess, mo, note}
 }
 
@@ -125,13 +134,13 @@ func (f b1fix) state(t *testing.T, notif string) (s string) {
 func (f b1fix) raceWhileSending(t *testing.T, payload json.RawMessage, change func(tx pgx.Tx) error) {
 	t.Helper()
 	atSend, release := make(chan struct{}), make(chan struct{})
-	mailHook = func(stage string) error {
+	setMailHook(func(stage string) error {
 		if stage == "send" {
 			close(atSend)
 			<-release
 		}
 		return nil
-	}
+	})
 	jobDone, changeDone := make(chan error, 1), make(chan error, 1)
 	go func() { jobDone <- f.run(t, payload) }()
 	select {
@@ -195,12 +204,12 @@ func TestMembershipRemovalWaitsForSendInFlight(t *testing.T) {
 func TestMailNotSentWhenAccessRemovedJustBeforeTheFinalCheck(t *testing.T) {
 	f := b1fixSetup(t)
 	notif, payload := f.queued(t)
-	mailHook = func(stage string) error {
+	setMailHook(func(stage string) error {
 		if stage == "final" { // page restrictions are not locked: this change commits in the gap the final check closes
 			f.exec(t, "update core.notes set restriction = 'view' where id = $1::uuid", f.note)
 		}
 		return nil
-	}
+	})
 	if err := f.run(t, payload); err != nil {
 		t.Fatal(err)
 	}
@@ -231,14 +240,14 @@ func TestSMTPIsBoundedByATimeout(t *testing.T) {
 func TestCrashBetweenSMTPAndCommitSendsNoSecondMail(t *testing.T) {
 	f := b1fixSetup(t)
 	notif, payload := f.queued(t)
-	crash := true
-	mailHook = func(stage string) error {
-		if stage == "sent" && crash {
-			crash = false
+	var crash atomic.Bool
+	crash.Store(true)
+	setMailHook(func(stage string) error {
+		if stage == "sent" && crash.Swap(false) {
 			return errors.New("crash after SMTP, before commit")
 		}
 		return nil
-	}
+	})
 	if err := f.run(t, payload); err == nil {
 		t.Fatal("the first run must fail")
 	}

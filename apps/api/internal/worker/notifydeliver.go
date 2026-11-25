@@ -95,13 +95,13 @@ func smtpTimeout() time.Duration { return time.Duration(smtpTimeoutNS.Load()) }
 
 // mailHook lets tests stop the job at a named point: "final" (before the final eligibility check), "send" (right before SMTP) and
 // "sent" (right after SMTP, before the job commits; an error it returns plays a crash or failed commit). Nil in production.
-var mailHook func(stage string) error
+var mailHook atomic.Pointer[func(string) error]
 
 func hook(stage string) error {
-	if mailHook == nil {
-		return nil
+	if h := mailHook.Load(); h != nil {
+		return (*h)(stage)
 	}
-	return mailHook(stage)
+	return nil
 }
 
 // mailMarker runs f in its own short transaction on the pool, so its effect survives a rollback of the job's transaction.
