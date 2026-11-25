@@ -1,7 +1,9 @@
 package server_test
 
 import (
+	"context"
 	"encoding/json"
+	"os"
 	"sync"
 	"testing"
 )
@@ -181,5 +183,61 @@ func TestLegacyModulesListHidesNothing(t *testing.T) {
 	b.ok("workspace.update", map[string]any{"settings": map[string]any{"hidden_modules": []string{"billing"}}})
 	if _, ok := summary()["payments_pending"]; ok {
 		t.Fatal("billing tile still shown with billing in hidden_modules")
+	}
+}
+
+// migrations/1330: workspaces that uninstalled a Marketplace app before hidden_modules existed keep it uninstalled,
+// and nothing else (docs, projects, crm, billing, tables, website) is hidden by a leftover `modules` list.
+func TestHiddenModulesMigration(t *testing.T) {
+	sqlText, err := os.ReadFile("../../../../migrations/1330_hidden_modules.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := newBT(t, false)
+	mk := func(settings map[string]any) *bt {
+		o := b.env.tenant(false)
+		o.ok("workspace.update", map[string]any{"settings": settings})
+		return o
+	}
+	uninstalled := mk(map[string]any{"modules": []string{"docs", "projects", "crm", "billing"}}) // whiteboard uninstalled
+	preset := mk(map[string]any{"modules": []string{"docs", "crm", "billing"}})                   // preset, projects not listed
+	reinstalled := mk(map[string]any{"modules": []string{"docs", "crm", "whiteboard"}})           // whiteboard installed
+	none := mk(map[string]any{})
+	already := mk(map[string]any{"modules": []string{"docs"}, "hidden_modules": []string{"crm"}})
+	if _, err := adminPool(t).Exec(context.Background(), string(sqlText)); err != nil {
+		t.Fatal(err)
+	}
+	hidden := func(o *bt) any { return o.ok("workspace.get", map[string]any{})["settings"].(map[string]any)["hidden_modules"] }
+	eq(t, hidden(uninstalled), []any{"whiteboard"})
+	eq(t, hidden(preset), []any{"whiteboard"})
+	eq(t, hidden(reinstalled), nil)
+	eq(t, hidden(none), nil)
+	eq(t, hidden(already), []any{"crm"})
+}
+
+// access.me tells the web whether money commands are open to the caller, by the check invoice.create_draft uses.
+func TestAccessMeFinance(t *testing.T) {
+	b := newBT(t, false)
+	member := b.addMember(b.owner, b.signup("M", false), "member")
+	finance := func(w who) bool {
+		r := b.call(w, "access.me", map[string]any{})
+		if r.status != 200 {
+			t.Fatalf("access.me: %d %s", r.status, r.body)
+		}
+		return r.json()["finance"] == true
+	}
+	if !finance(b.owner) {
+		t.Fatal("owner has finance access")
+	}
+	b.ok("member.update", map[string]any{"user_id": member.userID, "finance_access": false})
+	if finance(member) {
+		t.Fatal("member without finance access reported as having it")
+	}
+	if r := b.call(member, "invoice.create_draft", map[string]any{"space_id": b.space, "contact_id": b.contact, "lines": []map[string]any{{"description": "x", "unit_price_minor": 1}}}); r.status != 403 {
+		t.Fatalf("invoice.create_draft must refuse them too: %d %s", r.status, r.body)
+	}
+	b.ok("member.update", map[string]any{"user_id": member.userID, "finance_access": true})
+	if !finance(member) {
+		t.Fatal("member with finance access reported as having none")
 	}
 }

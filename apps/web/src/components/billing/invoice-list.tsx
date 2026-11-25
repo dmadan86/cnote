@@ -8,7 +8,7 @@ import { NeedSpace } from '@/components/crm/contacts'
 import { type Column, ListTable } from '@/components/list-table'
 import { useShell } from '@/components/shell'
 import { btn, btnPrimary, EmptyState, ErrorText, Field, inputCls, Modal, Pill } from '@/components/ui'
-import { useCmd, useOpenOnNew } from '@/lib/hooks'
+import { useCmd, useFinance, useOpenOnNew } from '@/lib/hooks'
 import { hits, newDraft, SearchBox } from './bits'
 import { FilterBanner, today } from './filter'
 import { type Contact, type Invoice, money, STATUS_LABEL, STATUS_TONE } from './fmt'
@@ -113,7 +113,9 @@ const LIMIT = 500
 export function InvoiceList() {
   const { ws, spaces, me } = useShell()
   const role = me.workspaces.find((w) => w.id === ws)?.role
-  const canAdd = spaces.length > 0 && role !== 'guest'
+  // creating an invoice needs a member with finance access, like invoice.create_draft
+  const finance = useFinance(ws)
+  const canAdd = spaces.length > 0 && role !== 'guest' && finance
   const [adding, setAdding] = useState(false)
   useOpenOnNew(canAdd, () => setAdding(true))
   const [branch, setBranch] = useState('')
@@ -231,14 +233,11 @@ export function InvoiceList() {
       <div className="mb-3 flex items-center gap-2">
         <SearchBox label="Search invoices" value={q} onChange={setQ} loaded={all?.length} />
         <BranchSelect ws={ws} value={branch} onChange={setBranch} />
-        <button
-          type="button"
-          className={`${btnPrimary} ml-auto`}
-          disabled={!canAdd}
-          onClick={() => setAdding(true)}
-        >
-          <Plus size={14} /> New invoice
-        </button>
+        {canAdd && (
+          <button type="button" className={`${btnPrimary} ml-auto`} onClick={() => setAdding(true)}>
+            <Plus size={14} /> New invoice
+          </button>
+        )}
       </div>
       {base !== all && (
         <FilterBanner

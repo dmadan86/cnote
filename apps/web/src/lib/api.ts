@@ -11,13 +11,17 @@ export class CmdFailure extends Error {
 }
 
 /** Browser calls go through the Next rewrite (/api/*) so the session cookie stays first-party. */
-export async function api<T>(path: string, init?: { method?: string; body?: unknown }): Promise<T> {
+export async function api<T>(
+  path: string,
+  init?: { method?: string; body?: unknown; signal?: AbortSignal },
+): Promise<T> {
   const hasBody = init?.body !== undefined
   const res = await fetch(path, {
     method: init?.method ?? (hasBody ? 'POST' : 'GET'),
     headers: hasBody ? { 'content-type': 'application/json' } : undefined,
     body: hasBody ? JSON.stringify(init?.body) : undefined,
     credentials: 'same-origin',
+    signal: init?.signal,
   })
   const data = await res.json().catch(() => ({}))
   if (!res.ok) {
@@ -27,8 +31,8 @@ export async function api<T>(path: string, init?: { method?: string; body?: unkn
   return data as T
 }
 
-export const cmd = <T = unknown>(ws: string, name: string, input: unknown = {}) =>
-  api<T>(`/api/w/${ws}/commands/${name}`, { body: input })
+export const cmd = <T = unknown>(ws: string, name: string, input: unknown = {}, signal?: AbortSignal) =>
+  api<T>(`/api/w/${ws}/commands/${name}`, { body: input, signal })
 
 export type Me = {
   user: { id: string; email: string; name: string }

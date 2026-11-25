@@ -250,6 +250,7 @@ var mcpMeta = map[string]meta{
 	"dashboard.list":         {"Dashboards the caller can see: their own and the workspace-visible ones.", schema(nil, props{})},
 	"dashboard.delete":       {"Delete a dashboard (owner or admin). Reports are kept. Needs human confirmation for agents.", schema([]string{"id"}, props{"id": id})},
 	"setup.status":           {"Admins only. The Get set up guide on Home: [{key, done, href}] for the company profile, first customer, first invoice, published website, first table and first data import. Rows for modules the workspace has switched off are left out.", schema(nil, props{})},
+	"access.me":              {"Whether the caller has finance access (may create and read invoices, payments and other money records): {finance}.", schema(nil, props{})},
 	"onboarding.complete":    {"Admins only. Mark first-run setup finished. Safe to repeat: the first time stays. Returns {done_at}.", schema(nil, props{})},
 	"home.summary":           {"Owner home: what needs attention today (tasks, invoices, bills, quotes, deals, confirmations). branch_id limits the invoice tiles to one branch.", schema(nil, props{"branch_id": id})},
 	"audit.list":             {"Search the workspace audit log (events) by actor, kind prefix, page and dates, newest first, 200 per page. Admins only.", schema(nil, props{"actor_id": str, "kind_prefix": str, "note_id": id, "from": date, "to": date, "cursor": str, "limit": num})},

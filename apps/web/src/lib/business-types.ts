@@ -56,16 +56,26 @@ export const BUSINESS_TYPES: BusinessType[] = [
 
 export const COMPANY_SIZES = ['1-10', '11-50', '51-200', '200+'] as const
 
-export const applyBusinessType = (ws: string, id: string, extra: { company_size?: string } = {}) => {
+export const applyBusinessType = (
+  ws: string,
+  id: string,
+  extra: { company_size?: string } = {},
+  signal?: AbortSignal,
+) => {
   const t = BUSINESS_TYPES.find((b) => b.id === id)
   // A business type sets deal stage labels only; it never writes or hides modules. "other" only records the choice.
-  return cmd(ws, 'workspace.update', {
-    settings: {
-      business_type: id,
-      ...(extra.company_size ? { company_size: extra.company_size } : {}),
-      ...(t ? { deal_stage_labels: t.labels } : {}),
+  return cmd(
+    ws,
+    'workspace.update',
+    {
+      settings: {
+        business_type: id,
+        ...(extra.company_size ? { company_size: extra.company_size } : {}),
+        ...(t ? { deal_stage_labels: t.labels } : {}),
+      },
     },
-  })
+    signal,
+  )
 }
 
 export const saveCompanySize = (ws: string, company_size: string) =>

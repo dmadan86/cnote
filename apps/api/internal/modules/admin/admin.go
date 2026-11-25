@@ -39,6 +39,7 @@ func Commands() []command.Command {
 		{"apikey.revoke", command.GroupAdmin, command.Admin, false, keyRevoke},
 		{"workspace.get", command.GroupRead, command.Guest, false, workspaceGet},
 		{"workspace.update", command.GroupAdmin, command.Admin, false, workspaceUpdate},
+		{"access.me", command.GroupRead, command.Guest, false, accessMe},
 		{"onboarding.complete", command.GroupAdmin, command.Admin, false, onboardingComplete},
 		{"confirmation.list", command.GroupRead, command.Member, false, confirmationList},
 		{"confirmation.decide", command.GroupAdmin, command.Member, false, confirmationDecide},
@@ -405,6 +406,16 @@ func workspaceUpdate(c *command.Ctx, b json.RawMessage) (any, error) {
 	}
 	_, e = c.Emit("workspace.settings_updated", nil, map[string]any{"keys": keys})
 	return out, e
+}
+
+// access.me {} -> {finance}: whether the caller may run money commands (invoice.create_draft and the rest), by the same
+// FinanceAllowed check the command gate uses, so the web hides what would be refused.
+func accessMe(c *command.Ctx, b json.RawMessage) (any, error) {
+	if _, e := object(b); e != nil {
+		return nil, e
+	}
+	ok, err := c.FinanceAllowed()
+	return map[string]bool{"finance": ok}, err
 }
 
 // onboarding.complete {} -> {done_at}: marks first-run setup finished. Monotonic: one UPDATE that matches only while

@@ -7,7 +7,9 @@ import { BusinessTypePicker } from '@/components/business-type'
 import { useShell } from '@/components/shell'
 import { btn, btnPrimary, Field, inputCls } from '@/components/ui'
 import { cmd } from '@/lib/api'
-import { GOALS, GSTIN, type Pending, readPending, runPending, writePending } from '@/lib/onboarding'
+import { useFinance } from '@/lib/hooks'
+import { moduleOn } from '@/lib/modules'
+import { GOALS, GSTIN, type Pending, runPending, writePending } from '@/lib/onboarding'
 
 const STEPS = 3
 type Profile = { legal_name?: string; state_code?: string; gstin?: string; address?: string }
@@ -23,11 +25,14 @@ const gstinError = (g: string) =>
 
 /** First-run setup: three steps, every one skippable. It never blocks the app: "Skip for now" and "Go to C Note" always reach Home. */
 export function Welcome() {
-  const { ws, me, reload } = useShell()
+  const { ws, me, reload, modules } = useShell()
   const router = useRouter()
   const home = `/w/${ws}`
   const role = me.workspaces.find((w) => w.id === ws)?.role
   const allowed = role === 'owner' || role === 'admin'
+  const finance = useFinance(ws)
+  // only what this person can actually do: not in an uninstalled module, and money flows need finance access
+  const goals = GOALS.filter((g) => moduleOn(modules, g.module ?? '') && (!g.finance || finance))
   const [step, setStep] = useState(1)
   const [type, setType] = useState<string>()
   const [name, setName] = useState('')
@@ -40,7 +45,25 @@ export function Welcome() {
   const [busy, setBusy] = useState(false)
   // saves that failed: they ride along to Home, which offers "Try again"
   const failed = useRef<Pending>({})
+  // Every save run gets its own controller. A newer run, leaving, or navigating away aborts the one in flight, so a
+  // late answer never changes what is shown or what is kept for "Try again".
+  const run = useRef<AbortController | undefined>(undefined)
+  const next = () => {
+    run.current?.abort()
+    const c = new AbortController()
+    run.current = c
+    return c
+  }
   const heading = useRef<HTMLHeadingElement>(null)
+
+  // navigating away aborts the run in flight; whatever did not finish is kept for Home's "Try again"
+  useEffect(
+    () => () => {
+      run.current?.abort()
+      if (Object.keys(failed.current).length) writePending(ws, failed.current)
+    },
+    [ws],
+  )
 
   useEffect(() => {
     if (me && !allowed) router.replace(home)
@@ -79,27 +102,28 @@ export function Welcome() {
   /** Always reaches Home. Anything that does not save is kept for the "Try again" notice there. */
   async function leave(to = home, extra: Pending = {}) {
     setBusy(true)
-    const all: Pending = { ...failed.current, ...extra, complete: true }
-    // a hung request must not hold the person here: after a few seconds, keep the saves for "Try again" and go
-    const slow = new Promise<{ left: Pending }>((r) => setTimeout(() => r({ left: all }), 4000))
-    const { left } = await Promise.race([runPending(ws, all), slow])
-    writePending(ws, left)
+    const c = next()
+    Object.assign(failed.current, extra, { complete: true })
+    // a hung request must not hold the person here: after a few seconds it is aborted, kept for "Try again", and we go
+    const timer = setTimeout(() => c.abort(), 4000)
+    await runPending(ws, { ...failed.current }, c.signal, (k) => delete failed.current[k])
+    clearTimeout(timer)
+    writePending(ws, failed.current)
     reload()
     router.push(to)
   }
 
   /** Saves what this step collected; on failure stays here with the reason so the person can retry or skip. */
-  async function save(p: Pending, next: () => void) {
+  async function save(p: Pending, onOk: () => void) {
     setBusy(true)
     setError(undefined)
-    const { left, error: e } = await runPending(ws, p)
+    const c = next()
+    Object.assign(failed.current, p) // newest values win; each is cleared only when it is saved
+    const { error: e } = await runPending(ws, p, c.signal, (k) => delete failed.current[k])
+    if (c.signal.aborted) return // superseded by a newer save or by leaving
     setBusy(false)
-    if (e) {
-      Object.assign(failed.current, left)
-      return setError(e.message)
-    }
-    for (const k of Object.keys(p)) delete failed.current[k as keyof Pending]
-    next()
+    if (e) return setError(e.message)
+    onOk()
   }
 
   function submit(ev: React.FormEvent) {
@@ -120,7 +144,7 @@ export function Welcome() {
       if (address.trim()) company.address = address.trim()
       return save({ company }, () => setStep(3))
     }
-    const g = GOALS.find((x) => x.id === goal)
+    const g = goals.find((x) => x.id === goal)
     if (!g) return setError('Pick one to start with.')
     return leave(`${home}${g.path}`, { goal: g.id })
   }
@@ -251,7 +275,7 @@ export function Welcome() {
             <legend className="mb-2 text-[13px] text-muted">
               Pick one. We will open it for you. Everything else stays in the sidebar.
             </legend>
-            {GOALS.map((g) => (
+            {goals.map((g) => (
               <label
                 key={g.id}
                 className="flex min-h-11 cursor-pointer items-center gap-3 rounded-lg border border-line p-3 hover:bg-hover has-[:checked]:border-accent has-[:checked]:bg-hover has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-accent"

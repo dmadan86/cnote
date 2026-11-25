@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useShell } from '@/components/shell'
 import { type Pending, readPending, runPending, writePending } from '@/lib/onboarding'
 
@@ -8,16 +8,24 @@ export function SetupToast() {
   const { ws } = useShell()
   const [left, setLeft] = useState<Pending>({})
   const [busy, setBusy] = useState(false)
+  const run = useRef<AbortController | undefined>(undefined)
   useEffect(() => setLeft(readPending(ws)), [ws])
+  useEffect(() => () => run.current?.abort(), [])
   if (!Object.keys(left).length) return null
   const retry = async () => {
     setBusy(true)
-    const r = await runPending(ws, left)
+    run.current?.abort()
+    const c = new AbortController()
+    run.current = c
+    // the latest stored values, not the ones this notice was first shown with
+    const r = await runPending(ws, readPending(ws), c.signal)
+    if (c.signal.aborted) return // a newer retry or leaving Home: its answer is the one that counts
     writePending(ws, r.left)
     setLeft(r.left)
     setBusy(false)
   }
   const dismiss = () => {
+    run.current?.abort()
     writePending(ws, {})
     setLeft({})
   }

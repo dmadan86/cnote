@@ -28,6 +28,11 @@ export function useCmd<T>(ws: string, name: string, input: unknown = {}, enabled
   return { data, error, reload, loading: !data && !error }
 }
 
+/** Finance access of the signed-in person: the server's own check, the one `invoice.create_draft` is gated by. False until known. */
+export function useFinance(ws: string) {
+  return useCmd<{ finance: boolean }>(ws, 'access.me').data?.finance === true
+}
+
 /** `?new=1` opens a create dialog once (setup links use it), then drops the parameter. `ready` waits for what the dialog needs. */
 export function useOpenOnNew(ready: boolean, open: () => void) {
   const wanted = useSearchParams().get('new') === '1'

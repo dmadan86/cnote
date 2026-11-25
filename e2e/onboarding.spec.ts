@@ -103,6 +103,32 @@ test('"Go to C Note" reaches Home from any step', async ({ page }) => {
   expect(await doneAt(page)).toBeTruthy()
 })
 
+test('a save that hangs is aborted, kept, and retried once from Home', async ({ page }) => {
+  await signup(page, undefined, { wizard: true })
+  const hang = () => {} // never answers
+  await page.route(/\/commands\/company\.update$/, hang)
+  const aborted: string[] = []
+  page.on('requestfailed', (r) => r.url().endsWith('/commands/company.update') && aborted.push(r.url()))
+  await page.getByRole('radio', { name: /Trading company/ }).check({ force: true })
+  await page.getByLabel('Business name').fill('First name')
+  await page.getByRole('button', { name: 'Continue' }).click() // the name save never answers
+  await expect(page.getByRole('button', { name: 'Continue' })).toBeDisabled()
+  await page.getByRole('button', { name: 'Skip for now' }).click()
+  await expect(page).toHaveURL(/\/w\/[0-9a-f-]+$/, { timeout: 15_000 })
+  const notice = page.getByRole('status').filter({ hasText: 'Some of your setup was not saved.' })
+  await expect(notice).toBeVisible()
+  expect(aborted.length).toBeGreaterThan(0)
+
+  await page.unroute(/\/commands\/company\.update$/, hang)
+  const sent: string[] = []
+  page.on('request', (r) => r.url().endsWith('/commands/company.update') && sent.push(r.postData() ?? ''))
+  await notice.getByRole('button', { name: 'Try again' }).click()
+  await expect(notice).toHaveCount(0)
+  await expect.poll(() => doneAt(page)).toBeTruthy()
+  expect((await run<{ legal_name: string }>(page, 'company.get')).legal_name).toBe('First name')
+  expect(sent).toHaveLength(1)
+})
+
 test('a failed save still reaches Home, where a notice offers to try again', async ({ page }) => {
   await signup(page, undefined, { wizard: true })
   const block = (r: { abort: () => Promise<void> }) => r.abort()
@@ -204,6 +230,37 @@ test.describe('the "Get set up" guide', () => {
     await expect.poll(saved).toEqual(['setup', 'ask', 'links.quick'])
   })
 
+  test('Setup guide right after a layout edit keeps both changes', async ({ page }) => {
+    await signup(page)
+    const guide = page.getByRole('region', { name: 'Get set up' })
+    await guide.getByRole('button', { name: 'Hide setup guide' }).click() // a saved layout now exists
+    await expect(guide).toHaveCount(0)
+    await page.getByRole('button', { name: 'Customise' }).click()
+    await page.getByRole('button', { name: 'Remove Ask your business' }).click()
+    // a slow save of the edit: it is still in flight when the guide is restored
+    let slowed = false
+    await page.route(/\/commands\/ui_config\.set$/, async (route) => {
+      if (!slowed) {
+        slowed = true
+        await new Promise((r) => setTimeout(r, 1500))
+      }
+      await route.continue()
+    })
+    await page.getByRole('button', { name: 'Done' }).click()
+    // no pause: the edit is still waiting in the save queue when the guide is restored
+    await page.getByRole('button', { name: 'User menu' }).click()
+    await page.getByRole('menuitem', { name: 'Setup guide' }).click()
+    await expect(guide).toBeVisible()
+    await page.reload()
+    await expect(guide).toBeVisible()
+    await expect(page.getByRole('form', { name: 'Ask your business' })).toHaveCount(0)
+    const types = (
+      await run<{ config: { widgets: { type: string }[] } }>(page, 'ui_config.get', { screen: 'home' })
+    ).config.widgets.map((w) => w.type)
+    expect(types[0]).toBe('setup')
+    expect(types).not.toContain('ask')
+  })
+
   test('someone who never customised can hide it and bring it back', async ({ page }) => {
     await signup(page)
     const guide = page.getByRole('region', { name: 'Get set up' })
@@ -232,4 +289,33 @@ test('the four first-run empty states', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Start from a template' })).toBeVisible()
   await page.goto(`${base}/site`)
   await expect(page.getByText(/No website yet/)).toBeVisible()
+})
+
+test('a member without finance access is not offered a new invoice', async ({ browser }) => {
+  const oc = await browser.newContext()
+  const mc = await browser.newContext()
+  const owner = await oc.newPage()
+  const member = await mc.newPage()
+  try {
+    await signup(owner)
+    const ws = wsOf(owner)
+    const u = newUser()
+    await signup(member, u)
+    await run(owner, 'member.add', { email: u.email, role: 'member' })
+    const id = (await run<{ user_id: string; email: string }[]>(owner, 'member.list')).find(
+      (m) => m.email === u.email,
+    )?.user_id
+    await run(owner, 'member.update', { user_id: id, finance_access: false })
+    await member.goto(`/w/${ws}/billing?new=1`)
+    await expect(member.getByLabel('Search invoices')).toBeVisible()
+    await expect(member.getByRole('button', { name: 'New invoice' })).toHaveCount(0)
+    await expect(member.getByRole('dialog')).toHaveCount(0)
+    // with finance access the same link opens the composer
+    await run(owner, 'member.update', { user_id: id, finance_access: true })
+    await member.goto(`/w/${ws}/billing?new=1`)
+    await expect(member.getByRole('dialog', { name: 'New invoice' })).toBeVisible()
+  } finally {
+    await oc.close()
+    await mc.close()
+  }
 })
