@@ -5,13 +5,16 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"regexp"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // Email invitations (docs/design/onboarding.md 6.6).
@@ -296,16 +299,47 @@ func TestInviteConcurrentAcceptCreatesOneAccount(t *testing.T) {
 	e := newInv(t)
 	email := e.newEmail()
 	tok := e.link("admin", email)
+	// newEnv uses a five-connection pool, smaller than the twelve requests.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 	var wg sync.WaitGroup
-	res := make([]resp, 8)
+	res := make([]resp, 12)
+	errs := make([]error, len(res))
+	start := make(chan struct{})
 	for i := range res {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			res[i] = e.accept(tok, who{}, map[string]any{"password": rnd() + rnd(), "name": "Racer"})
+			<-start
+			body, _ := json.Marshal(map[string]any{"password": rnd() + rnd(), "name": "Racer"})
+			req, err := http.NewRequestWithContext(ctx, http.MethodPost, e.api+"/api/invite/"+tok+"/accept", bytes.NewReader(body))
+			if err != nil {
+				errs[i] = err
+				return
+			}
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Origin", e.api)
+			for k, v := range invIP() {
+				req.Header.Set(k, v)
+			}
+			r, err := http.DefaultClient.Do(req)
+			if err != nil {
+				errs[i] = err
+				return
+			}
+			defer r.Body.Close()
+			data, err := io.ReadAll(r.Body)
+			errs[i] = err
+			res[i] = resp{r.StatusCode, data}
 		}()
 	}
+	close(start)
 	wg.Wait()
+	for _, err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent accept: %v", err)
+		}
+	}
 	joined := 0
 	for _, r := range res {
 		switch state(r) {

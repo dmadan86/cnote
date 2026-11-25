@@ -213,6 +213,37 @@ func (s *Server) inviteAccept(w http.ResponseWriter, r *http.Request, ws, hash s
 			return
 		}
 	}
+	// Resolve the account before taking the invitation row lock, and release the
+	// connection before any session or signup checks acquire another one.
+	readTx, err := db.BeginTenant(ctx, s.Pool, ws)
+	if err != nil {
+		inviteFail(w, err)
+		return
+	}
+	var preExisting bool
+	err = readTx.QueryRow(ctx, `select exists (select 1 from core.users u where u.email = i.email)
+		from core.invitations i where i.token_hash = $1`, hash).Scan(&preExisting)
+	_ = readTx.Rollback(context.WithoutCancel(ctx))
+	if errors.Is(err, pgx.ErrNoRows) {
+		inviteState(w, "invalid")
+		return
+	}
+	if err != nil {
+		inviteFail(w, err)
+		return
+	}
+	sid, me := s.sessionEmail(r)
+	if !preExisting {
+		if sid != "" {
+			inviteReply(w, http.StatusUnauthorized, map[string]any{"state": "signout", "signed_in_as": me, "message": "You're signed in as " + me + ". Sign out to accept this invite."})
+			return
+		}
+		if err := s.Auth.CheckSignup(ctx, publiclinks.ClientIP(r)); err != nil {
+			inviteFail(w, err)
+			return
+		}
+	}
+	// While this transaction is open, use only tx: never acquire another pool connection.
 	tx, err := db.BeginTenant(ctx, s.Pool, ws)
 	if err != nil {
 		inviteFail(w, err)
@@ -247,9 +278,13 @@ func (s *Server) inviteAccept(w http.ResponseWriter, r *http.Request, ws, hash s
 		inviteFail(w, err)
 		return
 	}
+	if existing != preExisting {
+		inviteState(w, "invalid")
+		return
+	}
 	if existing {
 		// An existing account joins only from a session of that account. The invitation never touches its password, MFA or sessions.
-		if sid, _ := s.sessionEmail(r); sid != uid {
+		if sid != uid {
 			inviteReply(w, http.StatusUnauthorized, map[string]any{"state": "signin", "email": email,
 				"message": "Sign in as " + email + " to accept this invitation."})
 			return
@@ -277,14 +312,6 @@ func (s *Server) inviteAccept(w http.ResponseWriter, r *http.Request, ws, hash s
 			return
 		}
 	} else {
-		if sid, me := s.sessionEmail(r); sid != "" {
-			inviteReply(w, http.StatusUnauthorized, map[string]any{"state": "signout", "signed_in_as": me, "message": "You're signed in as " + me + ". Sign out to accept this invite."})
-			return
-		}
-		if err := s.Auth.CheckSignup(ctx, publiclinks.ClientIP(r)); err != nil {
-			inviteFail(w, err)
-			return
-		}
 		if len(in.Password) < 8 {
 			inviteFail(w, command.ErrInvalid("choose a password of at least 8 characters"))
 			return
@@ -318,7 +345,7 @@ func (s *Server) inviteAccept(w http.ResponseWriter, r *http.Request, ws, hash s
 		inviteFail(w, err)
 		return
 	}
-	c := &command.Ctx{Context: ctx, Tx: tx, Pool: s.Pool, Principal: command.Principal{Kind: command.KindUser, UserID: &uid, WorkspaceID: ws, Role: command.ParseRole(role)}}
+	c := &command.Ctx{Context: ctx, Tx: tx, Principal: command.Principal{Kind: command.KindUser, UserID: &uid, WorkspaceID: ws, Role: command.ParseRole(role)}}
 	if _, err := c.Emit("member.added", nil, map[string]any{"user_id": uid, "role": role, "invitation_id": invID}); err != nil {
 		inviteFail(w, err)
 		return
