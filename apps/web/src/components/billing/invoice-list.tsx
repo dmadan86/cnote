@@ -270,7 +270,7 @@ export function InvoiceList() {
                 narrowed || !canAdd ? undefined : (
                   <>
                     <button type="button" className={btnPrimary} onClick={() => setAdding(true)}>
-                      <Plus size={14} /> New invoice
+                      <Plus size={14} /> Create your first invoice
                     </button>
                     {(role === 'owner' || role === 'admin') && (
                       <Link href={`/w/${ws}/import/tally`} className="text-[13px] text-muted underline">

@@ -200,14 +200,16 @@ func TestHiddenModulesMigration(t *testing.T) {
 		return o
 	}
 	uninstalled := mk(map[string]any{"modules": []string{"docs", "projects", "crm", "billing"}}) // whiteboard uninstalled
-	preset := mk(map[string]any{"modules": []string{"docs", "crm", "billing"}})                   // preset, projects not listed
-	reinstalled := mk(map[string]any{"modules": []string{"docs", "crm", "whiteboard"}})           // whiteboard installed
+	preset := mk(map[string]any{"modules": []string{"docs", "crm", "billing"}})                  // preset, projects not listed
+	reinstalled := mk(map[string]any{"modules": []string{"docs", "crm", "whiteboard"}})          // whiteboard installed
 	none := mk(map[string]any{})
 	already := mk(map[string]any{"modules": []string{"docs"}, "hidden_modules": []string{"crm"}})
 	if _, err := adminPool(t).Exec(context.Background(), string(sqlText)); err != nil {
 		t.Fatal(err)
 	}
-	hidden := func(o *bt) any { return o.ok("workspace.get", map[string]any{})["settings"].(map[string]any)["hidden_modules"] }
+	hidden := func(o *bt) any {
+		return o.ok("workspace.get", map[string]any{})["settings"].(map[string]any)["hidden_modules"]
+	}
 	eq(t, hidden(uninstalled), []any{"whiteboard"})
 	eq(t, hidden(preset), []any{"whiteboard"})
 	eq(t, hidden(reinstalled), nil)
