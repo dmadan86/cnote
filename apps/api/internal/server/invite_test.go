@@ -102,7 +102,10 @@ func (e *inviteEnv) peek(tok string, w who) resp {
 }
 
 func (e *inviteEnv) accept(tok string, w who, body any) resp {
-	return e.do(e.api, "POST", "/api/invite/"+tok+"/accept", w, body, invIP())
+	h := invIP()
+	h["Origin"] = e.api
+	h["Content-Type"] = "application/json"
+	return e.do(e.api, "POST", "/api/invite/"+tok+"/accept", w, body, h)
 }
 
 func state(r resp) string { s, _ := r.json()["state"].(string); return s }
@@ -591,4 +594,55 @@ func TestSetupGuideTeamRowCountsAcceptedActiveMembersOtherThanOwner(t *testing.T
 	// a member added without an invitation is not "invited"
 	e.addMember(e.owner, e.signup("Zed", false), "member")
 	eq(t, teamDone(t, e), false)
+}
+
+func TestInviteNewAccountRefusesExistingSession(t *testing.T) {
+	e := newInv(t)
+	email := e.newEmail()
+	tok := e.link("member", email)
+	other := e.signup("Other User", false)
+	before := e.sqlRows(e.owner.ws, "select id from core.sessions where user_id = $1::uuid order by id", other.userID)
+	a := e.accept(tok, other, map[string]any{"password": "long-password"})
+	eq(t, a.status, 401)
+	eq(t, state(a), "signout")
+	eq(t, e.sqlRows(e.owner.ws, "select id from core.sessions where user_id = $1::uuid order by id", other.userID), before)
+	eq(t, e.sqlRows(e.owner.ws, "select count(*)::text from core.users where email = $1", email), [][]string{{"0"}})
+	eq(t, state(e.peek(tok, other)), "ok")
+}
+
+func TestInviteAcceptRejectsCrossOrigin(t *testing.T) {
+	e := newInv(t)
+	tok := e.link("member", e.newEmail())
+	for _, c := range []struct {
+		contentType, origin string
+		status              int
+	}{
+		{"text/plain", "https://evil.example", 415},
+		{"application/json", "https://evil.example", 403},
+		{"application/json", "", 403},
+	} {
+		h := invIP()
+		h["Content-Type"] = c.contentType
+		h["Origin"] = c.origin
+		a := e.do(e.api, "POST", "/api/invite/"+tok+"/accept", who{}, map[string]any{"password": "long-password"}, h)
+		eq(t, a.status, c.status)
+	}
+	eq(t, state(e.peek(tok, who{})), "ok")
+}
+
+func TestInviteSignupUsesSignupThrottle(t *testing.T) {
+	e := newInv(t)
+	tok := e.link("member", e.newEmail())
+	tok2 := e.link("member", e.newEmail())
+	// lower the limit only now: the setup's own signups come from the test client address and must not lock it for later tests
+	t.Setenv("AUTH_SIGNUP_FREE", "1")
+	t.Cleanup(func() { e.sql("delete from core.auth_throttle where key like 'signup:%'") })
+	h := invIP()
+	h["Origin"] = e.api
+	body := map[string]any{"password": "long-password"}
+	a := e.do(e.api, "POST", "/api/invite/"+tok+"/accept", who{}, body, h)
+	eq(t, a.status, 200)
+	a = e.do(e.api, "POST", "/api/invite/"+tok2+"/accept", who{}, body, h)
+	eq(t, a.status, 429)
+	eq(t, state(e.peek(tok2, who{})), "ok")
 }

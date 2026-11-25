@@ -12,6 +12,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -81,6 +82,16 @@ func (s *Server) invite(w http.ResponseWriter, r *http.Request) {
 		methodNotAllowed(w, map[bool]string{true: "POST", false: "GET"}[accept])
 		return
 	}
+	if accept {
+		if !isJSON(r) {
+			inviteReply(w, http.StatusUnsupportedMediaType, map[string]any{"state": "error", "message": "Content-Type must be application/json."})
+			return
+		}
+		if !inviteSameOrigin(r) {
+			inviteReply(w, http.StatusForbidden, map[string]any{"state": "error", "message": "Request origin is not allowed."})
+			return
+		}
+	}
 	ctx := r.Context()
 	// Counted for every try, so guessing links and spraying sign-ups from one address both stop.
 	if n, err := db.Bump(ctx, s.Pool, "invite-ip:"+publiclinks.ClientIP(r), false); err != nil {
@@ -109,6 +120,30 @@ func (s *Server) invite(w http.ResponseWriter, r *http.Request) {
 	} else {
 		s.invitePeek(w, r, *ws, hash)
 	}
+}
+
+// inviteSameOrigin requires the browser's origin (or its referrer when Origin is absent).
+func inviteSameOrigin(r *http.Request) bool {
+	base, ok := auth.PublicBase(r.Host)
+	if !ok {
+		return false
+	}
+	expected, err := url.Parse(base)
+	if err != nil || expected.Host == "" || (expected.Scheme != "http" && expected.Scheme != "https") || expected.User != nil {
+		return false
+	}
+	source := r.Header.Get("Origin")
+	if source == "" {
+		source = r.Referer()
+	}
+	actual, err := url.Parse(source)
+	if err != nil || actual.User != nil || actual.Host == "" {
+		return false
+	}
+	if r.Header.Get("Origin") != "" && (actual.Path != "" || actual.RawQuery != "" || actual.Fragment != "") {
+		return false
+	}
+	return strings.EqualFold(actual.Scheme, expected.Scheme) && strings.EqualFold(actual.Host, expected.Host)
 }
 
 // who is the caller's session user, if any.
@@ -178,18 +213,6 @@ func (s *Server) inviteAccept(w http.ResponseWriter, r *http.Request, ws, hash s
 			return
 		}
 	}
-	pwHash := ""
-	if in.Password != "" {
-		if len(in.Password) < 8 {
-			inviteFail(w, command.ErrInvalid("password must be at least 8 characters"))
-			return
-		}
-		var err error
-		if pwHash, err = auth.HashPassword(in.Password); err != nil {
-			inviteFail(w, err)
-			return
-		}
-	}
 	tx, err := db.BeginTenant(ctx, s.Pool, ws)
 	if err != nil {
 		inviteFail(w, err)
@@ -254,16 +277,29 @@ func (s *Server) inviteAccept(w http.ResponseWriter, r *http.Request, ws, hash s
 			return
 		}
 	} else {
+		if sid, me := s.sessionEmail(r); sid != "" {
+			inviteReply(w, http.StatusUnauthorized, map[string]any{"state": "signout", "signed_in_as": me, "message": "You're signed in as " + me + ". Sign out to accept this invite."})
+			return
+		}
+		if err := s.Auth.CheckSignup(ctx, publiclinks.ClientIP(r)); err != nil {
+			inviteFail(w, err)
+			return
+		}
+		if len(in.Password) < 8 {
+			inviteFail(w, command.ErrInvalid("choose a password of at least 8 characters"))
+			return
+		}
+		pwHash, err := auth.HashPassword(in.Password)
+		if err != nil {
+			inviteFail(w, err)
+			return
+		}
 		name := strings.TrimSpace(in.Name)
 		if name == "" {
 			name = strings.Split(email, "@")[0]
 		}
-		if pwHash == "" {
-			inviteFail(w, command.ErrInvalid("choose a password of at least 8 characters"))
-			return
-		}
 		// The inbox is proven by the link, so the address is verified from the start.
-		err := tx.QueryRow(ctx, `insert into core.users (email, name, password_hash, email_verified_at) values ($1, $2, $3, now())
+		err = tx.QueryRow(ctx, `insert into core.users (email, name, password_hash, email_verified_at) values ($1, $2, $3, now())
 			on conflict (email) do nothing returning id::text`, email, name[:min(len(name), 200)], pwHash).Scan(&uid)
 		if errors.Is(err, pgx.ErrNoRows) { // an account with this address appeared since: the same sign-in path as above
 			inviteReply(w, http.StatusUnauthorized, map[string]any{"state": "signin", "email": email, "message": "Sign in as " + email + " to accept this invitation."})

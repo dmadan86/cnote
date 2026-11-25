@@ -136,6 +136,27 @@ export function AcceptInvite({ token }: { token: string }) {
       </Shell>
     )
 
+  if (peek.account === 'new' && peek.signed_in_as)
+    return (
+      <Shell>
+        {heading}
+        <p role="status" className="text-[13px]">
+          You&apos;re signed in as {peek.signed_in_as}.{' '}
+          <button
+            type="button"
+            className="text-accent underline"
+            onClick={async () => {
+              await auth.logout().catch(() => {})
+              load()
+            }}
+          >
+            Sign out
+          </button>{' '}
+          to accept this invite.
+        </p>
+      </Shell>
+    )
+
   // 2. A new address: choose a password. The account is created verified, because the link reached this inbox.
   if (peek.account === 'new')
     return (
