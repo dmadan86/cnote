@@ -30,6 +30,7 @@ export const TYPES: { type: FieldType; label: string; hint: string }[] = [
   { type: 'phone', label: 'Phone', hint: 'A phone number with Call and WhatsApp' },
   { type: 'email', label: 'Email', hint: 'An email address' },
   { type: 'url', label: 'URL', hint: 'A web address' },
+  { type: 'attachment', label: 'Attachment', hint: 'Pictures and PDF files' },
   { type: 'autonumber', label: 'Auto number', hint: 'A running number, set by the system' },
   { type: 'created_time', label: 'Created time', hint: 'When the record was added' },
   { type: 'modified_time', label: 'Last modified time', hint: 'When the record last changed' },

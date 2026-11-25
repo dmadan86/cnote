@@ -13,6 +13,7 @@ import (
 	"github.com/cnote/api/internal/mailer"
 	"github.com/cnote/api/internal/modules/agents"
 	"github.com/cnote/api/internal/modules/ai"
+	"github.com/cnote/api/internal/modules/files"
 	"github.com/cnote/api/internal/modules/reminders"
 	"github.com/cnote/api/internal/modules/sites"
 	"github.com/cnote/api/internal/modules/tables"
@@ -72,6 +73,7 @@ func New(pool *pgxpool.Pool, reg *command.Registry) *Worker {
 	w.AddSweep(Sweep{"sites.cloudflare", time.Minute, func(ctx context.Context, w *Worker) error { return sites.CloudflareSweep(ctx, w.Pool) }})
 	w.AddSweep(Sweep{"sites.abuse", day, func(ctx context.Context, w *Worker) error { return sites.AbuseSweep(ctx, w.Pool) }})
 	w.AddSweep(Sweep{"tables.purge", day, func(ctx context.Context, w *Worker) error { return tables.PurgeSweep(ctx, w.Pool) }})
+	w.AddSweep(Sweep{"files.record_sweep", time.Hour, func(ctx context.Context, w *Worker) error { return files.RecordSweep(ctx, w.Pool) }})
 	w.AddSweep(Sweep{"reminders.send", 5 * time.Minute, func(ctx context.Context, w *Worker) error {
 		return reminders.Sweep(ctx, w.Pool, w.Registry, time.Now())
 	}})

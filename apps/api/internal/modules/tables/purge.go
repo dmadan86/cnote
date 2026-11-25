@@ -41,6 +41,11 @@ func purgeWorkspace(ctx context.Context, pool *pgxpool.Pool, ws string) error {
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	// Lock order is base, then table, then record: take the bases that hold files first (in id order), so the cascades
+	// below delete files under the same base lock that every counter change needs, and reconcile the counters at the end.
+	if _, err := attachmentBases(ctx, tx, true); err != nil {
+		return err
+	}
 	cut := "now() - make_interval(days => $1)"
 	// records, in batches
 	for i := 0; i < purgeRounds; i++ {
@@ -116,6 +121,9 @@ func purgeWorkspace(ctx context.Context, pool *pgxpool.Pool, ws string) error {
 		if _, err := tx.Exec(ctx, q, args...); err != nil {
 			return err
 		}
+	}
+	if err := ReconcileAttachmentBytes(ctx, tx, ws); err != nil {
+		return err
 	}
 	return tx.Commit(ctx)
 }

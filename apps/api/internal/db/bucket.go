@@ -20,6 +20,16 @@ func Bump(ctx context.Context, q interface {
 	return n, err
 }
 
+// Peek reads the current window's count of key without counting a hit (0 when there is none). Public limiters use it
+// to refuse before doing any work, and Bump to count.
+func Peek(ctx context.Context, q interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}, key string, day bool) (int, error) {
+	var n int
+	err := q.QueryRow(ctx, `select coalesce(max(n), 0) from core.rate_buckets where key = $1 and bucket = $2`, key, BucketStart(time.Now(), day)).Scan(&n)
+	return n, err
+}
+
 // BucketStart is the start of the current window.
 func BucketStart(now time.Time, day bool) time.Time {
 	if day {

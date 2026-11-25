@@ -19,7 +19,8 @@ const batchThreshold = 100
 
 // emitRecordEvents emits record.<op> per record up to 100 records, and above that one record.batch event whose ids
 // record.batch_list returns (17.5). It returns the batch id, or nil when it emitted per record.
-func emitRecordEvents(c *command.Ctx, tc *openedTable, op string, recs []evRec) (*string, error) {
+// extra is merged into every payload (the form actor passes {"via":"form","form_id":...}); it never holds values.
+func emitRecordEvents(c *command.Ctx, tc *openedTable, op string, recs []evRec, extra ...map[string]any) (*string, error) {
 	if len(recs) == 0 {
 		return nil, nil
 	}
@@ -29,7 +30,13 @@ func emitRecordEvents(c *command.Ctx, tc *openedTable, op string, recs []evRec) 
 			if fields == nil {
 				fields = []string{}
 			}
-			if _, err := c.Emit("record."+op, nil, map[string]any{"base_id": tc.Base.ID, "table_id": tc.Table.ID, "record_id": r.ID, "field_ids": fields}); err != nil {
+			payload := map[string]any{"base_id": tc.Base.ID, "table_id": tc.Table.ID, "record_id": r.ID, "field_ids": fields}
+			for _, e := range extra {
+				for k, v := range e {
+					payload[k] = v
+				}
+			}
+			if _, err := c.Emit("record."+op, nil, payload); err != nil {
 				return nil, err
 			}
 		}
