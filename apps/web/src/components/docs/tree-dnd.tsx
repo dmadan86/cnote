@@ -10,8 +10,9 @@ import {
   useSensors,
 } from '@dnd-kit/core'
 import { createContext, useContext, useRef, useState } from 'react'
+import { useShell } from '../shell'
 import { useTreeActions } from './page-actions'
-import { kidKey, liveParent, subtreeIds } from './tree-model'
+import { kidKey, liveParent, parentOfKey, subtreeIds } from './tree-model'
 
 export type Zone = 'before' | 'into' | 'after'
 type Drop = { id: string; zone: Zone }
@@ -34,6 +35,7 @@ export function TreeDnd({
   children: React.ReactNode
 }) {
   const { kids, byId, place, announce } = useTreeActions()
+  const { tree } = useShell()
   const sensors = useSensors(useSensor(MouseSensor, { activationConstraint: { distance: 6 } }))
   const [drop, setDrop] = useState<Drop | null>(null)
   const [dragging, setDragging] = useState<string | null>(null)
@@ -56,7 +58,7 @@ export function TreeDnd({
       .find(Boolean)
     if (!row) return null
     const id = row.dataset.rowId as string
-    if (row.dataset.rowSpace !== src.space_id) return null
+    if (row.dataset.rowSpace !== src.space_id || row.dataset.rowShared) return null // the Shared with you level is not a place to drop
     if (id.startsWith('space:')) return { id, zone: 'into' }
     if (subtreeIds(kids, me).has(id)) return null // not onto itself or its own sub-pages
     const r = row.getBoundingClientRect()
@@ -78,10 +80,14 @@ export function TreeDnd({
       if (!t) return
       if (d.zone === 'into') parent = t.id
       else {
-        parent = liveParent(t, byId)
-        const sibs = (kids.get(kidKey(t.space_id, parent)) ?? []).filter((s) => s.id !== n.id)
+        const key = tree.keyOf.get(t.id) ?? kidKey(t.space_id, liveParent(t, byId))
+        parent = parentOfKey(key)
+        const sibs = (kids.get(key) ?? []).filter((s) => s.id !== n.id)
         const i = sibs.findIndex((s) => s.id === t.id)
         before = d.zone === 'before' ? t.id : (sibs[i + 1]?.id ?? null)
+        // the target is the last loaded row of a longer level: the page after it is not loaded yet
+        if (d.zone === 'after' && !before && tree.levels.get(key)?.next)
+          before = (await tree.peek(t.space_id, parent, 'next', 2)).find((r) => r.id !== n.id)?.id ?? null
       }
     }
     try {

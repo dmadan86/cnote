@@ -84,6 +84,7 @@ func TestQARevisionsAreImmutableAndNumbersUnique(t *testing.T) {
 
 // DB-011 / RV-008: concurrent checkpoints and restores of one page leave unique, gap-free numbers and no failed request.
 func TestQAConcurrentCheckpointsAndRestoresKeepNumbersConsistent(t *testing.T) {
+	startCollab(t) // restore folds through the gateway; do not depend on the caller's COLLAB_URL
 	e := newEnv(t)
 	o := e.signup("RevRace", true)
 

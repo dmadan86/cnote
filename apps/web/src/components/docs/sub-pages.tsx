@@ -1,22 +1,37 @@
 'use client'
 import { FileText } from 'lucide-react'
 import Link from 'next/link'
-import type { Note } from '@/lib/api'
-import { useCmd } from '@/lib/hooks'
+import { useCallback, useEffect, useState } from 'react'
+import { TREE_EVENT, type TreeRow, treeLevel } from '@/lib/docs'
 
 // docs-parity-b section 14: a page that has children shows them under its body. Page chrome, not a block: nothing is
-// stored in the page. note.list filters by access in its query, so a restricted child never reaches this list.
-
-/** Sibling order everywhere: position, then created_at, then id. */
-export const bySiblingOrder = (a: Note, b: Note) =>
-  (a.position ?? 0) - (b.position ?? 0) ||
-  (a.created_at ?? '').localeCompare(b.created_at ?? '') ||
-  a.id.localeCompare(b.id)
+// stored in the page. note.tree filters by access in its query, so a restricted child never reaches this list. Long lists
+// load a page at a time, like the sidebar.
 
 export function SubPages({ ws, noteId, spaceId }: { ws: string; noteId: string; spaceId: string }) {
-  const { data } = useCmd<Note[]>(ws, 'note.list', { space_id: spaceId, parent_id: noteId, limit: 500 })
-  const kids = data?.slice().sort(bySiblingOrder)
-  if (!kids?.length) return null
+  const [kids, setKids] = useState<TreeRow[]>([])
+  const [next, setNext] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const load = useCallback(
+    (after?: string) =>
+      treeLevel(ws, { space_id: spaceId, parent_id: noteId, after, limit: 100 }).then(
+        (lv) => {
+          setKids((k) => (after ? [...k, ...lv.rows] : lv.rows))
+          setNext(lv.next)
+        },
+        () => {},
+      ),
+    [ws, spaceId, noteId],
+  )
+  useEffect(() => {
+    setKids([])
+    setNext(null)
+    load()
+    const again = () => load()
+    window.addEventListener(TREE_EVENT, again)
+    return () => window.removeEventListener(TREE_EVENT, again)
+  }, [load])
+  if (!kids.length) return null
   return (
     <nav aria-label="Sub-pages" className="mt-8 border-t border-line pt-4">
       <h2 className="mb-2 text-[13px] font-semibold">Sub-pages</h2>
@@ -35,6 +50,20 @@ export function SubPages({ ws, noteId, spaceId }: { ws: string; noteId: string; 
           </li>
         ))}
       </ul>
+      {next && (
+        <button
+          type="button"
+          disabled={busy}
+          className="mt-1 rounded px-1.5 py-1 text-[13px] text-muted hover:bg-hover hover:text-fg"
+          onClick={async () => {
+            setBusy(true)
+            await load(next)
+            setBusy(false)
+          }}
+        >
+          Show more
+        </button>
+      )}
     </nav>
   )
 }

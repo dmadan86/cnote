@@ -124,6 +124,15 @@ func noteDuplicate(c *command.Ctx, input json.RawMessage) (any, error) {
 		for _, p := range pairs {
 			repl = append(repl, "/api/w/"+c.WorkspaceID()+"/files/"+p.From, "/api/w/"+c.WorkspaceID()+"/files/"+p.To)
 		}
+		if src.Cover != nil { // the copy's cover is the copy of the source's cover file
+			for _, p := range pairs {
+				if p.From == src.Cover.FileID {
+					if _, err := c.Tx.Exec(c.Context, "update core.notes set cover_file_id = $2::uuid, cover_y = $3::smallint where id = $1::uuid", n.ID, p.To, src.Cover.Y); err != nil {
+						return nil, command.DB(err)
+					}
+				}
+			}
+		}
 		body := strings.NewReplacer(repl...).Replace(n.ContentMD)
 		if body != n.ContentMD { // the search_plain trigger follows the body
 			if _, err := c.Tx.Exec(c.Context, "update core.notes set content_md = $2 where id = $1::uuid", n.ID, body); err != nil {

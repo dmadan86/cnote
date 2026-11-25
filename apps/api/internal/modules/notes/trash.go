@@ -176,6 +176,8 @@ type trashEntry struct {
 	DeletedBy  *trashPerson `json:"deleted_by"`
 	RestoreTo  string       `json:"restore_to"`
 	Blocked    *string      `json:"blocked_reason"`
+	PurgeAt    *command.Ts  `json:"purge_at"` // when retention removes it for good; null when retention is "never"
+	CanPurge   bool         `json:"can_purge"`
 }
 type trashRoot struct {
 	ID    string  `json:"id"`
@@ -272,6 +274,11 @@ func noteTrash(c *command.Ctx, input json.RawMessage) (any, error) {
 	}
 	out := []trashEntry{}
 	spaceOK := map[string]bool{}
+	ret, err := readRetention(c, false)
+	if err != nil {
+		return nil, err
+	}
+	canPurge := map[string]bool{}
 	const batch = 50
 	for len(out) < limit {
 		rows, err := c.Tx.Query(c.Context,
@@ -352,6 +359,17 @@ func noteTrash(c *command.Ctx, input json.RawMessage) (any, error) {
 			}
 			if plan.Root.DeletedBy != nil && plan.Root.DeletedByName != nil {
 				e.DeletedBy = &trashPerson{*plan.Root.DeletedBy, *plan.Root.DeletedByName}
+			}
+			if ret.Days > 0 && ret.From != nil {
+				at := command.Ts(maxTime(plan.Root.DeletedAt, *ret.From).AddDate(0, 0, ret.Days))
+				e.PurgeAt = &at
+			}
+			if v, ok := canPurge[e.SpaceID]; ok {
+				e.CanPurge = v
+			} else if e.CanPurge, err = canManage(c, e.SpaceID, nil); err != nil {
+				return nil, err
+			} else {
+				canPurge[e.SpaceID] = e.CanPurge
 			}
 			out = append(out, e)
 			if len(out) == limit {
@@ -500,4 +518,11 @@ func deletionHeight(ps []trashPage, root string) int {
 		level = next
 	}
 	return h
+}
+
+func maxTime(a, b time.Time) time.Time {
+	if b.After(a) {
+		return b
+	}
+	return a
 }

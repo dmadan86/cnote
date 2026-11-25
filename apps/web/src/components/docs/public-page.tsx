@@ -123,6 +123,16 @@ function Article({ token, page }: { token: string; page: PublicPage }) {
   })
   return (
     <article>
+      {page.cover_url && /^\/api\/public\/page\/[\w-]+\/files\/[0-9a-f-]{36}$/i.test(page.cover_url) && (
+        // biome-ignore lint/performance/noImgElement: the public file route, same origin
+        <img
+          src={page.cover_url}
+          alt={`Cover of ${page.title || 'Untitled'}`}
+          referrerPolicy="no-referrer"
+          className={`mb-4 w-full rounded-lg object-cover ${page.wide ? 'h-[280px]' : 'h-[200px]'} max-md:h-[140px]`}
+          style={{ objectPosition: `50% ${page.cover_y ?? 50}%` }}
+        />
+      )}
       <h1 className="mb-1 text-[30px] font-bold leading-tight">
         {page.icon && (
           <span aria-hidden="true" className="mr-2">

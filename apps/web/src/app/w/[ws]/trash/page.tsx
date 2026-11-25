@@ -3,12 +3,91 @@ import { FileText } from 'lucide-react'
 import Link from 'next/link'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useShell } from '@/components/shell'
-import { btn, EmptyState, ErrorText, inputCls } from '@/components/ui'
+import { btn, EmptyState, ErrorText, inputCls, Modal } from '@/components/ui'
 import { cmd } from '@/lib/api'
-import { noteUndelete, TREE_EVENT, type TrashEntry } from '@/lib/docs'
+import {
+  getTrashRetention,
+  noteUndelete,
+  purgeDeletion,
+  TREE_EVENT,
+  type TrashEntry,
+  type TrashRetention,
+} from '@/lib/docs'
 import { ago } from '@/lib/hooks'
 
 const PAGE = 50
+const DAY = 86_400_000
+
+/** "Deleted for good in 12 days" from the server's purge_at; null when trash is kept forever. */
+function purgeText(at: string | null) {
+  if (!at) return null
+  const days = Math.ceil((new Date(at).getTime() - Date.now()) / DAY)
+  if (days <= 0) return 'Deleted for good soon'
+  return `Deleted for good in ${days} ${days === 1 ? 'day' : 'days'}`
+}
+
+function DeleteForever({
+  entry,
+  onClose,
+  onDone,
+}: {
+  entry: TrashEntry
+  onClose: () => void
+  onDone: () => void
+}) {
+  const { ws } = useShell()
+  const [typed, setTyped] = useState('')
+  const [err, setErr] = useState<string>()
+  const [busy, setBusy] = useState(false)
+  const n = entry.page_count
+  async function go() {
+    setBusy(true)
+    setErr(undefined)
+    try {
+      await purgeDeletion(ws, entry.deletion_id)
+      onDone()
+    } catch (e) {
+      setErr((e as Error).message)
+      setBusy(false)
+    }
+  }
+  return (
+    <Modal open onClose={onClose} title="Delete forever">
+      <form
+        onSubmit={(e) => {
+          e.preventDefault()
+          if (typed === 'DELETE') go()
+        }}
+      >
+        <p className="mb-3 text-[13px]">
+          Delete "{entry.root.title || 'Untitled'}"
+          {n > 1 ? ` and its ${n - 1} ${n === 2 ? 'sub-page' : 'sub-pages'}` : ''} for good? That is {n}{' '}
+          {n === 1 ? 'page' : 'pages'} in all, with their comments, history and files.{' '}
+          <strong>This cannot be undone.</strong>
+        </p>
+        <label className="mb-3 block text-[13px]">
+          Type DELETE to confirm
+          <input
+            className={`${inputCls} mt-1`}
+            value={typed}
+            onChange={(e) => setTyped(e.target.value)}
+            autoComplete="off"
+            spellCheck={false}
+          />
+        </label>
+        <ErrorText error={err} />
+        <div className="mt-3 flex justify-end gap-2">
+          <button type="button" className={btn} onClick={onClose}>
+            Cancel
+          </button>
+          <button type="submit" className={`${btn} text-bad`} disabled={busy || typed !== 'DELETE'}>
+            Delete forever
+          </button>
+        </div>
+      </form>
+    </Modal>
+  )
+}
 type Outcome = { ok: true; text: string; rootId: string } | { ok: false; text: string }
 
 export default function TrashPage() {
@@ -20,6 +99,9 @@ export default function TrashPage() {
   const [err, setErr] = useState<string>()
   const [out, setOut] = useState<Record<string, Outcome>>({})
   const [busy, setBusy] = useState<string>()
+  const [ret, setRet] = useState<TrashRetention>()
+  const [forever, setForever] = useState<TrashEntry>()
+  const [gone, setGone] = useState('')
   const own = useRef(false) // our own TREE_EVENT: the shell reloads its tree; this list keeps the row and its outcome
 
   // Keyset paging: the cursor is the last row's (deleted_at, deletion_id).
@@ -49,6 +131,9 @@ export default function TrashPage() {
   useEffect(() => {
     load()
   }, [load])
+  useEffect(() => {
+    getTrashRetention(ws).then(setRet, () => {})
+  }, [ws])
   useEffect(() => {
     const f = () => {
       if (own.current) own.current = false
@@ -104,6 +189,16 @@ export default function TrashPage() {
       <p className="text-[13px] text-muted">
         Deleted pages you could edit. Restore brings back a page with its sub-pages.
       </p>
+      {ret && (
+        <p className="rounded-md border border-line bg-hover px-3 py-2 text-[13px]">
+          {ret.days > 0
+            ? `Pages in Trash are deleted for good after ${ret.days} days.`
+            : 'Pages in Trash stay until an admin deletes them for good.'}
+        </p>
+      )}
+      <p role="status" className="text-[13px] text-ok">
+        {gone}
+      </p>
       <ErrorText error={err} />
       {!loading && !err && rows.length === 0 && (
         <EmptyState icon={FileText} title="Trash is empty">
@@ -127,6 +222,7 @@ export default function TrashPage() {
                   <time dateTime={t.deleted_at} title={new Date(t.deleted_at).toLocaleString()}>
                     {ago(t.deleted_at)}
                   </time>
+                  {!o && purgeText(t.purge_at) && ` · ${purgeText(t.purge_at)}`}
                   {!o &&
                     t.restore_to === 'space_root' &&
                     ' · Its parent is gone, so it returns to the top level'}
@@ -161,10 +257,34 @@ export default function TrashPage() {
                   Restore
                 </button>
               )}
+              {!o?.ok && t.can_purge && (
+                <button
+                  type="button"
+                  className={`${btn} text-bad`}
+                  aria-label={`Delete forever: ${t.root.title || 'Untitled'}`}
+                  onClick={() => setForever(t)}
+                >
+                  Delete forever
+                </button>
+              )}
             </li>
           )
         })}
       </ul>
+      {forever && (
+        <DeleteForever
+          entry={forever}
+          onClose={() => setForever(undefined)}
+          onDone={() => {
+            const f = forever
+            setForever(undefined)
+            setRows((r) => r.filter((x) => x.deletion_id !== f.deletion_id))
+            setGone(`Deleted "${f.root.title || 'Untitled'}" for good`)
+            own.current = true
+            window.dispatchEvent(new Event(TREE_EVENT))
+          }}
+        />
+      )}
       {more && (
         <button type="button" className={btn} disabled={loading} onClick={() => load(rows[rows.length - 1])}>
           Load more

@@ -21,7 +21,7 @@ func Commands() []command.Command {
 		command.NewCommand("space.list", command.GroupRead, spaceList),
 		command.NewCommand("note.get", command.GroupRead, noteGet),
 		command.NewCommand("note.history", command.GroupRead, noteHistory),
-	}, append(writeCommands(), append(a1Commands(), append(a2Commands(), append(b1Commands(), b2Commands()...)...)...)...)...)
+	}, append(writeCommands(), append(a1Commands(), append(a2Commands(), append(b1Commands(), append(b2Commands(), c1Commands()...)...)...)...)...)...)
 }
 
 var uuidRe = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
@@ -122,6 +122,13 @@ type Note struct {
 	Icon         *string     `json:"icon"`
 	Wide         bool        `json:"wide"`
 	Position     int64       `json:"position"` // sibling order inside (space, parent), docs-parity 7.9
+	Cover        *Cover      `json:"cover"`    // C1 page chrome: an image attached to the page and a vertical position, or null
+}
+
+// Cover is the page cover (docs-parity-c 13.6): file_id is an image attached to the page, y is 0 (top) to 100 (bottom).
+type Cover struct {
+	FileID string `json:"file_id"`
+	Y      int    `json:"y"`
 }
 
 type Relation struct {
@@ -143,16 +150,24 @@ type NoteDetail struct {
 
 const noteCols = `id::text, space_id::text, parent_id::text, title, types, content_md, owner_id::text, verify_by::text,
 	verified_at, freshness, source_system, source_id, source_url, created_by::text, created_at, updated_at,
-	version, restriction, collab_epoch, page_status, icon, wide, coalesce(position, 0)`
+	version, restriction, collab_epoch, page_status, icon, wide, coalesce(position, 0), cover_file_id::text, cover_y`
 
 func scanNote(row pgx.Row) (Note, error) {
 	var n Note
 	var verifiedAt *time.Time
 	var createdAt, updatedAt time.Time
+	var coverFile *string
+	var coverY *int16
 	err := row.Scan(
 		&n.ID, &n.SpaceID, &n.ParentID, &n.Title, &n.Types, &n.ContentMD, &n.OwnerID, &n.VerifyBy,
 		&verifiedAt, &n.Freshness, &n.SourceSystem, &n.SourceID, &n.SourceURL, &n.CreatedBy, &createdAt, &updatedAt,
-		&n.Version, &n.Restriction, &n.CollabEpoch, &n.Status, &n.Icon, &n.Wide, &n.Position)
+		&n.Version, &n.Restriction, &n.CollabEpoch, &n.Status, &n.Icon, &n.Wide, &n.Position, &coverFile, &coverY)
+	if coverFile != nil {
+		n.Cover = &Cover{FileID: *coverFile, Y: 50}
+		if coverY != nil {
+			n.Cover.Y = int(*coverY)
+		}
+	}
 	n.VerifiedAt, n.CreatedAt, n.UpdatedAt = command.TsPtr(verifiedAt), command.Ts(createdAt), command.Ts(updatedAt)
 	if n.Types == nil {
 		n.Types = []string{}

@@ -1,12 +1,21 @@
 'use client'
 import { FileText } from 'lucide-react'
 import Link from 'next/link'
-import type { Note } from '@/lib/api'
 import { ago } from '@/lib/hooks'
 import { useShell } from './shell'
 import { EmptyState, FreshnessPill } from './ui'
 
-export function PageList({ pages, empty }: { pages: Note[]; empty: string }) {
+/** What a list row needs: a note or a tree row. */
+type Listed = {
+  id: string
+  space_id: string
+  title: string
+  freshness: string
+  verify_by: string | null
+  updated_at: string
+}
+
+export function PageList({ pages, empty }: { pages: Listed[]; empty: string }) {
   const { ws, spaces } = useShell()
   if (!pages.length) return <EmptyState compact icon={FileText} title={empty} />
   return (

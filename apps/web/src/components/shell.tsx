@@ -19,7 +19,7 @@ import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { auth, cmd, type Me, type Member, type Note, type SharedNote, type Space } from '@/lib/api'
-import type { SpaceB1 } from '@/lib/docs'
+import type { SpaceB1, TreeRow as TreeRowData } from '@/lib/docs'
 import { MODULES, moduleOn } from '@/lib/modules'
 import { prependWidget } from '@/lib/screen-config'
 import { AskPanel } from './ai/ask-panel'
@@ -27,7 +27,8 @@ import { ChatNavLink } from './chat/nav'
 import { TreeActionsProvider, useTreeActions } from './docs/page-actions'
 import { MineSections } from './docs/page-header'
 import { DropMarker, spaceRowId, TreeDnd, useDropZone, useRowDnd } from './docs/tree-dnd'
-import { kidKey } from './docs/tree-model'
+import { type TreeStore, useTreeStore } from './docs/tree-loader'
+import { isShared, kidKey, sharedParent } from './docs/tree-model'
 import { NotificationBell } from './notifications'
 import { Palette } from './palette'
 import { PersonHoverLayer } from './person'
@@ -38,7 +39,8 @@ type Shell = {
   ws: string
   me: Me
   spaces: Space[]
-  notes: Note[]
+  /** The page tree as loaded so far (levels load as nodes open; see docs/tree-loader). */
+  tree: TreeStore
   shared: SharedNote[]
   members: Member[]
   /** Modules not uninstalled in the Marketplace (settings.hidden_modules); null = all shown. */
@@ -118,19 +120,13 @@ const FoldCtx = createContext<Fold>({ isOpen: () => true, toggle: () => {} })
 const FOLD_KEY = 'cn.tree.fold'
 
 /** Sidebar fold state: user choices persist per browser; pages start folded except the path to the open page. */
-function useFold(notes: Note[], currentId: string | undefined): Fold {
+function useFold(onPath: Set<string>): Fold {
   const [over, setOver] = useState<Record<string, boolean>>({})
   useEffect(() => {
     try {
       setOver(JSON.parse(localStorage.getItem(FOLD_KEY) ?? '{}'))
     } catch {}
   }, [])
-  const onPath = useMemo(() => {
-    const ids = new Set<string>()
-    for (let n = notes.find((x) => x.id === currentId); n; n = notes.find((x) => x.id === n?.parent_id))
-      ids.add(n.id)
-    return ids
-  }, [notes, currentId])
   const isOpen = useCallback(
     (id: string, dflt: boolean) => over[id] ?? (dflt || onPath.has(id)),
     [over, onPath],
@@ -164,6 +160,21 @@ function FoldButton({ id, label, open, dflt }: { id: string; label: string; open
   )
 }
 
+/** Tree keyboard keys shared by the row links and the "Show more" buttons: arrows, Home and End over every row in the sidebar. */
+const NAV = 'a[data-treelink],button[data-treemore]'
+function navKeys(e: React.KeyboardEvent<HTMLElement>) {
+  if (e.altKey || e.ctrlKey || e.metaKey) return false
+  const links = [...(e.currentTarget.closest('aside')?.querySelectorAll<HTMLElement>(NAV) ?? [])]
+  const i = links.indexOf(e.currentTarget)
+  const go = (l?: HTMLElement | null) => l?.focus()
+  if (e.key === 'ArrowDown') go(links[i + 1])
+  else if (e.key === 'ArrowUp') go(links[i - 1])
+  else if (e.key === 'Home') go(links[0])
+  else if (e.key === 'End') go(links[links.length - 1])
+  else return false
+  return true
+}
+
 function Tree({
   spaceId,
   parent,
@@ -176,24 +187,112 @@ function Tree({
   /** Set on the top list of a tree: it becomes the tree widget; nested lists are groups. */
   label?: string
 }) {
-  const { kids } = useTreeActions()
-  const list = kids.get(kidKey(spaceId, parent)) ?? []
+  const { tree } = useShell()
+  const { ensure } = tree
+  const key = kidKey(spaceId, parent)
+  // a level loads when it is first drawn, which is when its node opens
+  useEffect(() => ensure(spaceId, parent), [ensure, spaceId, parent])
+  const list = tree.kids.get(key) ?? []
+  const lv = tree.levels.get(key)
+  const partial = !!(lv?.next || lv?.prev)
   return (
-    <ul role={label ? 'tree' : 'group'} aria-label={label}>
+    <ul role={label ? 'tree' : 'group'} aria-label={label} aria-busy={!lv}>
+      {lv?.prev && <MoreRow spaceId={spaceId} parent={parent} dir="prev" depth={depth} />}
       {list.map((n, i) => (
-        <TreeRow key={n.id} n={n} depth={depth} pos={i + 1} size={list.length} />
+        <TreeRow
+          key={n.id}
+          n={n}
+          depth={depth}
+          pos={lv?.prev ? undefined : i + 1}
+          size={partial ? -1 : list.length}
+          shared={isShared(parent)}
+        />
       ))}
+      {lv?.next && <MoreRow spaceId={spaceId} parent={parent} dir="next" depth={depth} />}
+      {lv?.failed && (
+        // biome-ignore lint/a11y/useFocusableInteractive: focus lives on the button inside
+        <li role="treeitem" aria-level={depth} aria-label="Retry loading pages">
+          <button
+            type="button"
+            data-treemore
+            tabIndex={-1}
+            onClick={() => ensure(spaceId, parent)}
+            onKeyDown={(e) => navKeys(e) && e.preventDefault()}
+            style={{ paddingLeft: depth * 12 + 8 }}
+            className="w-full rounded py-1 pr-2 text-left text-[12px] text-bad hover:bg-hover"
+          >
+            Couldn't load pages. Retry
+          </button>
+        </li>
+      )}
     </ul>
   )
 }
 
-function TreeRow({ n, depth, pos, size }: { n: Note; depth: number; pos: number; size: number }) {
+/** The end of a level that has more rows ("Show more") or the start of a window that has earlier ones. */
+function MoreRow({
+  spaceId,
+  parent,
+  dir,
+  depth,
+}: {
+  spaceId: string
+  parent: string | null
+  dir: 'next' | 'prev'
+  depth: number
+}) {
+  const { tree } = useShell()
+  const { announce } = useTreeActions()
+  const [busy, setBusy] = useState(false)
+  const text = dir === 'next' ? 'Show more' : 'Show earlier pages'
+  async function go() {
+    setBusy(true)
+    const rows = await tree.more(spaceId, parent, dir)
+    setBusy(false)
+    if (!rows.length) return announce("Couldn't load more pages. Try again.")
+    announce(`Loaded ${rows.length} ${rows.length === 1 ? 'page' : 'pages'}.`)
+    // the button is gone when the level ended: put focus on the first new row so keyboard users keep their place
+    const first = dir === 'next' ? rows[0] : rows[rows.length - 1]
+    setTimeout(() => document.querySelector<HTMLElement>(`a[data-treelink="${first.id}"]`)?.focus(), 60)
+  }
+  return (
+    // biome-ignore lint/a11y/useFocusableInteractive: focus lives on the button inside
+    <li role="treeitem" aria-level={depth} aria-label={text}>
+      <button
+        type="button"
+        data-treemore
+        tabIndex={-1}
+        disabled={busy}
+        onClick={go}
+        onKeyDown={(e) => navKeys(e) && e.preventDefault()}
+        style={{ paddingLeft: depth * 12 + 8 }}
+        className="w-full rounded py-1 pr-2 text-left text-[12px] text-muted hover:bg-hover hover:text-fg"
+      >
+        {busy ? 'Loading…' : text}
+      </button>
+    </li>
+  )
+}
+
+function TreeRow({
+  n,
+  depth,
+  pos,
+  size,
+  shared,
+}: {
+  n: TreeRowData
+  depth: number
+  pos?: number
+  size: number
+  shared: boolean
+}) {
   const path = usePathname()
   const { ws } = useShell()
   const fold = useContext(FoldCtx)
   const a = useTreeActions()
   const { setNodeRef, listeners, isDragging, zone } = useRowDnd(n.id)
-  const hasKids = (a.kids.get(n.id)?.length ?? 0) > 0
+  const hasKids = n.has_children
   const open = hasKids && fold.isOpen(n.id, false)
   const current = path.endsWith(`/n/${n.id}`)
   const menuAt = (e: React.MouseEvent | React.KeyboardEvent, el: HTMLElement) => {
@@ -204,23 +303,17 @@ function TreeRow({ n, depth, pos, size }: { n: Note; depth: number; pos: number;
   }
   // ARIA tree keys on the row link; Alt+Up and Alt+Down reorder (docs-parity 7.9).
   const keys = (e: React.KeyboardEvent<HTMLAnchorElement>) => {
-    const links = [
-      ...(e.currentTarget.closest('aside')?.querySelectorAll<HTMLElement>('a[data-treelink]') ?? []),
-    ]
-    const i = links.indexOf(e.currentTarget)
-    const go = (l?: HTMLElement | null) => l?.focus()
     if (e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) a.step(n, e.key === 'ArrowUp' ? -1 : 1)
-    else if (e.altKey || e.ctrlKey || e.metaKey) return
-    else if (e.key === 'ArrowDown') go(links[i + 1])
-    else if (e.key === 'ArrowUp') go(links[i - 1])
-    else if (e.key === 'Home') go(links[0])
-    else if (e.key === 'End') go(links[links.length - 1])
+    else if (navKeys(e)) {
+      // handled
+    } else if (e.altKey || e.ctrlKey || e.metaKey) return
     else if (e.key === 'ArrowRight' && hasKids) {
-      if (open) go(links[i + 1])
-      else fold.toggle(n.id, false)
+      if (!open) fold.toggle(n.id, false)
+      else e.currentTarget.closest('li')?.querySelector<HTMLElement>('ul a[data-treelink]')?.focus() // first child, once loaded
     } else if (e.key === 'ArrowLeft') {
       if (open) fold.toggle(n.id, false)
-      else go(e.currentTarget.closest('ul')?.closest('li')?.querySelector<HTMLElement>('a[data-treelink]'))
+      else
+        e.currentTarget.closest('ul')?.closest('li')?.querySelector<HTMLElement>('a[data-treelink]')?.focus()
     } else if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) menuAt(e, e.currentTarget)
     else return
     e.preventDefault()
@@ -242,6 +335,7 @@ function TreeRow({ n, depth, pos, size }: { n: Note; depth: number; pos: number;
         {...listeners}
         data-row-id={n.id}
         data-row-space={n.space_id}
+        data-row-shared={shared || undefined}
         onContextMenu={(e) => {
           e.preventDefault()
           menuAt(e, e.currentTarget.querySelector<HTMLElement>('a') ?? e.currentTarget)
@@ -334,8 +428,9 @@ function Breadcrumb({ s }: { s: Shell }) {
     const sp = space(seg[1])
     if (sp) crumbs.push({ label: sp.name })
   } else if (seg[0] === 'n') {
-    const chain: Note[] = []
-    for (let n = s.notes.find((x) => x.id === seg[1]); n; n = s.notes.find((x) => x.id === n?.parent_id))
+    // the path comes from what the tree loaded for the open page (its reveal), root first
+    const chain: TreeRowData[] = []
+    for (let n = s.tree.byId.get(seg[1]); n; n = n.parent_id ? s.tree.byId.get(n.parent_id) : undefined)
       chain.unshift(n)
     const sp = chain[0] && space(chain[0].space_id)
     if (sp) crumbs.push({ label: sp.name, href: `/w/${s.ws}/s/${sp.id}` })
@@ -363,21 +458,6 @@ function Breadcrumb({ s }: { s: Shell }) {
   )
 }
 
-/** Pages shared to me from spaces I cannot read, plus their sub-pages (a few levels deep) for the tree. */
-async function loadShared(ws: string) {
-  const roots = await cmd<SharedNote[]>(ws, 'note.shared_with_me')
-  const extra: Note[] = []
-  let frontier = roots.map((r) => r.id)
-  for (let depth = 0; depth < 4 && frontier.length; depth++) {
-    const kids = (
-      await Promise.all(frontier.map((id) => cmd<Note[]>(ws, 'note.list', { parent_id: id, limit: 500 })))
-    ).flat()
-    extra.push(...kids)
-    frontier = kids.map((k) => k.id)
-  }
-  return { roots, extra: extra.filter((k) => !roots.some((r) => r.id === k.id)) }
-}
-
 export function ShellView({
   ws,
   homeWidgets,
@@ -391,7 +471,6 @@ export function ShellView({
   const path = usePathname()
   const [me, setMe] = useState<Me>()
   const [spaces, setSpaces] = useState<Space[]>([])
-  const [notes, setNotes] = useState<Note[]>([])
   const [members, setMembers] = useState<Member[]>([])
   const [shared, setShared] = useState<SharedNote[]>([])
   const [modules, setModules] = useState<string[] | null>(null)
@@ -407,7 +486,28 @@ export function ShellView({
   const [palette, setPalette] = useState(false)
   const [ask, setAsk] = useState(false)
   const [askSeed, setAskSeed] = useState<{ q: string; n: number } | null>(null)
-  const fold = useFold(notes, path.match(/\/n\/([^/?]+)/)?.[1])
+  const cur = path.match(/\/n\/([^/?]+)/)?.[1]
+  const tree = useTreeStore(ws, !!me && !denied)
+  // The open page and its loaded ancestors start unfolded.
+  const onPath = useMemo(() => {
+    const ids = new Set<string>()
+    for (
+      let n = cur ? tree.byId.get(cur) : undefined;
+      n;
+      n = n.parent_id ? tree.byId.get(n.parent_id) : undefined
+    )
+      ids.add(n.id)
+    return ids
+  }, [tree.byId, cur])
+  const fold = useFold(onPath)
+  // Opening a page that is not loaded yet reveals its readable path. One try per page: an archived page is never a row.
+  const tried = useRef(new Set<string>())
+  const { reveal } = tree
+  useEffect(() => {
+    if (!me || !cur || tree.byId.has(cur) || tried.current.has(`${ws}:${cur}`)) return
+    tried.current.add(`${ws}:${cur}`)
+    reveal(cur).catch(() => {})
+  }, [me, ws, cur, tree.byId, reveal])
 
   useEffect(() => {
     auth.me().then(setMe, () => router.replace('/login'))
@@ -420,9 +520,8 @@ export function ShellView({
     setDenied(false)
     Promise.all([
       cmd<Space[]>(ws, 'space.list'),
-      cmd<Note[]>(ws, 'note.list', { limit: 500 }),
       cmd<Member[]>(ws, 'member.list'),
-      loadShared(ws),
+      cmd<SharedNote[]>(ws, 'note.shared_with_me'),
       cmd<{
         settings: {
           hidden_modules?: string[]
@@ -431,15 +530,14 @@ export function ShellView({
         }
       }>(ws, 'workspace.get'),
     ]).then(
-      ([s, n, m, sh, w]) => {
+      ([s, m, sh, w]) => {
         const off = w.settings.hidden_modules
         setModules(off?.length ? MODULES.map((m) => m.key).filter((k) => !off.includes(k)) : null)
         setDealLabels(w.settings.deal_stage_labels ?? null)
         setGoal(w.settings.first_goal ?? null)
         setSpaces(s)
-        setNotes([...n, ...sh.roots, ...sh.extra])
         setMembers(m)
-        setShared(sh.roots)
+        setShared(sh)
       },
       () => setDenied(true),
     )
@@ -460,13 +558,17 @@ export function ShellView({
     return () => window.removeEventListener('keydown', k)
   }, [])
 
-  const reload = useCallback(() => setTick((t) => t + 1), [])
+  const { refresh } = tree
+  const reload = useCallback(() => {
+    setTick((t) => t + 1)
+    refresh()
+  }, [refresh])
 
   const currentSpaceId = useMemo(() => {
     const seg = path.split('/').slice(3)
     if (seg[0] === 's') return seg[1]
-    if (seg[0] === 'n') return notes.find((n) => n.id === seg[1])?.space_id
-  }, [path, notes])
+    if (seg[0] === 'n') return tree.byId.get(seg[1])?.space_id
+  }, [path, tree.byId])
 
   const newPage = useCallback(
     async (o?: { spaceId?: string; parentId?: string }) => {
@@ -499,7 +601,7 @@ export function ShellView({
     ws,
     me,
     spaces,
-    notes,
+    tree,
     shared,
     members,
     modules,
@@ -674,25 +776,15 @@ export function ShellView({
                       <div className="px-2 py-1 text-[11px] font-semibold uppercase tracking-wide text-muted">
                         Shared with me
                       </div>
-                      <ul>
-                        {shared.map((n) => (
-                          <li key={n.id}>
-                            <Link
-                              href={`${base}/n/${n.id}`}
-                              className="flex items-center gap-1.5 rounded py-1 pr-2 pl-4 text-[13px] hover:bg-hover"
-                            >
-                              <FileText size={13} className="shrink-0 text-muted" />
-                              <span className="truncate">{n.title || 'Untitled'}</span>
-                            </Link>
-                            <Tree
-                              spaceId={n.space_id}
-                              parent={n.id}
-                              depth={2}
-                              label={`${n.title || 'Untitled'} sub-pages`}
-                            />
-                          </li>
-                        ))}
-                      </ul>
+                      {[...new Set(shared.map((n) => n.space_id))].map((sp, i) => (
+                        <Tree
+                          key={sp}
+                          spaceId={sp}
+                          parent={sharedParent(sp)}
+                          depth={1}
+                          label={i === 0 ? 'Shared with me' : `Shared with me (${i + 1})`}
+                        />
+                      ))}
                     </div>
                   )}
                   {spaces.map((s) => {

@@ -1,5 +1,6 @@
 'use client'
 import { useMine } from '@/components/docs/page-header'
+import { useRecentPages } from '@/components/docs/tree-loader'
 import { HomeDashboard } from '@/components/home/dashboard'
 import { SetupToast } from '@/components/home/setup-toast'
 import { HomeWidgets } from '@/components/home/widgets-home'
@@ -10,9 +11,10 @@ import { btnPrimary } from '@/components/ui'
 const REVIEW_WINDOW_MS = 14 * 86400_000
 
 export function HomePage({ widgets }: { widgets: boolean }) {
-  const { ws, me, notes, spaces, openSpaceDialog } = useShell()
+  const { ws, me, spaces, openSpaceDialog } = useShell()
+  const notes = useRecentPages(ws, 500)
   const mine = useMine(ws, 'recent', 8)
-  const pages = notes.filter((n) => n.types.length === 0)
+  const pages = notes
   const needsReview = pages.filter(
     (n) =>
       n.owner_id === me.user.id &&
@@ -21,7 +23,7 @@ export function HomePage({ widgets }: { widgets: boolean }) {
         (n.verify_by && new Date(n.verify_by).getTime() - Date.now() < REVIEW_WINDOW_MS)),
   )
   // Recently opened pages the shell can still list; a new person falls back to recently updated.
-  const recent = mine.flatMap((r) => notes.filter((n) => n.id === r.id && n.types.length === 0))
+  const recent = mine.flatMap((r) => notes.filter((n) => n.id === r.id))
   return (
     <div className="mx-auto max-w-6xl space-y-8 px-6 py-8">
       <h1 className="text-2xl font-semibold tracking-tight">Welcome back, {me.user.name.split(' ')[0]}</h1>

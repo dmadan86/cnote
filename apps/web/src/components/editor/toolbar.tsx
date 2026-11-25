@@ -10,6 +10,7 @@ import {
   Bold,
   ChevronDown,
   Code,
+  Highlighter,
   ImageIcon,
   Italic,
   Link2,
@@ -27,6 +28,8 @@ import {
 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { pickFiles } from './file-link'
+import { setHighlight } from './formats'
+import { TINTS } from './html-inline'
 import { promptLink, Tool } from './menus'
 
 type Style = { label: string; key: string; size: string; keys: string; run: (e: Editor) => void }
@@ -219,7 +222,7 @@ function Pop({
         <div
           role="dialog"
           aria-label={label}
-          className="absolute left-0 top-full z-30 mt-1 flex gap-0.5 rounded-lg border border-line bg-canvas p-1 shadow-xl"
+          className="absolute left-0 top-full z-30 mt-1 flex flex-wrap gap-0.5 rounded-lg border border-line bg-canvas p-1 shadow-xl max-sm:fixed max-sm:inset-x-2 max-sm:top-auto"
         >
           {children(close)}
         </div>
@@ -249,6 +252,7 @@ export function FixedToolbar({ editor }: { editor: Editor }) {
       task: e.isActive('taskList'),
       link: e.isActive('link'),
       color: (e.getAttributes('textStyle').color as string | undefined) ?? '',
+      highlight: (e.getAttributes('textStyle').highlight as string | undefined) ?? '',
       align: ALIGNS.find(([a]) => e.isActive({ textAlign: a }))?.[0] ?? 'left',
       undo: e.can().undo(),
       redo: e.can().redo(),
@@ -325,6 +329,53 @@ export function FixedToolbar({ editor }: { editor: Editor }) {
               className={`${opt} text-[11px]`}
             >
               Aa
+            </button>
+          </>
+        )}
+      </Pop>
+      <Pop
+        editor={editor}
+        label="Highlight"
+        trigger={
+          <span className="grid place-items-center">
+            <Highlighter size={sz} />
+            <span
+              className="cn-swatch -mt-0.5 !h-0.5 !w-3.5 !rounded !border-0"
+              data-tint={s.highlight || undefined}
+              style={s.highlight ? undefined : { background: 'currentColor', opacity: 0.35 }}
+            />
+          </span>
+        }
+      >
+        {(close) => (
+          <>
+            {TINTS.map((t) => (
+              <button
+                key={t}
+                type="button"
+                aria-label={`Highlight ${t}`}
+                title={`Highlight ${t}`}
+                aria-pressed={s.highlight === t}
+                onClick={() => {
+                  close()
+                  setHighlight(editor, t)
+                }}
+                className={`${opt} aria-pressed:ring-2 aria-pressed:ring-accent`}
+              >
+                <span className="cn-swatch" data-tint={t} />
+              </button>
+            ))}
+            <button
+              type="button"
+              aria-label="No highlight"
+              title="No highlight"
+              onClick={() => {
+                close()
+                setHighlight(editor, null)
+              }}
+              className={`${opt} text-[11px]`}
+            >
+              None
             </button>
           </>
         )}

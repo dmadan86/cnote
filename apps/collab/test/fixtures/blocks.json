@@ -137,5 +137,72 @@
     "covers": ["link", "code"],
     "md": "[Project](/w/7b3f1c2e-5a4d-4e6f-8a9b-0c1d2e3f4a5b/n/0f0e0d0c-0b0a-4908-8706-050403020100) and [[unfinished\n\n```\n[[inside code\n```",
     "plain": "[Project](/w/7b3f1c2e-5a4d-4e6f-8a9b-0c1d2e3f4a5b/n/0f0e0d0c-0b0a-4908-8706-050403020100) and [[unfinished\n[[inside code"
+  },
+  {
+    "id": "highlight-each-tint",
+    "covers": ["highlight"],
+    "pending": "c1",
+    "md": "<mark data-color=\"yellow\">yellow marker</mark> beside plain yellow\n\n<mark data-color=\"green\">green marker</mark> beside plain green\n\n<mark data-color=\"blue\">blue marker</mark> beside plain blue\n\n<mark data-color=\"purple\">purple marker</mark> beside plain purple\n\n<mark data-color=\"red\">red marker</mark> beside plain red\n\n<mark data-color=\"orange\">orange marker</mark> beside plain orange\n\n<mark data-color=\"grey\">grey marker</mark> beside plain grey",
+    "plain": "yellow marker beside plain yellow\ngreen marker beside plain green\nblue marker beside plain blue\npurple marker beside plain purple\nred marker beside plain red\norange marker beside plain orange\ngrey marker beside plain grey"
+  },
+  {
+    "id": "highlight-with-colour",
+    "covers": ["highlight", "colour"],
+    "pending": "c1",
+    "md": "Pay <mark data-color=\"yellow\"><span style=\"color: #c0392b\">overdue invoices</span></mark> before <span style=\"color: #2980b9\">month end</span> and <mark data-color=\"green\">approved</mark> ones.",
+    "plain": "Pay overdue invoices before month end and approved ones."
+  },
+  {
+    "id": "highlight-bare-and-unknown",
+    "covers": ["highlight", "lookalike"],
+    "pending": "c1",
+    "md": "A <mark data-color=\"yellow\">bare mark reads as yellow</mark> and an unknown tint keeps its text.",
+    "plain": "A bare mark reads as yellow and an unknown tint keeps its text."
+  },
+  {
+    "id": "highlight-next-to-other-marks",
+    "covers": ["highlight", "link"],
+    "pending": "c1",
+    "md": "**<mark data-color=\"blue\">bold in blue</mark>** and [<mark data-color=\"blue\">a link</mark>](https://example.com/guide) then *italic*.",
+    "plain": "**bold in blue** and [a link](https://example.com/guide) then *italic*."
+  },
+  {
+    "id": "table-cell-colour",
+    "covers": ["cell-colour", "table"],
+    "pending": "c1",
+    "md": "<table><tr><th data-bg=\"grey\"><p>Task</p></th><th data-bg=\"grey\"><p>Owner</p></th></tr><tr><td data-bg=\"green\"><p>Pack stock</p></td><td><p>Asha</p></td></tr><tr><td data-bg=\"red\"><p>Ship order</p></td><td data-bg=\"yellow\"><p>Ravi</p></td></tr></table>",
+    "plain": "Task\nOwner\nPack stock\nAsha\nShip order\nRavi"
+  },
+  {
+    "id": "table-numbered-column",
+    "covers": ["numbered", "table"],
+    "pending": "c1",
+    "md": "<table data-numbered=\"true\"><tr><th><p>Item</p></th><th><p>Quantity</p></th></tr><tr><td><p>Rice bags</p></td><td><p>40</p></td></tr><tr><td><p>Lentil sacks</p></td><td><p>25</p></td></tr></table>",
+    "plain": "Item\nQuantity\nRice bags\n40\nLentil sacks\n25"
+  },
+  {
+    "id": "table-numbered-coloured-merged",
+    "covers": ["numbered", "cell-colour", "table", "merged"],
+    "pending": "c1",
+    "md": "<table data-numbered=\"true\"><tr><th colspan=\"2\" data-bg=\"blue\"><p>Stock check</p></th></tr><tr><td data-bg=\"orange\"><p>Rice bags</p></td><td><p>40 <mark data-color=\"yellow\">low</mark></p></td></tr></table>",
+    "plain": "Stock check\nRice bags\n40 low"
+  },
+  {
+    "id": "highlight-literal-close",
+    "covers": ["highlight"],
+    "md": "<mark data-color=\"yellow\">&lt;/mark&gt;</mark>",
+    "plain": "</mark>"
+  },
+  {
+    "id": "highlight-literal-markdown",
+    "covers": ["highlight"],
+    "md": "<mark data-color=\"yellow\">&#42;&#42;literal&#42;&#42;</mark>",
+    "plain": "**literal**"
+  },
+  {
+    "id": "highlight-literal-punctuation",
+    "covers": ["highlight"],
+    "md": "<mark data-color=\"yellow\">a&#92;b &#95;x&#95; &#91;l&#93; &#126;t&#126; &#96;c&#96; &amp; &lt;b&gt; &quot;q&quot;</mark>",
+    "plain": "a\\b _x_ [l] ~t~ `c` & <b> \"q\""
   }
 ]
