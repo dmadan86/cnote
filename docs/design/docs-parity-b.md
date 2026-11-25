@@ -1017,3 +1017,18 @@ Changes to the plan:
 - **Sweeps never consume a pending event.** The mention seed and the task backfill skip a page while its `note.created` or `note.updated` has an `event.dispatch` job that is queued or running (the exact signal; an age window would be a guess), and judge that under the same per-note lock the handler takes.
 - **Mention authorship.** A mention is attributed to the author of the version that introduced it (the actor of the newest `note.updated` event carrying that version, or the person an agent acted for), not to the actor of the event being dispatched. Self-mention is skipped only when the mentioned person wrote that version.
 - **Digest limit.** One run takes up to 200 people, not rows. Each person is handled under `FOR UPDATE` on their `notify_prefs` row (people in id order): all eligible rows and the claim of the day together.
+
+## 14. B2 lead decisions (2026-11-25)
+
+This section overrides section 10.2 and section 5.4 wherever they disagree.
+
+1. **No schema bump in B2.**
+   - Child pages are shown as page chrome: a "Sub-pages" list under the body of any page that has children. It is ordered by `position` and filtered by access in the query. It is not a block.
+   - There is no `children` node, `DOC_SCHEMA` stays at 2, the mobile literal stays, and no mobile release is needed first.
+   - The fixtures `children-block` and `children-lookalike` are dropped. `[[children]]` typed as text stays plain text. The public body pass already strips the marker.
+   - The Confluence `children` macro in `importers/html.go` becomes nothing, because the chrome shows the list anyway.
+2. **Migration numbers.** B2 uses 1344 and up. 1343 holds the B1 review fixes and 1327 is still reserved.
+3. **Tools.**
+   - Step 0 scaffolding and the reviews go to Codex. The lead verifies them against a scratch DB.
+   - Tabnine writes the Word fixture builders: `importers/docx_fixtures_test.go` builds every .docx in memory, so no binaries are committed. It also writes the template-prompt test data.
+   - Builders Q1–Q3 then work in parallel, per the table in 10.2, minus the child-block files. Q2 builds the Sub-pages chrome in a new `components/docs/sub-pages.tsx` mounted from the page.
