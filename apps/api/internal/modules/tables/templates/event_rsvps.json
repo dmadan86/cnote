@@ -1,0 +1,204 @@
+{
+  "key": "event_rsvps",
+  "name": "Event RSVPs",
+  "description": "Guest list with replies, party size and meal choice.",
+  "tables": [
+    {
+      "name": "Guests",
+      "fields": [
+        {
+          "name": "Guest",
+          "type": "text"
+        },
+        {
+          "name": "Phone",
+          "type": "phone"
+        },
+        {
+          "name": "Email",
+          "type": "email"
+        },
+        {
+          "name": "Reply",
+          "type": "single_select",
+          "config": {
+            "options": [
+              {
+                "id": "o1",
+                "name": "Invited",
+                "color": "gray"
+              },
+              {
+                "id": "o2",
+                "name": "Coming",
+                "color": "blue"
+              },
+              {
+                "id": "o3",
+                "name": "Maybe",
+                "color": "green"
+              },
+              {
+                "id": "o4",
+                "name": "Not coming",
+                "color": "amber"
+              }
+            ]
+          }
+        },
+        {
+          "name": "Party size",
+          "type": "number",
+          "config": {
+            "decimals": 0
+          }
+        },
+        {
+          "name": "Meal",
+          "type": "single_select",
+          "config": {
+            "options": [
+              {
+                "id": "o1",
+                "name": "Veg",
+                "color": "gray"
+              },
+              {
+                "id": "o2",
+                "name": "Non-veg",
+                "color": "blue"
+              },
+              {
+                "id": "o3",
+                "name": "Jain",
+                "color": "green"
+              }
+            ]
+          }
+        },
+        {
+          "name": "Side",
+          "type": "single_select",
+          "config": {
+            "options": [
+              {
+                "id": "o1",
+                "name": "Bride",
+                "color": "gray"
+              },
+              {
+                "id": "o2",
+                "name": "Groom",
+                "color": "blue"
+              },
+              {
+                "id": "o3",
+                "name": "Family friend",
+                "color": "green"
+              }
+            ]
+          }
+        },
+        {
+          "name": "Note",
+          "type": "long_text"
+        }
+      ],
+      "views": [
+        {
+          "name": "All guests",
+          "type": "grid",
+          "config": {
+            "v": 1
+          }
+        },
+        {
+          "name": "By reply",
+          "type": "kanban",
+          "config": {
+            "v": 1,
+            "kanban": {
+              "stack": "Reply",
+              "card_fields": ["Phone", "Email"]
+            }
+          }
+        }
+      ],
+      "records": [
+        {
+          "Guest": "Prakash Choudhary",
+          "Phone": "+919812300081",
+          "Email": "prakash@example.com",
+          "Reply": "o2",
+          "Party size": 4,
+          "Meal": "o1",
+          "Side": "o2"
+        },
+        {
+          "Guest": "Lata Subramanian",
+          "Phone": "+919812300082",
+          "Reply": "o2",
+          "Party size": 2,
+          "Meal": "o1",
+          "Side": "o1"
+        },
+        {
+          "Guest": "Faisal Qureshi",
+          "Phone": "+919812300083",
+          "Email": "faisal@example.com",
+          "Reply": "o3",
+          "Party size": 3,
+          "Meal": "o2",
+          "Side": "o3"
+        },
+        {
+          "Guest": "Geeta Bansal",
+          "Phone": "+919812300084",
+          "Reply": "o2",
+          "Party size": 5,
+          "Meal": "o3",
+          "Side": "o2",
+          "Note": "Needs a ground-floor room."
+        },
+        {
+          "Guest": "Thomas Varghese",
+          "Phone": "+919812300085",
+          "Email": "thomas@example.com",
+          "Reply": "o4",
+          "Party size": 2,
+          "Side": "o1",
+          "Note": "Travelling abroad."
+        },
+        {
+          "Guest": "Nandini Rao",
+          "Phone": "+919812300086",
+          "Reply": "o1",
+          "Side": "o1"
+        },
+        {
+          "Guest": "Sandeep Malhotra",
+          "Phone": "+919812300087",
+          "Reply": "o2",
+          "Party size": 2,
+          "Meal": "o2",
+          "Side": "o2"
+        },
+        {
+          "Guest": "Rukmini Devi",
+          "Phone": "+919812300088",
+          "Reply": "o1",
+          "Side": "o3"
+        },
+        {
+          "Guest": "Ashok Dubey",
+          "Phone": "+919812300089",
+          "Email": "ashok@example.com",
+          "Reply": "o3",
+          "Party size": 1,
+          "Meal": "o1",
+          "Side": "o2"
+        }
+      ]
+    }
+  ]
+}

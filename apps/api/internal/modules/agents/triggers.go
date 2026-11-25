@@ -27,7 +27,7 @@ const runtimeAgent = `enabled and (template is not null or instructions is not n
 // OnEvent starts runs for agents whose events prefixes match e (section 6). Events caused by an agent, and every
 // agent.* kind, never trigger a run, so an agent cannot start itself or another. The run is for the agent's owner.
 func OnEvent(c *command.Ctx, e jobs.Event) error {
-	if e.ActorType == "agent" || strings.HasPrefix(e.Kind, "agent.") {
+	if e.ActorType == "agent" || strings.HasPrefix(e.Kind, "agent.") || strings.HasPrefix(e.Kind, "record.") { // record.* never starts a run in 1a (tables 17.5)
 		return nil
 	}
 	switch e.Kind {

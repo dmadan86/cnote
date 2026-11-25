@@ -1,0 +1,304 @@
+{
+  "key": "dealer_network",
+  "name": "Dealer network",
+  "description": "Dealers by region and a log of every sales visit.",
+  "tables": [
+    {
+      "name": "Dealers",
+      "fields": [
+        {
+          "name": "Dealer",
+          "type": "text"
+        },
+        {
+          "name": "Region",
+          "type": "single_select",
+          "config": {
+            "options": [
+              {
+                "id": "o1",
+                "name": "North",
+                "color": "gray"
+              },
+              {
+                "id": "o2",
+                "name": "South",
+                "color": "blue"
+              },
+              {
+                "id": "o3",
+                "name": "East",
+                "color": "green"
+              },
+              {
+                "id": "o4",
+                "name": "West",
+                "color": "amber"
+              }
+            ]
+          }
+        },
+        {
+          "name": "City",
+          "type": "text"
+        },
+        {
+          "name": "Owner",
+          "type": "text"
+        },
+        {
+          "name": "Phone",
+          "type": "phone"
+        },
+        {
+          "name": "GSTIN",
+          "type": "text"
+        },
+        {
+          "name": "Monthly target",
+          "type": "currency",
+          "config": {
+            "decimals": 0
+          }
+        },
+        {
+          "name": "Active",
+          "type": "checkbox"
+        }
+      ],
+      "views": [
+        {
+          "name": "All dealers",
+          "type": "grid",
+          "config": {
+            "v": 1,
+            "group": "Region"
+          }
+        }
+      ],
+      "records": [
+        {
+          "Dealer": "Gill Agencies",
+          "Region": "o1",
+          "City": "Chandigarh",
+          "Owner": "Gurpreet Gill",
+          "Phone": "+919812300031",
+          "GSTIN": "04AAAAA0000A1Z5",
+          "Monthly target": 50000000,
+          "Active": true
+        },
+        {
+          "Dealer": "Sri Lakshmi Distributors",
+          "Region": "o2",
+          "City": "Coimbatore",
+          "Owner": "Lakshmi Narayanan",
+          "Phone": "+919812300032",
+          "GSTIN": "33AAAAA0000A1Z5",
+          "Monthly target": 75000000,
+          "Active": true
+        },
+        {
+          "Dealer": "Das & Sons",
+          "Region": "o3",
+          "City": "Kolkata",
+          "Owner": "Subrata Das",
+          "Phone": "+919812300033",
+          "GSTIN": "19AAAAA0000A1Z5",
+          "Monthly target": 40000000,
+          "Active": true
+        },
+        {
+          "Dealer": "Kulkarni Enterprises",
+          "Region": "o4",
+          "City": "Kolhapur",
+          "Owner": "Sandeep Kulkarni",
+          "Phone": "+919812300034",
+          "GSTIN": "27AAAAA0000A1Z5",
+          "Monthly target": 60000000,
+          "Active": true
+        },
+        {
+          "Dealer": "Bhatia Sales",
+          "Region": "o1",
+          "City": "Delhi",
+          "Owner": "Ritu Bhatia",
+          "Phone": "+919812300035",
+          "GSTIN": "07AAAAA0000A1Z5",
+          "Monthly target": 90000000,
+          "Active": true
+        },
+        {
+          "Dealer": "Reddy Marketing",
+          "Region": "o2",
+          "City": "Vijayawada",
+          "Owner": "Srinivas Reddy",
+          "Phone": "+919812300036",
+          "Monthly target": 45000000,
+          "Active": false
+        },
+        {
+          "Dealer": "Shah Trading Co",
+          "Region": "o4",
+          "City": "Ahmedabad",
+          "Owner": "Nirav Shah",
+          "Phone": "+919812300037",
+          "GSTIN": "24AAAAA0000A1Z5",
+          "Monthly target": 80000000,
+          "Active": true
+        },
+        {
+          "Dealer": "Borah Stores",
+          "Region": "o3",
+          "City": "Guwahati",
+          "Owner": "Ankur Borah",
+          "Phone": "+919812300038",
+          "Monthly target": 30000000,
+          "Active": true
+        }
+      ]
+    },
+    {
+      "name": "Visits",
+      "fields": [
+        {
+          "name": "Visit",
+          "type": "text"
+        },
+        {
+          "name": "Dealer",
+          "type": "link",
+          "config": {
+            "table": "Dealers",
+            "multiple": false
+          }
+        },
+        {
+          "name": "Date",
+          "type": "date"
+        },
+        {
+          "name": "Visited by",
+          "type": "text"
+        },
+        {
+          "name": "Outcome",
+          "type": "single_select",
+          "config": {
+            "options": [
+              {
+                "id": "o1",
+                "name": "Order taken",
+                "color": "gray"
+              },
+              {
+                "id": "o2",
+                "name": "Follow up",
+                "color": "blue"
+              },
+              {
+                "id": "o3",
+                "name": "Payment pending",
+                "color": "green"
+              },
+              {
+                "id": "o4",
+                "name": "No action",
+                "color": "amber"
+              }
+            ]
+          }
+        },
+        {
+          "name": "Order value",
+          "type": "currency",
+          "config": {
+            "decimals": 0
+          }
+        },
+        {
+          "name": "Notes",
+          "type": "long_text"
+        }
+      ],
+      "views": [
+        {
+          "name": "All visits",
+          "type": "grid",
+          "config": {
+            "v": 1,
+            "sorts": [
+              {
+                "field": "Date",
+                "desc": true
+              }
+            ]
+          }
+        }
+      ],
+      "records": [
+        {
+          "Visit": "Gill Agencies, Nov",
+          "Dealer": ["Gill Agencies"],
+          "Date": "2026-11-05",
+          "Visited by": "Manoj Kumar",
+          "Outcome": "o1",
+          "Order value": 21000000
+        },
+        {
+          "Visit": "Sri Lakshmi, Nov",
+          "Dealer": ["Sri Lakshmi Distributors"],
+          "Date": "2026-11-07",
+          "Visited by": "Arun Prasad",
+          "Outcome": "o3",
+          "Notes": "Cheque promised by 30 Nov."
+        },
+        {
+          "Visit": "Das & Sons, Nov",
+          "Dealer": ["Das & Sons"],
+          "Date": "2026-11-10",
+          "Visited by": "Debashish Roy",
+          "Outcome": "o2"
+        },
+        {
+          "Visit": "Kulkarni, Nov",
+          "Dealer": ["Kulkarni Enterprises"],
+          "Date": "2026-11-12",
+          "Visited by": "Prasad Patil",
+          "Outcome": "o1",
+          "Order value": 34000000
+        },
+        {
+          "Visit": "Bhatia Sales, Nov",
+          "Dealer": ["Bhatia Sales"],
+          "Date": "2026-11-14",
+          "Visited by": "Manoj Kumar",
+          "Outcome": "o1",
+          "Order value": 52000000
+        },
+        {
+          "Visit": "Reddy Marketing, Nov",
+          "Dealer": ["Reddy Marketing"],
+          "Date": "2026-11-17",
+          "Visited by": "Arun Prasad",
+          "Outcome": "o4",
+          "Notes": "Shop closed for renovation."
+        },
+        {
+          "Visit": "Shah Trading, Nov",
+          "Dealer": ["Shah Trading Co"],
+          "Date": "2026-11-19",
+          "Visited by": "Prasad Patil",
+          "Outcome": "o2"
+        },
+        {
+          "Visit": "Borah Stores, Nov",
+          "Dealer": ["Borah Stores"],
+          "Date": "2026-11-21",
+          "Visited by": "Debashish Roy",
+          "Outcome": "o1",
+          "Order value": 9500000
+        }
+      ]
+    }
+  ]
+}

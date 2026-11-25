@@ -1,8 +1,6 @@
+'use client'
+import { BaseHome } from '@/components/tables/base-home'
+
 export default function TablesPage() {
-  return (
-    <main>
-      <h1>Tables</h1>
-      <p>Tables are coming soon.</p>
-    </main>
-  )
+  return <BaseHome />
 }

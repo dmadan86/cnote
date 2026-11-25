@@ -1,0 +1,347 @@
+{
+  "key": "service_tickets",
+  "name": "Service tickets",
+  "description": "Customers, their machines and every service visit, with a board by status.",
+  "tables": [
+    {
+      "name": "Customers",
+      "fields": [
+        {
+          "name": "Name",
+          "type": "text"
+        },
+        {
+          "name": "Phone",
+          "type": "phone"
+        },
+        {
+          "name": "Address",
+          "type": "text"
+        },
+        {
+          "name": "City",
+          "type": "text"
+        }
+      ],
+      "views": [
+        {
+          "name": "All customers",
+          "type": "grid",
+          "config": {
+            "v": 1
+          }
+        }
+      ],
+      "records": [
+        {
+          "Name": "Hotel Sagar",
+          "Phone": "+919812300041",
+          "Address": "MG Road",
+          "City": "Mysuru"
+        },
+        {
+          "Name": "Dr. Fatima Khan",
+          "Phone": "+919812300042",
+          "Address": "Civil Lines",
+          "City": "Bhopal"
+        },
+        {
+          "Name": "Annapurna Bakery",
+          "Phone": "+919812300043",
+          "Address": "Station Road",
+          "City": "Nashik"
+        },
+        {
+          "Name": "Joseph Mathew",
+          "Phone": "+919812300044",
+          "Address": "Church Lane",
+          "City": "Kottayam"
+        },
+        {
+          "Name": "Rajesh Textile Mills",
+          "Phone": "+919812300045",
+          "Address": "GIDC Estate",
+          "City": "Vadodara"
+        }
+      ]
+    },
+    {
+      "name": "Machines",
+      "fields": [
+        {
+          "name": "Machine",
+          "type": "text"
+        },
+        {
+          "name": "Customer",
+          "type": "link",
+          "config": {
+            "table": "Customers",
+            "multiple": false
+          }
+        },
+        {
+          "name": "Model",
+          "type": "text"
+        },
+        {
+          "name": "Serial no",
+          "type": "text"
+        },
+        {
+          "name": "Installed on",
+          "type": "date"
+        },
+        {
+          "name": "Warranty till",
+          "type": "date"
+        }
+      ],
+      "views": [
+        {
+          "name": "All machines",
+          "type": "grid",
+          "config": {
+            "v": 1
+          }
+        }
+      ],
+      "records": [
+        {
+          "Machine": "Hotel Sagar RO plant",
+          "Customer": ["Hotel Sagar"],
+          "Model": "RO-500",
+          "Serial no": "RO500-1182",
+          "Installed on": "2025-03-10",
+          "Warranty till": "2027-03-09"
+        },
+        {
+          "Machine": "Clinic autoclave",
+          "Customer": ["Dr. Fatima Khan"],
+          "Model": "AC-24",
+          "Serial no": "AC24-0457",
+          "Installed on": "2024-08-21",
+          "Warranty till": "2026-08-20"
+        },
+        {
+          "Machine": "Bakery oven",
+          "Customer": ["Annapurna Bakery"],
+          "Model": "DK-3 deck",
+          "Serial no": "DK3-0931",
+          "Installed on": "2025-11-02",
+          "Warranty till": "2026-11-01"
+        },
+        {
+          "Machine": "Bakery mixer",
+          "Customer": ["Annapurna Bakery"],
+          "Model": "SM-40",
+          "Serial no": "SM40-2210",
+          "Installed on": "2026-01-15",
+          "Warranty till": "2028-01-14"
+        },
+        {
+          "Machine": "Home inverter",
+          "Customer": ["Joseph Mathew"],
+          "Model": "INV-1500",
+          "Serial no": "INV15-7788",
+          "Installed on": "2025-06-18",
+          "Warranty till": "2027-06-17"
+        },
+        {
+          "Machine": "Loom compressor",
+          "Customer": ["Rajesh Textile Mills"],
+          "Model": "CP-10HP",
+          "Serial no": "CP10-3345",
+          "Installed on": "2023-12-05",
+          "Warranty till": "2025-12-04"
+        }
+      ]
+    },
+    {
+      "name": "Visits",
+      "fields": [
+        {
+          "name": "Ticket",
+          "type": "autonumber",
+          "config": {
+            "prefix": "TKT-"
+          }
+        },
+        {
+          "name": "Machine",
+          "type": "link",
+          "config": {
+            "table": "Machines",
+            "multiple": false
+          }
+        },
+        {
+          "name": "Issue",
+          "type": "text"
+        },
+        {
+          "name": "Status",
+          "type": "single_select",
+          "config": {
+            "options": [
+              {
+                "id": "o1",
+                "name": "Open",
+                "color": "gray"
+              },
+              {
+                "id": "o2",
+                "name": "Assigned",
+                "color": "blue"
+              },
+              {
+                "id": "o3",
+                "name": "In progress",
+                "color": "green"
+              },
+              {
+                "id": "o4",
+                "name": "Parts needed",
+                "color": "amber"
+              },
+              {
+                "id": "o5",
+                "name": "Closed",
+                "color": "red"
+              }
+            ]
+          }
+        },
+        {
+          "name": "Priority",
+          "type": "single_select",
+          "config": {
+            "options": [
+              {
+                "id": "o1",
+                "name": "Low",
+                "color": "gray"
+              },
+              {
+                "id": "o2",
+                "name": "Medium",
+                "color": "blue"
+              },
+              {
+                "id": "o3",
+                "name": "High",
+                "color": "green"
+              }
+            ]
+          }
+        },
+        {
+          "name": "Technician",
+          "type": "text"
+        },
+        {
+          "name": "Visit date",
+          "type": "date"
+        },
+        {
+          "name": "Charge",
+          "type": "currency",
+          "config": {
+            "decimals": 2
+          }
+        },
+        {
+          "name": "Details",
+          "type": "long_text"
+        }
+      ],
+      "views": [
+        {
+          "name": "All visits",
+          "type": "grid",
+          "config": {
+            "v": 1
+          }
+        },
+        {
+          "name": "By status",
+          "type": "kanban",
+          "config": {
+            "v": 1,
+            "kanban": {
+              "stack": "Status",
+              "card_fields": ["Machine", "Issue"]
+            }
+          }
+        }
+      ],
+      "records": [
+        {
+          "Machine": ["Hotel Sagar RO plant"],
+          "Issue": "Low water output",
+          "Status": "o3",
+          "Priority": "o3",
+          "Technician": "Suresh Gowda",
+          "Visit date": "2026-11-24",
+          "Charge": 0
+        },
+        {
+          "Machine": ["Clinic autoclave"],
+          "Issue": "Door seal leaking",
+          "Status": "o4",
+          "Priority": "o3",
+          "Technician": "Imtiyaz Ali",
+          "Visit date": "2026-11-23",
+          "Charge": 240000
+        },
+        {
+          "Machine": ["Bakery oven"],
+          "Issue": "Thermostat error",
+          "Status": "o2",
+          "Priority": "o2",
+          "Technician": "Santosh Pawar",
+          "Visit date": "2026-11-26"
+        },
+        {
+          "Machine": ["Bakery mixer"],
+          "Issue": "Unusual noise",
+          "Status": "o1",
+          "Priority": "o1"
+        },
+        {
+          "Machine": ["Home inverter"],
+          "Issue": "Battery not charging",
+          "Status": "o5",
+          "Priority": "o2",
+          "Technician": "Binu Thomas",
+          "Visit date": "2026-11-15",
+          "Charge": 180000
+        },
+        {
+          "Machine": ["Loom compressor"],
+          "Issue": "Annual service",
+          "Status": "o5",
+          "Priority": "o1",
+          "Technician": "Kalpesh Solanki",
+          "Visit date": "2026-11-10",
+          "Charge": 650000,
+          "Details": "Oil and filter changed."
+        },
+        {
+          "Machine": ["Hotel Sagar RO plant"],
+          "Issue": "Membrane replacement",
+          "Status": "o1",
+          "Priority": "o2"
+        },
+        {
+          "Machine": ["Loom compressor"],
+          "Issue": "Pressure drop",
+          "Status": "o2",
+          "Priority": "o3",
+          "Technician": "Kalpesh Solanki",
+          "Visit date": "2026-11-27"
+        }
+      ]
+    }
+  ]
+}

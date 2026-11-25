@@ -1,0 +1,221 @@
+{
+  "key": "stock_list",
+  "name": "Stock list",
+  "description": "Know what is in stock and what to reorder.",
+  "tables": [
+    {
+      "name": "Items",
+      "fields": [
+        {
+          "name": "Item",
+          "type": "text"
+        },
+        {
+          "name": "Category",
+          "type": "single_select",
+          "config": {
+            "options": [
+              {
+                "id": "o1",
+                "name": "Grocery",
+                "color": "gray"
+              },
+              {
+                "id": "o2",
+                "name": "Stationery",
+                "color": "blue"
+              },
+              {
+                "id": "o3",
+                "name": "Electrical",
+                "color": "green"
+              },
+              {
+                "id": "o4",
+                "name": "Plumbing",
+                "color": "amber"
+              }
+            ]
+          }
+        },
+        {
+          "name": "Quantity",
+          "type": "number",
+          "config": {
+            "decimals": 0
+          }
+        },
+        {
+          "name": "Reorder level",
+          "type": "number",
+          "config": {
+            "decimals": 0
+          }
+        },
+        {
+          "name": "Unit price",
+          "type": "currency",
+          "config": {
+            "decimals": 2
+          }
+        },
+        {
+          "name": "Supplier phone",
+          "type": "phone"
+        },
+        {
+          "name": "Last restocked",
+          "type": "date"
+        }
+      ],
+      "views": [
+        {
+          "name": "All items",
+          "type": "grid",
+          "config": {
+            "v": 1,
+            "sorts": [
+              {
+                "field": "Quantity",
+                "desc": false
+              }
+            ]
+          }
+        },
+        {
+          "name": "Low stock",
+          "type": "grid",
+          "config": {
+            "v": 1,
+            "sorts": [
+              {
+                "field": "Quantity",
+                "desc": false
+              }
+            ],
+            "filters": {
+              "match": "and",
+              "rules": [
+                {
+                  "field": "Quantity",
+                  "op": "<=",
+                  "value": 10
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "records": [
+        {
+          "Item": "Basmati rice 25 kg",
+          "Category": "o1",
+          "Quantity": 42,
+          "Reorder level": 10,
+          "Unit price": 185000,
+          "Supplier phone": "+919812300021",
+          "Last restocked": "2026-11-03"
+        },
+        {
+          "Item": "Toor dal 30 kg",
+          "Category": "o1",
+          "Quantity": 8,
+          "Reorder level": 15,
+          "Unit price": 330000,
+          "Supplier phone": "+919812300022",
+          "Last restocked": "2026-11-04"
+        },
+        {
+          "Item": "Sunflower oil 15 L",
+          "Category": "o1",
+          "Quantity": 24,
+          "Reorder level": 12,
+          "Unit price": 215000,
+          "Supplier phone": "+919812300023",
+          "Last restocked": "2026-11-05"
+        },
+        {
+          "Item": "Tata salt 1 kg (carton)",
+          "Category": "o1",
+          "Quantity": 60,
+          "Reorder level": 20,
+          "Unit price": 42000,
+          "Supplier phone": "+919812300024",
+          "Last restocked": "2026-11-06"
+        },
+        {
+          "Item": "Notebook A4 (dozen)",
+          "Category": "o2",
+          "Quantity": 5,
+          "Reorder level": 10,
+          "Unit price": 54000,
+          "Supplier phone": "+919812300025",
+          "Last restocked": "2026-11-07"
+        },
+        {
+          "Item": "Ball pens (box of 50)",
+          "Category": "o2",
+          "Quantity": 18,
+          "Reorder level": 8,
+          "Unit price": 25000,
+          "Supplier phone": "+919812300026",
+          "Last restocked": "2026-11-08"
+        },
+        {
+          "Item": "Copier paper ream",
+          "Category": "o2",
+          "Quantity": 30,
+          "Reorder level": 12,
+          "Unit price": 32000,
+          "Supplier phone": "+919812300027",
+          "Last restocked": "2026-11-09"
+        },
+        {
+          "Item": "LED bulb 9W",
+          "Category": "o3",
+          "Quantity": 150,
+          "Reorder level": 50,
+          "Unit price": 8500,
+          "Supplier phone": "+919812300028",
+          "Last restocked": "2026-11-10"
+        },
+        {
+          "Item": "Extension board 4-way",
+          "Category": "o3",
+          "Quantity": 6,
+          "Reorder level": 10,
+          "Unit price": 38000,
+          "Supplier phone": "+919812300029",
+          "Last restocked": "2026-11-11"
+        },
+        {
+          "Item": "Copper wire 1.5 mm (90 m)",
+          "Category": "o3",
+          "Quantity": 12,
+          "Reorder level": 6,
+          "Unit price": 175000,
+          "Supplier phone": "+919812300030",
+          "Last restocked": "2026-11-12"
+        },
+        {
+          "Item": "PVC pipe 1 inch",
+          "Category": "o4",
+          "Quantity": 3,
+          "Reorder level": 20,
+          "Unit price": 21000,
+          "Supplier phone": "+919812300031",
+          "Last restocked": "2026-11-13"
+        },
+        {
+          "Item": "Brass tap",
+          "Category": "o4",
+          "Quantity": 22,
+          "Reorder level": 10,
+          "Unit price": 34000,
+          "Supplier phone": "+919812300032",
+          "Last restocked": "2026-11-14"
+        }
+      ]
+    }
+  ]
+}

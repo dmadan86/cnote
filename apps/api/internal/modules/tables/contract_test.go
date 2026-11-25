@@ -52,8 +52,8 @@ func TestEveryTablesCommandIsRegisteredWithSchemas(t *testing.T) {
 				t.Errorf("%s: bad %s schema (%v)", name, what, err)
 			}
 		}
-		if _, err := c.Handler(nil, nil); err == nil || !strings.Contains(err.Error(), "not implemented") {
-			t.Errorf("%s: stub should return a not-implemented error, got %v", name, err)
+		if c.Handler == nil {
+			t.Errorf("%s: no handler", name)
 		}
 		wantMin := command.Member
 		if group == command.GroupRead && name != "table_template.list" {

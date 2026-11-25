@@ -16,7 +16,8 @@ var Templates = []string{TemplateAsk, TemplateBriefing, TemplateLeadResponder, T
 // (contact.email, ticket.reply) are Confirm commands: a person approves each one.
 var ToolAllowlist = map[string][]string{
 	TemplateAsk: {"home.summary", "report.run", "report.datasets", "search.hybrid", "note.get", "item.list", "followup.list",
-		"invoice.list", "deal.list", "ticket.list", "contact.get", "contact.list"},
+		"invoice.list", "deal.list", "ticket.list", "contact.get", "contact.list",
+		"base.list", "table.get", "record.list", "record.get", "record.create", "record.update"},
 	TemplateBriefing: {"home.summary", "report.receivables_ageing", "report.payables_ageing", "followup.list", "ticket.list",
 		"approval.list", "report.run"},
 	TemplateLeadResponder: {"contact.lifecycle", "activity.list", "activity.log", "followup.set", "contact.email",

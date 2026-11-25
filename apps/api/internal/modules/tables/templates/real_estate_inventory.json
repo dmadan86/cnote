@@ -1,0 +1,283 @@
+{
+  "key": "real_estate_inventory",
+  "name": "Real-estate inventory",
+  "description": "Projects and their units, with a board from available to sold.",
+  "tables": [
+    {
+      "name": "Projects",
+      "fields": [
+        {
+          "name": "Project",
+          "type": "text"
+        },
+        {
+          "name": "City",
+          "type": "text"
+        },
+        {
+          "name": "Builder",
+          "type": "text"
+        },
+        {
+          "name": "RERA no",
+          "type": "text"
+        },
+        {
+          "name": "Possession",
+          "type": "date"
+        },
+        {
+          "name": "Total units",
+          "type": "number",
+          "config": {
+            "decimals": 0
+          }
+        }
+      ],
+      "views": [
+        {
+          "name": "All projects",
+          "type": "grid",
+          "config": {
+            "v": 1
+          }
+        }
+      ],
+      "records": [
+        {
+          "Project": "Shree Residency",
+          "City": "Pune",
+          "Builder": "Shree Constructions",
+          "RERA no": "P52100000001",
+          "Possession": "2027-06-30",
+          "Total units": 120
+        },
+        {
+          "Project": "Green Meadows",
+          "City": "Bengaluru",
+          "Builder": "Meadow Homes",
+          "RERA no": "PRM/KA/RERA/0000/000",
+          "Possession": "2027-12-31",
+          "Total units": 80
+        },
+        {
+          "Project": "Lotus Enclave",
+          "City": "Jaipur",
+          "Builder": "Lotus Realty",
+          "RERA no": "RAJ/P/2025/0001",
+          "Possession": "2026-12-15",
+          "Total units": 60
+        }
+      ]
+    },
+    {
+      "name": "Units",
+      "fields": [
+        {
+          "name": "Unit",
+          "type": "text"
+        },
+        {
+          "name": "Project",
+          "type": "link",
+          "config": {
+            "table": "Projects",
+            "multiple": false
+          }
+        },
+        {
+          "name": "Type",
+          "type": "single_select",
+          "config": {
+            "options": [
+              {
+                "id": "o1",
+                "name": "1 BHK",
+                "color": "gray"
+              },
+              {
+                "id": "o2",
+                "name": "2 BHK",
+                "color": "blue"
+              },
+              {
+                "id": "o3",
+                "name": "3 BHK",
+                "color": "green"
+              },
+              {
+                "id": "o4",
+                "name": "Plot",
+                "color": "amber"
+              }
+            ]
+          }
+        },
+        {
+          "name": "Area sq ft",
+          "type": "number",
+          "config": {
+            "decimals": 0
+          }
+        },
+        {
+          "name": "Price",
+          "type": "currency",
+          "config": {
+            "decimals": 0
+          }
+        },
+        {
+          "name": "Status",
+          "type": "single_select",
+          "config": {
+            "options": [
+              {
+                "id": "o1",
+                "name": "Available",
+                "color": "gray"
+              },
+              {
+                "id": "o2",
+                "name": "Hold",
+                "color": "blue"
+              },
+              {
+                "id": "o3",
+                "name": "Booked",
+                "color": "green"
+              },
+              {
+                "id": "o4",
+                "name": "Sold",
+                "color": "amber"
+              }
+            ]
+          }
+        },
+        {
+          "name": "Buyer",
+          "type": "text"
+        },
+        {
+          "name": "Buyer phone",
+          "type": "phone"
+        }
+      ],
+      "views": [
+        {
+          "name": "All units",
+          "type": "grid",
+          "config": {
+            "v": 1
+          }
+        },
+        {
+          "name": "By status",
+          "type": "kanban",
+          "config": {
+            "v": 1,
+            "kanban": {
+              "stack": "Status",
+              "card_fields": ["Project", "Type", "Area sq ft"]
+            }
+          }
+        }
+      ],
+      "records": [
+        {
+          "Unit": "SR-A-101",
+          "Project": ["Shree Residency"],
+          "Type": "o2",
+          "Area sq ft": 950,
+          "Price": 750000000,
+          "Status": "o4",
+          "Buyer": "Nikhil Kulkarni",
+          "Buyer phone": "+919812300061"
+        },
+        {
+          "Unit": "SR-A-102",
+          "Project": ["Shree Residency"],
+          "Type": "o2",
+          "Area sq ft": 960,
+          "Price": 760000000,
+          "Status": "o1"
+        },
+        {
+          "Unit": "SR-B-305",
+          "Project": ["Shree Residency"],
+          "Type": "o3",
+          "Area sq ft": 1350,
+          "Price": 1080000000,
+          "Status": "o2",
+          "Buyer": "Aarti Joshi",
+          "Buyer phone": "+919812300062"
+        },
+        {
+          "Unit": "GM-T1-402",
+          "Project": ["Green Meadows"],
+          "Type": "o1",
+          "Area sq ft": 620,
+          "Price": 620000000,
+          "Status": "o3",
+          "Buyer": "Karthik Gowda",
+          "Buyer phone": "+919812300063"
+        },
+        {
+          "Unit": "GM-T1-801",
+          "Project": ["Green Meadows"],
+          "Type": "o3",
+          "Area sq ft": 1500,
+          "Price": 1650000000,
+          "Status": "o1"
+        },
+        {
+          "Unit": "GM-T2-203",
+          "Project": ["Green Meadows"],
+          "Type": "o2",
+          "Area sq ft": 1100,
+          "Price": 1120000000,
+          "Status": "o1"
+        },
+        {
+          "Unit": "LE-P-14",
+          "Project": ["Lotus Enclave"],
+          "Type": "o4",
+          "Area sq ft": 1800,
+          "Price": 540000000,
+          "Status": "o4",
+          "Buyer": "Mahesh Agarwal",
+          "Buyer phone": "+919812300064"
+        },
+        {
+          "Unit": "LE-P-15",
+          "Project": ["Lotus Enclave"],
+          "Type": "o4",
+          "Area sq ft": 1800,
+          "Price": 540000000,
+          "Status": "o3",
+          "Buyer": "Sneha Rathore",
+          "Buyer phone": "+919812300065"
+        },
+        {
+          "Unit": "LE-P-22",
+          "Project": ["Lotus Enclave"],
+          "Type": "o4",
+          "Area sq ft": 2400,
+          "Price": 720000000,
+          "Status": "o1"
+        },
+        {
+          "Unit": "SR-C-210",
+          "Project": ["Shree Residency"],
+          "Type": "o1",
+          "Area sq ft": 640,
+          "Price": 520000000,
+          "Status": "o2",
+          "Buyer": "Rohit Bhosale",
+          "Buyer phone": "+919812300066"
+        }
+      ]
+    }
+  ]
+}

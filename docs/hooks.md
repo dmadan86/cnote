@@ -20,6 +20,22 @@ A hook fires **on events** (kind prefixes such as `item.created`, `note.`, or `*
 - **MCP server (`mcp`)**: C Note connects to the streamable-HTTP MCP endpoint at `url` (optional bearer token) and
   calls `tool` with your static `arguments` plus `cnote` = the body above. A tool result with `isError` counts as failure.
 
+## Tables events
+
+Tables events carry ids only: never record values, field or table names, or option labels. A consumer that needs the
+data calls `record.get` (or `record.list`) with its own access, so a hook can never see more than its creator can.
+Prefix filters work as for other kinds: `record.` matches every record event, `field.` every field event.
+
+| Kind | Payload (inside `event.payload`) |
+|---|---|
+| `record.created`, `record.updated`, `record.deleted`, `record.restored` | `{"base_id", "table_id", "record_id", "field_ids": []}`. `field_ids` lists the fields whose value changed (empty for delete and restore). |
+| `record.batch` | `{"op": "created\|updated\|deleted\|restored", "base_id", "table_id", "count", "batch_id"}`. Replaces the per-record events when one call touches more than 100 records (imports, large pastes, bulk edits). Read the ids with the `record.batch_list` command (`{"batch_id"}`), which applies the caller's own access. |
+| `base.created`, `base.updated`, `base.deleted`, `base.restored` | `{"base_id"}` |
+| `table.created`, `table.updated`, `table.deleted`, `table.restored` | `{"base_id", "table_id"}` |
+| `field.created`, `field.updated`, `field.converted`, `field.deleted`, `field.restored` | `{"base_id", "table_id", "field_id"}`. `field.converted` fires when a field's type changed. |
+
+`record.*` events never start an AI employee run in this release.
+
 ## Delivery
 
 At least once. Failures retry 4 more times after 2, 4, 8 and 16 minutes; the hook shows the last status and error,

@@ -1,0 +1,295 @@
+{
+  "key": "attendance",
+  "name": "Attendance",
+  "description": "Daily attendance for site workers, with overtime.",
+  "tables": [
+    {
+      "name": "Workers",
+      "fields": [
+        {
+          "name": "Name",
+          "type": "text"
+        },
+        {
+          "name": "Phone",
+          "type": "phone"
+        },
+        {
+          "name": "Role",
+          "type": "single_select",
+          "config": {
+            "options": [
+              {
+                "id": "o1",
+                "name": "Mason",
+                "color": "gray"
+              },
+              {
+                "id": "o2",
+                "name": "Helper",
+                "color": "blue"
+              },
+              {
+                "id": "o3",
+                "name": "Electrician",
+                "color": "green"
+              },
+              {
+                "id": "o4",
+                "name": "Carpenter",
+                "color": "amber"
+              },
+              {
+                "id": "o5",
+                "name": "Supervisor",
+                "color": "red"
+              }
+            ]
+          }
+        },
+        {
+          "name": "Daily wage",
+          "type": "currency",
+          "config": {
+            "decimals": 0
+          }
+        },
+        {
+          "name": "Joined on",
+          "type": "date"
+        }
+      ],
+      "views": [
+        {
+          "name": "All workers",
+          "type": "grid",
+          "config": {
+            "v": 1
+          }
+        }
+      ],
+      "records": [
+        {
+          "Name": "Ramesh Yadav",
+          "Phone": "+919812300051",
+          "Role": "o1",
+          "Daily wage": 90000,
+          "Joined on": "2025-04-01"
+        },
+        {
+          "Name": "Suman Devi",
+          "Phone": "+919812300052",
+          "Role": "o2",
+          "Daily wage": 60000,
+          "Joined on": "2025-06-12"
+        },
+        {
+          "Name": "Mohd. Irfan",
+          "Phone": "+919812300053",
+          "Role": "o3",
+          "Daily wage": 110000,
+          "Joined on": "2024-11-20"
+        },
+        {
+          "Name": "Bhola Prasad",
+          "Phone": "+919812300054",
+          "Role": "o4",
+          "Daily wage": 100000,
+          "Joined on": "2025-01-08"
+        },
+        {
+          "Name": "Kamala Bai",
+          "Phone": "+919812300055",
+          "Role": "o2",
+          "Daily wage": 60000,
+          "Joined on": "2026-02-03"
+        },
+        {
+          "Name": "Santosh Tiwari",
+          "Phone": "+919812300056",
+          "Role": "o5",
+          "Daily wage": 150000,
+          "Joined on": "2023-09-15"
+        },
+        {
+          "Name": "Dilip Mahato",
+          "Phone": "+919812300057",
+          "Role": "o1",
+          "Daily wage": 90000,
+          "Joined on": "2025-08-19"
+        }
+      ]
+    },
+    {
+      "name": "Attendance",
+      "fields": [
+        {
+          "name": "Entry",
+          "type": "text"
+        },
+        {
+          "name": "Worker",
+          "type": "link",
+          "config": {
+            "table": "Workers",
+            "multiple": false
+          }
+        },
+        {
+          "name": "Date",
+          "type": "date"
+        },
+        {
+          "name": "Status",
+          "type": "single_select",
+          "config": {
+            "options": [
+              {
+                "id": "o1",
+                "name": "Present",
+                "color": "gray"
+              },
+              {
+                "id": "o2",
+                "name": "Absent",
+                "color": "blue"
+              },
+              {
+                "id": "o3",
+                "name": "Half day",
+                "color": "green"
+              },
+              {
+                "id": "o4",
+                "name": "Leave",
+                "color": "amber"
+              }
+            ]
+          }
+        },
+        {
+          "name": "Overtime hours",
+          "type": "number",
+          "config": {
+            "decimals": 1
+          }
+        },
+        {
+          "name": "Remarks",
+          "type": "text"
+        }
+      ],
+      "views": [
+        {
+          "name": "All attendance",
+          "type": "grid",
+          "config": {
+            "v": 1,
+            "sorts": [
+              {
+                "field": "Date",
+                "desc": true
+              }
+            ]
+          }
+        }
+      ],
+      "records": [
+        {
+          "Entry": "Ramesh Yadav 11-24",
+          "Worker": ["Ramesh Yadav"],
+          "Date": "2026-11-24",
+          "Status": "o1",
+          "Overtime hours": 0
+        },
+        {
+          "Entry": "Suman Devi 11-24",
+          "Worker": ["Suman Devi"],
+          "Date": "2026-11-24",
+          "Status": "o1",
+          "Overtime hours": 0
+        },
+        {
+          "Entry": "Mohd. Irfan 11-24",
+          "Worker": ["Mohd. Irfan"],
+          "Date": "2026-11-24",
+          "Status": "o1",
+          "Overtime hours": 0
+        },
+        {
+          "Entry": "Bhola Prasad 11-24",
+          "Worker": ["Bhola Prasad"],
+          "Date": "2026-11-24",
+          "Status": "o3"
+        },
+        {
+          "Entry": "Kamala Bai 11-24",
+          "Worker": ["Kamala Bai"],
+          "Date": "2026-11-24",
+          "Status": "o1",
+          "Overtime hours": 0
+        },
+        {
+          "Entry": "Santosh Tiwari 11-24",
+          "Worker": ["Santosh Tiwari"],
+          "Date": "2026-11-24",
+          "Status": "o1",
+          "Overtime hours": 0
+        },
+        {
+          "Entry": "Dilip Mahato 11-24",
+          "Worker": ["Dilip Mahato"],
+          "Date": "2026-11-24",
+          "Status": "o2"
+        },
+        {
+          "Entry": "Ramesh Yadav 11-25",
+          "Worker": ["Ramesh Yadav"],
+          "Date": "2026-11-25",
+          "Status": "o1",
+          "Overtime hours": 0
+        },
+        {
+          "Entry": "Suman Devi 11-25",
+          "Worker": ["Suman Devi"],
+          "Date": "2026-11-25",
+          "Status": "o2"
+        },
+        {
+          "Entry": "Mohd. Irfan 11-25",
+          "Worker": ["Mohd. Irfan"],
+          "Date": "2026-11-25",
+          "Status": "o1",
+          "Overtime hours": 0
+        },
+        {
+          "Entry": "Bhola Prasad 11-25",
+          "Worker": ["Bhola Prasad"],
+          "Date": "2026-11-25",
+          "Status": "o1",
+          "Overtime hours": 0
+        },
+        {
+          "Entry": "Kamala Bai 11-25",
+          "Worker": ["Kamala Bai"],
+          "Date": "2026-11-25",
+          "Status": "o4"
+        },
+        {
+          "Entry": "Santosh Tiwari 11-25",
+          "Worker": ["Santosh Tiwari"],
+          "Date": "2026-11-25",
+          "Status": "o1",
+          "Overtime hours": 0
+        },
+        {
+          "Entry": "Dilip Mahato 11-25",
+          "Worker": ["Dilip Mahato"],
+          "Date": "2026-11-25",
+          "Status": "o1",
+          "Overtime hours": 2
+        }
+      ]
+    }
+  ]
+}

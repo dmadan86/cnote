@@ -1,0 +1,185 @@
+{
+  "key": "content_calendar",
+  "name": "Content calendar",
+  "description": "Plan posts across channels, from idea to published.",
+  "tables": [
+    {
+      "name": "Posts",
+      "fields": [
+        {
+          "name": "Title",
+          "type": "text"
+        },
+        {
+          "name": "Stage",
+          "type": "single_select",
+          "config": {
+            "options": [
+              {
+                "id": "o1",
+                "name": "Idea",
+                "color": "gray"
+              },
+              {
+                "id": "o2",
+                "name": "Writing",
+                "color": "blue"
+              },
+              {
+                "id": "o3",
+                "name": "Review",
+                "color": "green"
+              },
+              {
+                "id": "o4",
+                "name": "Scheduled",
+                "color": "amber"
+              },
+              {
+                "id": "o5",
+                "name": "Published",
+                "color": "red"
+              }
+            ]
+          }
+        },
+        {
+          "name": "Channel",
+          "type": "multi_select",
+          "config": {
+            "options": [
+              {
+                "id": "o1",
+                "name": "Instagram",
+                "color": "gray"
+              },
+              {
+                "id": "o2",
+                "name": "Facebook",
+                "color": "blue"
+              },
+              {
+                "id": "o3",
+                "name": "YouTube",
+                "color": "green"
+              },
+              {
+                "id": "o4",
+                "name": "Blog",
+                "color": "amber"
+              },
+              {
+                "id": "o5",
+                "name": "WhatsApp",
+                "color": "red"
+              }
+            ]
+          }
+        },
+        {
+          "name": "Publish date",
+          "type": "date"
+        },
+        {
+          "name": "Owner",
+          "type": "text"
+        },
+        {
+          "name": "Link",
+          "type": "url"
+        },
+        {
+          "name": "Brief",
+          "type": "long_text"
+        }
+      ],
+      "views": [
+        {
+          "name": "All posts",
+          "type": "grid",
+          "config": {
+            "v": 1,
+            "sorts": [
+              {
+                "field": "Publish date",
+                "desc": false
+              }
+            ]
+          }
+        },
+        {
+          "name": "By stage",
+          "type": "kanban",
+          "config": {
+            "v": 1,
+            "kanban": {
+              "stack": "Stage",
+              "card_fields": ["Channel", "Publish date"]
+            }
+          }
+        }
+      ],
+      "records": [
+        {
+          "Title": "Diwali sale announcement",
+          "Stage": "o5",
+          "Channel": ["o1", "o2", "o5"],
+          "Publish date": "2026-11-05",
+          "Owner": "Priya Nambiar",
+          "Link": "https://example.com/diwali-sale"
+        },
+        {
+          "Title": "How we pack fragile orders",
+          "Stage": "o5",
+          "Channel": ["o3"],
+          "Publish date": "2026-11-12",
+          "Owner": "Karan Malhotra",
+          "Link": "https://example.com/packing"
+        },
+        {
+          "Title": "Wedding season catalogue",
+          "Stage": "o4",
+          "Channel": ["o1", "o5"],
+          "Publish date": "2026-11-28",
+          "Owner": "Priya Nambiar"
+        },
+        {
+          "Title": "Customer story: Meenakshi Stores",
+          "Stage": "o3",
+          "Channel": ["o4", "o2"],
+          "Publish date": "2026-12-01",
+          "Owner": "Ritika Sen",
+          "Brief": "Interview done, needs photos."
+        },
+        {
+          "Title": "GST invoice tips for small shops",
+          "Stage": "o2",
+          "Channel": ["o4"],
+          "Publish date": "2026-12-04",
+          "Owner": "Ritika Sen"
+        },
+        {
+          "Title": "Year-end clearance reel",
+          "Stage": "o1",
+          "Channel": ["o1", "o3"],
+          "Publish date": "2026-12-15",
+          "Owner": "Karan Malhotra"
+        },
+        {
+          "Title": "Republic Day offer teaser",
+          "Stage": "o1",
+          "Channel": ["o1"],
+          "Publish date": "2027-01-20",
+          "Owner": "Priya Nambiar"
+        },
+        {
+          "Title": "Behind the scenes: our Surat godown",
+          "Stage": "o2",
+          "Channel": ["o3", "o2"],
+          "Publish date": "2026-12-08",
+          "Owner": "Karan Malhotra"
+        }
+      ]
+    }
+  ]
+}

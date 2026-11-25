@@ -114,14 +114,7 @@ type Field struct {
 	Locked      bool            `json:"locked"`
 }
 
-// Coerce is the one place text becomes a typed value (grid paste, CSV import, forms, type conversion). It returns
-// the value exactly as stored in records.data[field.ID]: string, float64/int64, bool, []string. A blank raw string
-// returns (nil, nil), which means "empty": the key is absent. Implemented by package 1 (coerce.go).
-func Coerce(field Field, raw string) (any, error) { return nil, errNotImplemented }
-
-// Validate checks a JSON value from a command against the field and returns the normalised stored value. Computed
-// fields are always an error. Implemented by package 1.
-func Validate(field Field, value any) (any, error) { return nil, errNotImplemented }
+// Coerce and Validate live in coerce.go (package 1).
 
 var errNotImplemented = command.NewError(command.Internal, "tables: not implemented yet")
 

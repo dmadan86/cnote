@@ -1,0 +1,9 @@
+Name,Phone,Email,City,Amount,Order date,Paid,Status
+Priya Nair,+919812300001,user1@example.com,Pune,1250,31-02-2026,no,Confirmed
+Rohan Iyer,+919812300002,user2@example.com,Chennai,1500,not a date,yes,Delivered
+Sneha Singh,+919812300003,user3@example.com,Jaipur,12abc,2026-11-04,no,New
+Vikram Patel,+919812300004,user4@example.com,Kochi,"1,18,000.50",2026-11-05,yes,Confirmed
+Anjali Sharma,+919812300005,not-an-email,Mumbai,2250,2026-11-06,no,Delivered
+Karthik Nair,+919812300006,a@@example,Pune,2500,2026-11-07,yes,New
+Blank row fields,,,,,,,
+Big,+91981230,x@example.com,Pune,"₹ 5,00,000",2026-13-01,maybe,Unknown
