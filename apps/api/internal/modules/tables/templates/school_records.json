@@ -1,0 +1,317 @@
+{
+  "key": "school_records",
+  "name": "School records",
+  "description": "Students by batch and the fees collected from each.",
+  "tables": [
+    {
+      "name": "Students",
+      "fields": [
+        {
+          "name": "Student",
+          "type": "text"
+        },
+        {
+          "name": "Batch",
+          "type": "single_select",
+          "config": {
+            "options": [
+              {
+                "id": "o1",
+                "name": "Class 8 A",
+                "color": "gray"
+              },
+              {
+                "id": "o2",
+                "name": "Class 8 B",
+                "color": "blue"
+              },
+              {
+                "id": "o3",
+                "name": "Class 9 A",
+                "color": "green"
+              },
+              {
+                "id": "o4",
+                "name": "Class 10 A",
+                "color": "amber"
+              }
+            ]
+          }
+        },
+        {
+          "name": "Roll no",
+          "type": "number",
+          "config": {
+            "decimals": 0
+          }
+        },
+        {
+          "name": "Guardian",
+          "type": "text"
+        },
+        {
+          "name": "Guardian phone",
+          "type": "phone"
+        },
+        {
+          "name": "Guardian email",
+          "type": "email"
+        },
+        {
+          "name": "Date of birth",
+          "type": "date"
+        }
+      ],
+      "views": [
+        {
+          "name": "All students",
+          "type": "grid",
+          "config": {
+            "v": 1,
+            "group": "Batch"
+          }
+        }
+      ],
+      "records": [
+        {
+          "Student": "Aarav Mehta",
+          "Batch": "o1",
+          "Roll no": 1,
+          "Guardian": "Rakesh Mehta",
+          "Guardian phone": "+919812300071",
+          "Guardian email": "rakesh.mehta@example.com",
+          "Date of birth": "2012-04-14"
+        },
+        {
+          "Student": "Ananya Pillai",
+          "Batch": "o1",
+          "Roll no": 2,
+          "Guardian": "Sreekumar Pillai",
+          "Guardian phone": "+919812300072",
+          "Date of birth": "2012-08-02"
+        },
+        {
+          "Student": "Mohammed Zaid",
+          "Batch": "o2",
+          "Roll no": 1,
+          "Guardian": "Salim Ahmed",
+          "Guardian phone": "+919812300073",
+          "Date of birth": "2012-01-27"
+        },
+        {
+          "Student": "Ishita Banerjee",
+          "Batch": "o2",
+          "Roll no": 2,
+          "Guardian": "Partha Banerjee",
+          "Guardian phone": "+919812300074",
+          "Guardian email": "partha.b@example.com",
+          "Date of birth": "2012-11-09"
+        },
+        {
+          "Student": "Tanvi Chauhan",
+          "Batch": "o3",
+          "Roll no": 1,
+          "Guardian": "Mahendra Chauhan",
+          "Guardian phone": "+919812300075",
+          "Date of birth": "2011-06-18"
+        },
+        {
+          "Student": "Yash Naidu",
+          "Batch": "o3",
+          "Roll no": 2,
+          "Guardian": "Venkat Naidu",
+          "Guardian phone": "+919812300076",
+          "Date of birth": "2011-03-30"
+        },
+        {
+          "Student": "Diya Kapoor",
+          "Batch": "o4",
+          "Roll no": 1,
+          "Guardian": "Neeraj Kapoor",
+          "Guardian phone": "+919812300077",
+          "Guardian email": "neeraj.k@example.com",
+          "Date of birth": "2010-09-05"
+        },
+        {
+          "Student": "Gautam Pandey",
+          "Batch": "o4",
+          "Roll no": 2,
+          "Guardian": "Shivshankar Pandey",
+          "Guardian phone": "+919812300078",
+          "Date of birth": "2010-12-21"
+        }
+      ]
+    },
+    {
+      "name": "Fees",
+      "fields": [
+        {
+          "name": "Receipt",
+          "type": "text"
+        },
+        {
+          "name": "Student",
+          "type": "link",
+          "config": {
+            "table": "Students",
+            "multiple": false
+          }
+        },
+        {
+          "name": "Term",
+          "type": "single_select",
+          "config": {
+            "options": [
+              {
+                "id": "o1",
+                "name": "Term 1",
+                "color": "gray"
+              },
+              {
+                "id": "o2",
+                "name": "Term 2",
+                "color": "blue"
+              },
+              {
+                "id": "o3",
+                "name": "Term 3",
+                "color": "green"
+              }
+            ]
+          }
+        },
+        {
+          "name": "Amount due",
+          "type": "currency",
+          "config": {
+            "decimals": 2
+          }
+        },
+        {
+          "name": "Amount paid",
+          "type": "currency",
+          "config": {
+            "decimals": 2
+          }
+        },
+        {
+          "name": "Paid on",
+          "type": "date"
+        },
+        {
+          "name": "Mode",
+          "type": "single_select",
+          "config": {
+            "options": [
+              {
+                "id": "o1",
+                "name": "Cash",
+                "color": "gray"
+              },
+              {
+                "id": "o2",
+                "name": "UPI",
+                "color": "blue"
+              },
+              {
+                "id": "o3",
+                "name": "Cheque",
+                "color": "green"
+              }
+            ]
+          }
+        }
+      ],
+      "views": [
+        {
+          "name": "All fees",
+          "type": "grid",
+          "config": {
+            "v": 1
+          }
+        }
+      ],
+      "records": [
+        {
+          "Receipt": "R-1001",
+          "Student": ["Aarav Mehta"],
+          "Term": "o1",
+          "Amount due": 1800000,
+          "Amount paid": 1800000,
+          "Paid on": "2026-04-10",
+          "Mode": "o2"
+        },
+        {
+          "Receipt": "R-1002",
+          "Student": ["Ananya Pillai"],
+          "Term": "o1",
+          "Amount due": 1800000,
+          "Amount paid": 1800000,
+          "Paid on": "2026-04-12",
+          "Mode": "o3"
+        },
+        {
+          "Receipt": "R-1003",
+          "Student": ["Mohammed Zaid"],
+          "Term": "o1",
+          "Amount due": 1800000,
+          "Amount paid": 900000,
+          "Paid on": "2026-04-20",
+          "Mode": "o1"
+        },
+        {
+          "Receipt": "R-1004",
+          "Student": ["Tanvi Chauhan"],
+          "Term": "o1",
+          "Amount due": 2000000,
+          "Amount paid": 2000000,
+          "Paid on": "2026-04-11",
+          "Mode": "o2"
+        },
+        {
+          "Receipt": "R-1101",
+          "Student": ["Aarav Mehta"],
+          "Term": "o2",
+          "Amount due": 1800000,
+          "Amount paid": 1800000,
+          "Paid on": "2026-09-08",
+          "Mode": "o2"
+        },
+        {
+          "Receipt": "R-1102",
+          "Student": ["Diya Kapoor"],
+          "Term": "o2",
+          "Amount due": 2200000,
+          "Amount paid": 2200000,
+          "Paid on": "2026-09-10",
+          "Mode": "o3"
+        },
+        {
+          "Receipt": "R-1103",
+          "Student": ["Ishita Banerjee"],
+          "Term": "o2",
+          "Amount due": 1800000,
+          "Amount paid": 0
+        },
+        {
+          "Receipt": "R-1104",
+          "Student": ["Gautam Pandey"],
+          "Term": "o2",
+          "Amount due": 2200000,
+          "Amount paid": 1100000,
+          "Paid on": "2026-09-15",
+          "Mode": "o1"
+        },
+        {
+          "Receipt": "R-1105",
+          "Student": ["Yash Naidu"],
+          "Term": "o2",
+          "Amount due": 2000000,
+          "Amount paid": 2000000,
+          "Paid on": "2026-09-09",
+          "Mode": "o2"
+        }
+      ]
+    }
+  ]
+}

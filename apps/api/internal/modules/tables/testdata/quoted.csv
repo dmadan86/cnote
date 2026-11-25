@@ -1,0 +1,7 @@
+Name,Phone,Email,City,Amount,Order date,Paid,Status
+"Sharma, Traders",+919812300001,a@example.com,Pune,1000,2026-11-01,yes,New
+"Nair ""The Boss"" Stores",+919812300002,b@example.com,Kochi,2000,2026-11-02,no,New
+"Multi
+line name",+919812300003,c@example.com,Jaipur,3000,2026-11-03,yes,Confirmed
+"Comma, and
+newline, ""both""",+919812300004,d@example.com,Chennai,4000,2026-11-04,no,Delivered

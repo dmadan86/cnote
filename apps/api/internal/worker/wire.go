@@ -15,6 +15,7 @@ import (
 	"github.com/cnote/api/internal/modules/ai"
 	"github.com/cnote/api/internal/modules/reminders"
 	"github.com/cnote/api/internal/modules/sites"
+	"github.com/cnote/api/internal/modules/tables"
 )
 
 // aiIndexOnNoteEvent is cnote-ai's on_note_event: queue an embedding refresh (job ai.index_note).
@@ -48,6 +49,7 @@ func New(pool *pgxpool.Pool, reg *command.Registry) *Worker {
 	w.OnJob(mailer.JobKind, mailSendJob)
 	w.OnJob("import.run", importers.RunJob)
 	w.OnJob("data_import.run", importers.RunDataJob)
+	w.OnJob("tables.import", tables.ImportJob)
 	w.OnLong("agent.ask", 4, agents.RunJob(pool, reg))
 	w.OnLong("agent.run", 2, agents.RunJob(pool, reg))
 	w.OnLong("site.chat", 2, sites.RunJob(pool, reg))
@@ -69,6 +71,7 @@ func New(pool *pgxpool.Pool, reg *command.Registry) *Worker {
 	w.AddSweep(Sweep{"sites.stats", day, func(ctx context.Context, w *Worker) error { return sites.StatsSweep(ctx, w.Pool) }})
 	w.AddSweep(Sweep{"sites.cloudflare", time.Minute, func(ctx context.Context, w *Worker) error { return sites.CloudflareSweep(ctx, w.Pool) }})
 	w.AddSweep(Sweep{"sites.abuse", day, func(ctx context.Context, w *Worker) error { return sites.AbuseSweep(ctx, w.Pool) }})
+	w.AddSweep(Sweep{"tables.purge", day, func(ctx context.Context, w *Worker) error { return tables.PurgeSweep(ctx, w.Pool) }})
 	w.AddSweep(Sweep{"reminders.send", 5 * time.Minute, func(ctx context.Context, w *Worker) error {
 		return reminders.Sweep(ctx, w.Pool, w.Registry, time.Now())
 	}})

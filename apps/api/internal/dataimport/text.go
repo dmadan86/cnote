@@ -74,7 +74,12 @@ func sniffDelimiter(text string) rune {
 
 // ReadCSV parses a CSV (UTF-8 or UTF-16, BOM tolerated, delimiter sniffed). The header row is the first of the first 40
 // rows that matches at least two known headers for kind, else the best single match, else the first row.
-func ReadCSV(data []byte, kind Kind) (*Table, error) {
+func ReadCSV(data []byte, kind Kind) (*Table, error) { return readCSV(data, kind, false) }
+
+// ReadCSVKeepSpace is ReadCSV for the first row as header and cells left exactly as written (Tables import).
+func ReadCSVKeepSpace(data []byte) (*Table, error) { return readCSV(data, "", true) }
+
+func readCSV(data []byte, kind Kind, keepSpace bool) (*Table, error) {
 	b, err := decodeText(data)
 	if err != nil {
 		return nil, err
@@ -84,7 +89,7 @@ func ReadCSV(data []byte, kind Kind) (*Table, error) {
 	r.Comma = sniffDelimiter(text)
 	r.FieldsPerRecord = -1
 	r.LazyQuotes = true
-	r.TrimLeadingSpace = true
+	r.TrimLeadingSpace = !keepSpace
 	recs, err := r.ReadAll()
 	if err != nil {
 		return nil, fmt.Errorf("this does not look like a readable CSV: %v", err)
@@ -111,8 +116,11 @@ func ReadCSV(data []byte, kind Kind) (*Table, error) {
 		row := make([]string, len(recs[i]))
 		blank := true
 		for j, c := range recs[i] {
-			row[j] = strings.TrimSpace(c)
-			blank = blank && row[j] == ""
+			row[j] = c
+			if !keepSpace {
+				row[j] = strings.TrimSpace(c)
+			}
+			blank = blank && strings.TrimSpace(c) == ""
 		}
 		if blank {
 			continue

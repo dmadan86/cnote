@@ -1,0 +1,8 @@
+{"key":"mini","name":"Mini","description":"Fixture","tables":[
+ {"name":"Customers","fields":[{"name":"Name","type":"text"},{"name":"City","type":"text"}],
+  "views":[{"name":"All","type":"grid","config":{"v":1,"sorts":[{"field":"Name"}],"group":"City","widths":{"Name":200}}}],
+  "records":[{"Name":"Asha Traders","City":"Pune"},{"Name":"Ravi Stores","City":"Surat"}]},
+ {"name":"Orders","fields":[{"name":"No","type":"autonumber","config":{"prefix":"ORD-"}},{"name":"Customer","type":"link","config":{"table":"Customers","multiple":false,"inverse":true}},
+   {"name":"Status","type":"single_select","config":{"options":[{"id":"o1","name":"New","color":"blue"},{"id":"o2","name":"Paid","color":"green"}]}},{"name":"Amount","type":"currency","config":{"decimals":2}}],
+  "views":[{"name":"By status","type":"kanban","config":{"v":1,"kanban":{"stack":"Status","card_fields":["Customer"]},"filters":{"match":"and","rules":[{"field":"Amount","op":">","value":0}]}}}],
+  "records":[{"Customer":["Asha Traders"],"Status":"o1","Amount":118000},{"Customer":["Ravi Stores"],"Status":"o2","Amount":50000}]}]}

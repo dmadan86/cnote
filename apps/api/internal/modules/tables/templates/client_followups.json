@@ -1,0 +1,286 @@
+{
+  "key": "client_followups",
+  "name": "Client follow-ups",
+  "description": "Keep clients, their next call and every follow-up in one place.",
+  "tables": [
+    {
+      "name": "Clients",
+      "fields": [
+        {
+          "name": "Name",
+          "type": "text"
+        },
+        {
+          "name": "Company",
+          "type": "text"
+        },
+        {
+          "name": "Phone",
+          "type": "phone"
+        },
+        {
+          "name": "Email",
+          "type": "email"
+        },
+        {
+          "name": "City",
+          "type": "text"
+        },
+        {
+          "name": "Next call",
+          "type": "date"
+        },
+        {
+          "name": "Stage",
+          "type": "single_select",
+          "config": {
+            "options": [
+              {
+                "id": "o1",
+                "name": "Lead",
+                "color": "gray"
+              },
+              {
+                "id": "o2",
+                "name": "Talking",
+                "color": "blue"
+              },
+              {
+                "id": "o3",
+                "name": "Quote sent",
+                "color": "green"
+              },
+              {
+                "id": "o4",
+                "name": "Won",
+                "color": "amber"
+              },
+              {
+                "id": "o5",
+                "name": "Lost",
+                "color": "red"
+              }
+            ]
+          }
+        },
+        {
+          "name": "Deal value",
+          "type": "currency",
+          "config": {
+            "decimals": 0
+          }
+        }
+      ],
+      "views": [
+        {
+          "name": "All clients",
+          "type": "grid",
+          "config": {
+            "v": 1,
+            "group": "Next call",
+            "sorts": [
+              {
+                "field": "Next call",
+                "desc": false
+              }
+            ]
+          }
+        }
+      ],
+      "records": [
+        {
+          "Name": "Arjun Nair",
+          "Company": "Nair Agencies",
+          "Phone": "+919812300011",
+          "Email": "arjun@example.com",
+          "City": "Kochi",
+          "Next call": "2026-11-27",
+          "Stage": "o2",
+          "Deal value": 25000000
+        },
+        {
+          "Name": "Sunita Rao",
+          "Company": "Rao Textiles",
+          "Phone": "+919812300012",
+          "Email": "sunita@example.com",
+          "City": "Hyderabad",
+          "Next call": "2026-11-26",
+          "Stage": "o3",
+          "Deal value": 48000000
+        },
+        {
+          "Name": "Imran Sheikh",
+          "Company": "Sheikh Motors",
+          "Phone": "+919812300013",
+          "Email": "imran@example.com",
+          "City": "Nagpur",
+          "Next call": "2026-11-30",
+          "Stage": "o1",
+          "Deal value": 12000000
+        },
+        {
+          "Name": "Pooja Iyer",
+          "Company": "Iyer Foods",
+          "Phone": "+919812300014",
+          "Email": "pooja@example.com",
+          "City": "Chennai",
+          "Next call": "2026-12-02",
+          "Stage": "o4",
+          "Deal value": 17500000
+        },
+        {
+          "Name": "Harpreet Singh",
+          "Company": "Singh Logistics",
+          "Phone": "+919812300015",
+          "Email": "harpreet@example.com",
+          "City": "Amritsar",
+          "Next call": "2026-11-28",
+          "Stage": "o2",
+          "Deal value": 36000000
+        },
+        {
+          "Name": "Deepa Menon",
+          "Company": "Menon Clinics",
+          "Phone": "+919812300016",
+          "Email": "deepa@example.com",
+          "City": "Thiruvananthapuram",
+          "Stage": "o5",
+          "Deal value": 9000000
+        },
+        {
+          "Name": "Vikram Joshi",
+          "Company": "Joshi Builders",
+          "Phone": "+919812300017",
+          "Email": "vikram@example.com",
+          "City": "Indore",
+          "Next call": "2026-11-26",
+          "Stage": "o3",
+          "Deal value": 64000000
+        }
+      ]
+    },
+    {
+      "name": "Follow-ups",
+      "fields": [
+        {
+          "name": "Subject",
+          "type": "text"
+        },
+        {
+          "name": "Client",
+          "type": "link",
+          "config": {
+            "table": "Clients",
+            "multiple": false
+          }
+        },
+        {
+          "name": "Date",
+          "type": "date"
+        },
+        {
+          "name": "Mode",
+          "type": "single_select",
+          "config": {
+            "options": [
+              {
+                "id": "o1",
+                "name": "Call",
+                "color": "gray"
+              },
+              {
+                "id": "o2",
+                "name": "WhatsApp",
+                "color": "blue"
+              },
+              {
+                "id": "o3",
+                "name": "Visit",
+                "color": "green"
+              },
+              {
+                "id": "o4",
+                "name": "Email",
+                "color": "amber"
+              }
+            ]
+          }
+        },
+        {
+          "name": "Done",
+          "type": "checkbox"
+        },
+        {
+          "name": "Notes",
+          "type": "long_text"
+        }
+      ],
+      "views": [
+        {
+          "name": "All follow-ups",
+          "type": "grid",
+          "config": {
+            "v": 1
+          }
+        }
+      ],
+      "records": [
+        {
+          "Subject": "Send revised quote",
+          "Client": ["Sunita Rao"],
+          "Date": "2026-11-24",
+          "Mode": "o4",
+          "Done": true,
+          "Notes": "Discount of 5% on bulk."
+        },
+        {
+          "Subject": "Intro call",
+          "Client": ["Imran Sheikh"],
+          "Date": "2026-11-23",
+          "Mode": "o1",
+          "Done": true,
+          "Notes": "Interested in 2 units."
+        },
+        {
+          "Subject": "Site visit",
+          "Client": ["Vikram Joshi"],
+          "Date": "2026-11-27",
+          "Mode": "o3"
+        },
+        {
+          "Subject": "Confirm delivery date",
+          "Client": ["Pooja Iyer"],
+          "Date": "2026-11-25",
+          "Mode": "o2"
+        },
+        {
+          "Subject": "Payment reminder",
+          "Client": ["Pooja Iyer"],
+          "Date": "2026-11-29",
+          "Mode": "o1"
+        },
+        {
+          "Subject": "Share product catalogue",
+          "Client": ["Arjun Nair"],
+          "Date": "2026-11-22",
+          "Mode": "o2",
+          "Done": true
+        },
+        {
+          "Subject": "Discuss credit terms",
+          "Client": ["Harpreet Singh"],
+          "Date": "2026-11-28",
+          "Mode": "o1"
+        },
+        {
+          "Subject": "Ask why they went elsewhere",
+          "Client": ["Deepa Menon"],
+          "Date": "2026-11-21",
+          "Mode": "o1",
+          "Done": true,
+          "Notes": "Price was the reason."
+        }
+      ]
+    }
+  ]
+}

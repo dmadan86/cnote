@@ -8,6 +8,7 @@ import {
   type LucideIcon,
   Presentation,
   Receipt,
+  Table2,
   Users,
 } from 'lucide-react'
 
@@ -16,6 +17,7 @@ export type ModuleDef = { key: string; label: string; icon: LucideIcon; soon?: b
 
 export const MODULES: ModuleDef[] = [
   { key: '', label: 'Home', icon: Home },
+  { key: 'tables', label: 'Tables', icon: Table2 },
   { key: 'docs', label: 'Docs', icon: BookOpen },
   { key: 'projects', label: 'Projects', icon: FolderKanban },
   { key: 'crm', label: 'CRM', icon: Users },

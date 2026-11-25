@@ -1,0 +1,285 @@
+{
+  "key": "order_tracker",
+  "name": "Order tracker",
+  "description": "Track customer orders from new to delivered, with amounts and payment status.",
+  "tables": [
+    {
+      "name": "Orders",
+      "fields": [
+        {
+          "name": "Order no",
+          "type": "autonumber",
+          "config": {
+            "prefix": "ORD-"
+          }
+        },
+        {
+          "name": "Customer",
+          "type": "link",
+          "config": {
+            "table": "Customers",
+            "multiple": false
+          }
+        },
+        {
+          "name": "Item",
+          "type": "text"
+        },
+        {
+          "name": "Amount",
+          "type": "currency",
+          "config": {
+            "decimals": 2
+          }
+        },
+        {
+          "name": "Status",
+          "type": "single_select",
+          "config": {
+            "options": [
+              {
+                "id": "o1",
+                "name": "New",
+                "color": "gray"
+              },
+              {
+                "id": "o2",
+                "name": "Confirmed",
+                "color": "blue"
+              },
+              {
+                "id": "o3",
+                "name": "Packed",
+                "color": "green"
+              },
+              {
+                "id": "o4",
+                "name": "Dispatched",
+                "color": "amber"
+              },
+              {
+                "id": "o5",
+                "name": "Delivered",
+                "color": "red"
+              },
+              {
+                "id": "o6",
+                "name": "Cancelled",
+                "color": "purple"
+              }
+            ]
+          }
+        },
+        {
+          "name": "Order date",
+          "type": "date"
+        },
+        {
+          "name": "Due date",
+          "type": "date"
+        },
+        {
+          "name": "Paid",
+          "type": "checkbox"
+        },
+        {
+          "name": "Notes",
+          "type": "long_text"
+        }
+      ],
+      "views": [
+        {
+          "name": "All orders",
+          "type": "grid",
+          "config": {
+            "v": 1,
+            "sorts": [
+              {
+                "field": "Order date",
+                "desc": true
+              }
+            ]
+          }
+        },
+        {
+          "name": "By status",
+          "type": "kanban",
+          "config": {
+            "v": 1,
+            "kanban": {
+              "stack": "Status",
+              "card_fields": ["Customer", "Item", "Amount"]
+            }
+          }
+        }
+      ],
+      "records": [
+        {
+          "Customer": ["Sharma Traders"],
+          "Item": "Steel utensils, 40 sets",
+          "Amount": 11800000,
+          "Status": "o5",
+          "Order date": "2026-11-02",
+          "Due date": "2026-11-09",
+          "Paid": true
+        },
+        {
+          "Customer": ["Meenakshi Stores"],
+          "Item": "Brass lamps, 120 pcs",
+          "Amount": 6450000,
+          "Status": "o4",
+          "Order date": "2026-11-10",
+          "Due date": "2026-11-18"
+        },
+        {
+          "Customer": ["Patel Brothers"],
+          "Item": "Cotton sarees, 60 pcs",
+          "Amount": 20500000,
+          "Status": "o3",
+          "Order date": "2026-11-14",
+          "Due date": "2026-11-22"
+        },
+        {
+          "Customer": ["Rahul Verma"],
+          "Item": "Wall clock, 2 pcs",
+          "Amount": 380000,
+          "Status": "o5",
+          "Order date": "2026-11-05",
+          "Due date": "2026-11-08",
+          "Paid": true
+        },
+        {
+          "Customer": ["Kavya Hegde"],
+          "Item": "Cashew gift boxes, 25",
+          "Amount": 1875000,
+          "Status": "o2",
+          "Order date": "2026-11-18",
+          "Due date": "2026-11-26",
+          "Paid": true
+        },
+        {
+          "Customer": ["Gupta Electricals"],
+          "Item": "LED panels, 200 pcs",
+          "Amount": 9600000,
+          "Status": "o1",
+          "Order date": "2026-11-22",
+          "Due date": "2026-12-02"
+        },
+        {
+          "Customer": ["Anita Deshmukh"],
+          "Item": "Pickle jars, 48",
+          "Amount": 720000,
+          "Status": "o2",
+          "Order date": "2026-11-20",
+          "Due date": "2026-11-27"
+        },
+        {
+          "Customer": ["Sharma Traders"],
+          "Item": "Pressure cookers, 30",
+          "Amount": 4200000,
+          "Status": "o1",
+          "Order date": "2026-11-23",
+          "Due date": "2026-12-04"
+        },
+        {
+          "Customer": ["Patel Brothers"],
+          "Item": "Dupattas, 100 pcs",
+          "Amount": 3500000,
+          "Status": "o6",
+          "Order date": "2026-11-08",
+          "Due date": "2026-11-15"
+        },
+        {
+          "Customer": ["Meenakshi Stores"],
+          "Item": "Silk threads, 15 kg",
+          "Amount": 2750000,
+          "Status": "o5",
+          "Order date": "2026-11-01",
+          "Due date": "2026-11-07",
+          "Paid": true
+        }
+      ]
+    },
+    {
+      "name": "Customers",
+      "fields": [
+        {
+          "name": "Name",
+          "type": "text"
+        },
+        {
+          "name": "Phone",
+          "type": "phone"
+        },
+        {
+          "name": "Email",
+          "type": "email"
+        },
+        {
+          "name": "City",
+          "type": "text"
+        },
+        {
+          "name": "GSTIN",
+          "type": "text"
+        }
+      ],
+      "views": [
+        {
+          "name": "All customers",
+          "type": "grid",
+          "config": {
+            "v": 1
+          }
+        }
+      ],
+      "records": [
+        {
+          "Name": "Sharma Traders",
+          "Phone": "+919812300001",
+          "Email": "orders@sharmatraders.example.com",
+          "City": "Ludhiana",
+          "GSTIN": "03AAAAA0000A1Z5"
+        },
+        {
+          "Name": "Meenakshi Stores",
+          "Phone": "+919812300002",
+          "Email": "meenakshi@example.com",
+          "City": "Madurai"
+        },
+        {
+          "Name": "Patel Brothers",
+          "Phone": "+919812300003",
+          "Email": "patel@example.com",
+          "City": "Surat",
+          "GSTIN": "24AAAAA0000A1Z5"
+        },
+        {
+          "Name": "Rahul Verma",
+          "Phone": "+919812300004",
+          "Email": "rahul.verma@example.com",
+          "City": "Lucknow"
+        },
+        {
+          "Name": "Kavya Hegde",
+          "Phone": "+919812300005",
+          "Email": "kavya@example.com",
+          "City": "Mangaluru"
+        },
+        {
+          "Name": "Gupta Electricals",
+          "Phone": "+919812300006",
+          "Email": "gupta.elec@example.com",
+          "City": "Jaipur",
+          "GSTIN": "08AAAAA0000A1Z5"
+        },
+        {
+          "Name": "Anita Deshmukh",
+          "Phone": "+919812300007",
+          "Email": "anita.d@example.com",
+          "City": "Pune"
+        }
+      ]
+    }
+  ]
+}
