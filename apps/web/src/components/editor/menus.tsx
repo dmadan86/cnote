@@ -2,6 +2,7 @@
 import type { Editor } from '@tiptap/react'
 import { BubbleMenu } from '@tiptap/react/menus'
 import { Bold, Code, Italic, Link2, MessageSquarePlus, Strikethrough, Underline } from 'lucide-react'
+import { BlockControls } from './block-controls'
 import { selectionAnchor } from './inline-comments'
 import { EmojiPicker, ImageDialog } from './inserts'
 import { TableControls, TablePicker } from './table-controls'
@@ -119,6 +120,7 @@ export function EditorMenus({ editor, onComment }: { editor: Editor; onComment?:
           {onComment && <CommentTool editor={editor} onComment={onComment} />}
         </div>
       </BubbleMenu>
+      <BlockControls editor={editor} />
       <TableControls editor={editor} />
       <TablePicker editor={editor} />
       <EmojiPicker editor={editor} />

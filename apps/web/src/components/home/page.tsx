@@ -1,4 +1,5 @@
 'use client'
+import { useMine } from '@/components/docs/page-header'
 import { HomeDashboard } from '@/components/home/dashboard'
 import { HomeWidgets } from '@/components/home/widgets-home'
 import { PageList } from '@/components/page-list'
@@ -8,7 +9,8 @@ import { btnPrimary } from '@/components/ui'
 const REVIEW_WINDOW_MS = 14 * 86400_000
 
 export function HomePage({ widgets }: { widgets: boolean }) {
-  const { me, notes, spaces, openSpaceDialog } = useShell()
+  const { ws, me, notes, spaces, openSpaceDialog } = useShell()
+  const mine = useMine(ws, 'recent', 8)
   const pages = notes.filter((n) => n.types.length === 0)
   const needsReview = pages.filter(
     (n) =>
@@ -17,6 +19,8 @@ export function HomePage({ widgets }: { widgets: boolean }) {
         n.freshness === 'unverified' ||
         (n.verify_by && new Date(n.verify_by).getTime() - Date.now() < REVIEW_WINDOW_MS)),
   )
+  // Recently opened pages the shell can still list; a new person falls back to recently updated.
+  const recent = mine.flatMap((r) => notes.filter((n) => n.id === r.id && n.types.length === 0))
   return (
     <div className="mx-auto max-w-6xl space-y-8 px-6 py-8">
       <h1 className="text-2xl font-semibold tracking-tight">Welcome back, {me.user.name.split(' ')[0]}</h1>
@@ -39,7 +43,7 @@ export function HomePage({ widgets }: { widgets: boolean }) {
         <h2 id="recent" className="mb-2 text-[13px] font-semibold text-muted">
           Recent pages
         </h2>
-        <PageList pages={pages.slice(0, 8)} empty="No pages yet." />
+        <PageList pages={recent.length ? recent : pages.slice(0, 8)} empty="No pages yet." />
       </section>
     </div>
   )

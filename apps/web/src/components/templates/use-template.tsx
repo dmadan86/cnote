@@ -6,6 +6,7 @@ import { useShell } from '@/components/shell'
 import { btn, btnPrimary, ErrorText, Field, inputCls, Modal } from '@/components/ui'
 import { cmd, type Note } from '@/lib/api'
 import { useCmd } from '@/lib/hooks'
+import { TemplateGallery } from './gallery'
 
 type Tpl = { id: string; name: string; kind: 'page' | 'board'; source_kind: string }
 type Opt = { id: string; label: string }
@@ -194,14 +195,26 @@ export function UseTemplateButton({ sourceKind, sourceId }: { sourceKind: string
 }
 
 /** "New from template" on the docs and whiteboard home pages. */
-export function NewFromTemplateButton({ kind }: { kind: 'page' | 'board' }) {
+export function NewFromTemplateButton({
+  kind,
+  spaceId,
+  parentId,
+}: {
+  kind: 'page' | 'board'
+  spaceId?: string
+  parentId?: string
+}) {
   const [open, setOpen] = useState(false)
   return (
     <>
       <button type="button" className={btn} onClick={() => setOpen(true)}>
         <FilePlus2 size={14} /> New from template
       </button>
-      <TemplateDialog open={open} onClose={() => setOpen(false)} kind={kind} />
+      {kind === 'page' ? (
+        <TemplateGallery open={open} onClose={() => setOpen(false)} spaceId={spaceId} parentId={parentId} />
+      ) : (
+        <TemplateDialog open={open} onClose={() => setOpen(false)} kind={kind} />
+      )}
     </>
   )
 }

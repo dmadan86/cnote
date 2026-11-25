@@ -14,6 +14,7 @@ import { WebsocketProvider } from 'y-websocket'
 import * as Y from 'yjs'
 import { cmd } from '@/lib/api'
 import { CLOSE_RELOAD, DOC_SCHEMA } from '@/lib/doc-schema'
+import { blockExtensions, ImageUpload, setGatewayMinSchema } from './editor/blocks'
 import { AlignHeading, AlignParagraph, ColorText, HtmlTable, SafeImage } from './editor/formats'
 import { InlineComments, setThreads, type Thread } from './editor/inline-comments'
 import { MentionPicker } from './editor/mention'
@@ -88,6 +89,11 @@ export function NoteEditor({
     })
     doc.current = d
     provider.current = p
+    // Blocks stay off until the gateway says no connected tab can predate them (docs-parity 7.3).
+    fetch(`${COLLAB_URL.replace(/^ws/, 'http')}/collab/min-schema`)
+      .then((r) => r.json())
+      .then((j: { min?: number }) => setGatewayMinSchema(Number(j.min) || 0))
+      .catch(() => {})
     const decide = (m: Mode) => {
       if (decided) return
       decided = true
@@ -167,7 +173,12 @@ function Surface({
     immediatelyRender: false,
     editable,
     extensions: [
-      StarterKit.configure({ paragraph: false, heading: false, ...(ydoc ? { undoRedo: false } : {}) }),
+      StarterKit.configure({
+        paragraph: false,
+        heading: false,
+        codeBlock: false,
+        ...(ydoc ? { undoRedo: false } : {}),
+      }),
       AlignParagraph,
       AlignHeading,
       TextAlign.configure({ types: ['heading', 'paragraph'] }),
@@ -181,6 +192,8 @@ function Surface({
       TableCell,
       TaskList,
       TaskItem.configure({ nested: true }),
+      ...blockExtensions,
+      ImageUpload.configure({ ws, noteId: id }),
       Placeholder.configure({ placeholder: "Type '/' for commands" }),
       SlashCommand,
       MentionPicker.configure({ ws }),

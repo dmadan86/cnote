@@ -29,8 +29,8 @@ func TestA1CommandContract(t *testing.T) {
 		if c.Description == "" || c.Handler == nil {
 			t.Errorf("%s: missing description or handler", n)
 		}
-		if _, err := c.Handler(nil, json.RawMessage(`{}`)); err == nil {
-			if a1Handlers[n] == nil {
+		if a1Handlers[n] == nil { // a landed handler needs a real Ctx; its own tests cover it
+			if _, err := c.Handler(nil, json.RawMessage(`{}`)); err == nil {
 				t.Errorf("%s: a stub must refuse", n)
 			}
 		}

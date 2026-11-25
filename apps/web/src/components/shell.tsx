@@ -21,6 +21,7 @@ import { MODULES, moduleOn } from '@/lib/modules'
 import { AskPanel } from './ai/ask-panel'
 import { BusinessTypeChooser } from './business-type'
 import { ChatNavLink } from './chat/nav'
+import { MineSections } from './docs/page-header'
 import { NotificationBell } from './notifications'
 import { Palette } from './palette'
 import { PersonHoverLayer } from './person'
@@ -192,7 +193,13 @@ function Tree({
                 aria-current={current ? 'page' : undefined}
                 className="flex min-w-0 flex-1 items-center gap-1.5 py-1 pr-2 pl-0.5 text-[13px]"
               >
-                <FileText size={13} className="shrink-0 text-muted" />
+                {(n as { icon?: string | null }).icon ? (
+                  <span aria-hidden="true" className="w-[13px] shrink-0 text-center text-[12px] leading-none">
+                    {(n as { icon?: string | null }).icon}
+                  </span>
+                ) : (
+                  <FileText size={13} className="shrink-0 text-muted" />
+                )}
                 <span className="truncate">{n.title || 'Untitled'}</span>
                 {n.restriction !== 'none' && (
                   <Lock size={11} className="shrink-0 text-muted" aria-label="Restricted page" />
@@ -517,6 +524,7 @@ export function ShellView({ ws, children }: { ws: string; children: React.ReactN
               </button>
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
+              <MineSections ws={ws} />
               <div className="flex items-center justify-between px-2 py-1 text-[11px] font-semibold uppercase tracking-wide text-muted">
                 Spaces
                 <button

@@ -12,7 +12,7 @@ const fixtures: Fixture[] = JSON.parse(
 )
 
 /** Flip to true in the commit that teaches md.ts the A1 blocks. */
-const BLOCKS_LANDED = false
+const BLOCKS_LANDED = true
 const blockIt = BLOCKS_LANDED ? it : it.skip
 
 const rt = (md: string) => {

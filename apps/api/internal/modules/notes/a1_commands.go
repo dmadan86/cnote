@@ -81,7 +81,7 @@ var a1Specs = []a1Spec{
 		a1Obj([]string{"note_id", "starred"}, "note_id", sA1ID, "starred", sA1Bool),
 		a1Obj([]string{"note_id", "starred"}, "note_id", sA1ID, "starred", sA1Bool),
 		command.GroupWriteNotes, true},
-	{"note.watch", "Watch or unwatch a page for the caller only. Watchers get a notification for each comment and, at most once a day per page, for a content change. Creating a page, becoming its owner or commenting on it starts a watch. Needs view access; guests may use it on pages shared with them. Returns {note_id, watching}.",
+	{"note.watch", "Watch or unwatch a page for the caller only. Watchers get a notification for comments and for title or content changes, at most one per page, person making the change and kind every 10 minutes (each comment thread counts separately). Creating a page, becoming its owner or commenting on it starts a watch. Needs view access; guests may use it on pages shared with them. Returns {note_id, watching}.",
 		a1Obj([]string{"note_id", "watching"}, "note_id", sA1ID, "watching", sA1Bool),
 		a1Obj([]string{"note_id", "watching"}, "note_id", sA1ID, "watching", sA1Bool),
 		command.GroupWriteNotes, true},

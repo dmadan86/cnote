@@ -2,6 +2,7 @@ package importers
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -111,6 +112,10 @@ func parseTSPtr(s *string) *time.Time {
 
 // ---------- Notion / Confluence ----------
 
+// mdBlockStart: a page that opens with one of the editor's own HTML-subset block forms is Markdown (an exported
+// page that begins with an expand, a status or a date), not an HTML document.
+var mdBlockStart = regexp.MustCompile(`(?i)^<(details>|span data-status=|time datetime=)`)
+
 func parsePages(source, content string) (*Parsed, error) {
 	p := &Parsed{}
 	t := strings.TrimLeftFunc(content, isSpaceRune)
@@ -130,7 +135,7 @@ func parsePages(source, content string) (*Parsed, error) {
 			return nil, fmt.Errorf("expected a `pages` array")
 		}
 		pages = a
-	case strings.HasPrefix(t, "<"):
+	case strings.HasPrefix(t, "<") && !mdBlockStart.MatchString(t):
 		title := firstText(t, "title")
 		if title == nil {
 			title = firstText(t, "h1")

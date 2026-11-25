@@ -67,9 +67,11 @@ export const HtmlTable = Table.extend({
   },
 })
 
-/** Only http(s) images are stored (the dialog enforces it too; pasted images are dropped here). */
+/** Only http(s) images and the one uploaded-file path are stored; any other image keeps its alt text, not its URL. */
 export const SafeImage = Image.extend({
   renderMarkdown(node, h, ctx) {
-    return safeSrc(String(node.attrs?.src ?? '')) ? (this.parent?.(node, h, ctx) ?? '') : ''
+    return safeSrc(String(node.attrs?.src ?? ''))
+      ? (this.parent?.(node, h, ctx) ?? '')
+      : String(node.attrs?.alt ?? '')
   },
 })

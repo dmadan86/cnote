@@ -565,6 +565,12 @@ export function createServer(opts: Options) {
 
   const server = http.createServer((req, res) => {
     if (req.url === '/healthz') return void res.end('ok')
+    if (req.method === 'GET' && req.url === '/collab/min-schema') {
+      // Under /collab/ because the API front forwards only that prefix. Public and harmless: the web client asks before it offers blocks an older tab would delete.
+      res.setHeader('Access-Control-Allow-Origin', '*')
+      res.setHeader('Content-Type', 'application/json')
+      return void res.end(JSON.stringify({ min: minSchema }))
+    }
     if (req.method === 'POST' && req.url === '/internal/render') return render(req, res)
     if (req.method === 'POST' && req.url === '/internal/min-schema') return setMin(req, res)
     res.statusCode = 426

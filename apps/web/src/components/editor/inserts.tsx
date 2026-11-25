@@ -2,6 +2,7 @@
 import type { Editor } from '@tiptap/react'
 import { useEffect, useRef, useState } from 'react'
 import { btnPrimary, Field, inputCls, Modal } from '../ui'
+import { pickImages } from './blocks'
 
 export const EMOJI = [
   '😀',
@@ -98,7 +99,7 @@ export function EmojiPicker({ editor }: { editor: Editor }) {
   )
 }
 
-/** Insert an image by URL (http/https only; no uploads). */
+/** Insert an image by URL (http/https) or upload one from the device. */
 export function ImageDialog({ editor }: { editor: Editor }) {
   const [open, setOpen] = useState(false)
   const [src, setSrc] = useState('')
@@ -151,7 +152,17 @@ export function ImageDialog({ editor }: { editor: Editor }) {
             {err}
           </p>
         )}
-        <div className="flex justify-end">
+        <div className="flex items-center justify-between gap-3">
+          <button
+            type="button"
+            className="text-[13px] underline"
+            onClick={() => {
+              setOpen(false)
+              pickImages(editor)
+            }}
+          >
+            Upload from your device
+          </button>
           <button type="submit" className={btnPrimary}>
             Insert image
           </button>

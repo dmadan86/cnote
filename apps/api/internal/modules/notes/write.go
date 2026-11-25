@@ -252,6 +252,10 @@ func noteUpdate(c *command.Ctx, input json.RawMessage) (any, error) {
 		return nil, err
 	}
 
+	pc, err := parsePageChrome(o)
+	if err != nil {
+		return nil, err
+	}
 	if _, err := access.AssertNoteAccess(c, id, true); err != nil {
 		return nil, err
 	}
@@ -285,8 +289,11 @@ func noteUpdate(c *command.Ctx, input json.RawMessage) (any, error) {
 	n, err := scanNote(c.Tx.QueryRow(c.Context,
 		`update core.notes set title = coalesce($2::text, title), content_md = coalesce($3::text, content_md),
 		   owner_id = coalesce($4::uuid, owner_id), verify_by = coalesce($5::date, verify_by), parent_id = coalesce($6::uuid, parent_id),
+		   page_status = case when $7::bool then $8::text else page_status end,
+		   icon = case when $9::bool then $10::text else icon end, wide = coalesce($11::bool, wide),
 		   updated_at = now(), version = version + 1
-		 where id = $1::uuid returning `+noteCols, id, title, content, owner, vby, parent))
+		 where id = $1::uuid returning `+noteCols, id, title, content, owner, vby, parent,
+		pc.setStatus, pc.status, pc.setIcon, pc.icon, pc.wide))
 	if err != nil {
 		return nil, err
 	}
@@ -305,6 +312,15 @@ func noteUpdate(c *command.Ctx, input json.RawMessage) (any, error) {
 	}
 	if !samePtr(n.ParentID, before.ParentID) {
 		changed = append(changed, "parent")
+	}
+	if !samePtr(n.Status, before.Status) {
+		changed = append(changed, "status")
+	}
+	if !samePtr(n.Icon, before.Icon) {
+		changed = append(changed, "icon")
+	}
+	if n.Wide != before.Wide {
+		changed = append(changed, "wide")
 	}
 	if _, err := c.Emit("note.updated", &n.ID, map[string]any{"changed": changed, "version": n.Version}); err != nil {
 		return nil, err

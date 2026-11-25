@@ -24,11 +24,22 @@ export const span = (color: string, inner: string) => {
 /** http(s), mailto, relative, #fragment: never javascript:, data:, vbscript: ... */
 export const safeHref = (u: string) =>
   /^(https?:|mailto:|\/|#|\.{0,2}\/)/i.test(u.trim()) || !/^[a-z][a-z0-9+.-]*:/i.test(u.trim())
-export const safeSrc = (u: string) => /^https?:\/\//i.test(u.trim())
+const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
+const FILE_SRC = new RegExp(`^/api/w/${UUID}/files/${UUID}$`)
+/** http(s), plus the one relative form an uploaded image is stored as (docs-parity 7.4): nothing else. */
+export const safeSrc = (u: string) => /^https?:\/\//i.test(u.trim()) || FILE_SRC.test(u.trim())
 export const posInt = (n: unknown): n is number => Number.isInteger(n) && (n as number) > 0
 
-// outer -> inner
+const STATUS = ['grey', 'blue', 'green', 'yellow', 'red', 'purple']
+
+// outer -> inner. Status and date are outermost, as in the gateway's converter (docs-parity 5.1).
 const WRAP: [string, (a: Record<string, string>, s: string) => string][] = [
+  ['status', (a, s) => (STATUS.includes(a.color) ? `<span data-status="${a.color}">${s}</span>` : s)],
+  [
+    'date',
+    (a, s) =>
+      /^\d{4}-\d{2}-\d{2}$/.test(a.datetime ?? '') ? `<time datetime="${a.datetime}">${s}</time>` : s,
+  ],
   ['link', (a, s) => (safeHref(a.href ?? '') ? `<a href="${esc(a.href ?? '')}">${s}</a>` : s)],
   ['bold', (_, s) => `<strong>${s}</strong>`],
   ['italic', (_, s) => `<em>${s}</em>`],

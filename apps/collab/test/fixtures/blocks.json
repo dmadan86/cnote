@@ -50,8 +50,8 @@
   {
     "id": "status-in-ordinary-table",
     "covers": ["status", "table"],
-    "md": "| Task | Status |\n| --- | --- |\n| Pack | <span data-status=\"green\">DONE</span> |\n| Ship | <span data-status=\"grey\">TO DO</span> |",
-    "plain": "| Task | Status |\n| --- | --- |\n| Pack | DONE |\n| Ship | TO DO |"
+    "md": "| Task | Status                                |\n| ---- | ------------------------------------- |\n| Pack | <span data-status=\"green\">DONE</span> |\n| Ship | <span data-status=\"grey\">TO DO</span> |",
+    "plain": "| Task | Status                                |\n| ---- | ------------------------------------- |\n| Pack | DONE |\n| Ship | TO DO |"
   },
   {
     "id": "status-in-merged-table",
@@ -62,8 +62,8 @@
   {
     "id": "date-inline-and-in-table",
     "covers": ["date", "table"],
-    "md": "Due <time datetime=\"2026-12-01\">1 Dec 2026</time>.\n\n| Task | Due |\n| --- | --- |\n| GST | <time datetime=\"2026-12-20\">20 Dec 2026</time> |",
-    "plain": "Due 1 Dec 2026.\n| Task | Due |\n| --- | --- |\n| GST | 20 Dec 2026 |"
+    "md": "Due <time datetime=\"2026-12-01\">1 Dec 2026</time>.\n\n| Task | Due                                            |\n| ---- | ---------------------------------------------- |\n| GST  | <time datetime=\"2026-12-20\">20 Dec 2026</time> |",
+    "plain": "Due 1 Dec 2026.\n| Task | Due                                            |\n| ---- | ---------------------------------------------- |\n| GST  | 20 Dec 2026 |"
   },
   {
     "id": "toc",
@@ -74,8 +74,8 @@
   {
     "id": "literal-lookalikes",
     "covers": ["lookalike"],
-    "md": "Type [[toc]] on its own line to insert a contents list.\n\nA quote: `> [!NOTE]` starts a panel and `<details>` an expand.\n\nA status looks like `<span data-status=\"red\">X</span>` in the file.\n\n```md\n[[toc]]\n> [!INFO]\n<details><summary>x</summary>\n<span data-status=\"red\">X</span>\n```",
-    "plain": "Type [[toc]] on its own line to insert a contents list.\nA quote: `> [!NOTE]` starts a panel and `<details>` an expand.\nA status looks like `<span data-status=\"red\">X</span>` in the file.\n[[toc]]\n> [!INFO]\n<details><summary>x</summary>\n<span data-status=\"red\">X</span>"
+    "md": "Type \\[\\[toc\\]\\] on its own line to insert a contents list.\n\nA quote: `> [!NOTE]` starts a panel and `<details>` an expand.\n\nA status looks like `<span data-status=\"red\">X</span>` in the file.\n\n```md\n[[toc]]\n> [!INFO]\n<details><summary>x</summary>\n<span data-status=\"red\">X</span>\n```",
+    "plain": "Type \\[\\[toc\\]\\] on its own line to insert a contents list.\nA quote: `> [!NOTE]` starts a panel and `<details>` an expand.\nA status looks like `<span data-status=\"red\">X</span>` in the file.\n[[toc]]\n> [!INFO]\n<details><summary>x</summary>\n<span data-status=\"red\">X</span>"
   },
   {
     "id": "code-language-and-backticks",

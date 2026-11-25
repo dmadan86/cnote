@@ -101,6 +101,9 @@ type Note struct {
 	Version      int32       `json:"version"`
 	Restriction  string      `json:"restriction"`
 	CollabEpoch  int32       `json:"collab_epoch"`
+	Status       *string     `json:"status"` // draft, in_review, final or null (column page_status); Verified stays in freshness
+	Icon         *string     `json:"icon"`
+	Wide         bool        `json:"wide"`
 }
 
 type Relation struct {
@@ -115,13 +118,14 @@ type Relation struct {
 type NoteDetail struct {
 	Note
 	Relations []Relation `json:"relations"`
+	Labels    []string   `json:"labels"`
 	URI       string     `json:"uri"`
 	Level     string     `json:"level"`
 }
 
 const noteCols = `id::text, space_id::text, parent_id::text, title, types, content_md, owner_id::text, verify_by::text,
 	verified_at, freshness, source_system, source_id, source_url, created_by::text, created_at, updated_at,
-	version, restriction, collab_epoch`
+	version, restriction, collab_epoch, page_status, icon, wide`
 
 func scanNote(row pgx.Row) (Note, error) {
 	var n Note
@@ -130,7 +134,7 @@ func scanNote(row pgx.Row) (Note, error) {
 	err := row.Scan(
 		&n.ID, &n.SpaceID, &n.ParentID, &n.Title, &n.Types, &n.ContentMD, &n.OwnerID, &n.VerifyBy,
 		&verifiedAt, &n.Freshness, &n.SourceSystem, &n.SourceID, &n.SourceURL, &n.CreatedBy, &createdAt, &updatedAt,
-		&n.Version, &n.Restriction, &n.CollabEpoch)
+		&n.Version, &n.Restriction, &n.CollabEpoch, &n.Status, &n.Icon, &n.Wide)
 	n.VerifiedAt, n.CreatedAt, n.UpdatedAt = command.TsPtr(verifiedAt), command.Ts(createdAt), command.Ts(updatedAt)
 	if n.Types == nil {
 		n.Types = []string{}
@@ -195,7 +199,11 @@ func noteGet(c *command.Ctx, input json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	return NoteDetail{note, rels, fmt.Sprintf("cnote://ws/%s/note/%s", c.WorkspaceID(), note.ID), level}, nil
+	labels, err := noteLabels(c, id)
+	if err != nil {
+		return nil, err
+	}
+	return NoteDetail{note, rels, labels, fmt.Sprintf("cnote://ws/%s/note/%s", c.WorkspaceID(), note.ID), level}, nil
 }
 
 // ---------- note.history ----------

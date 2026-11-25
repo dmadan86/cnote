@@ -43,3 +43,18 @@ export const noteViewed = (ws: string, note_id: string) =>
   cmd<{ note_id: string; at: string }>(ws, 'note.viewed', { note_id })
 export const noteMine = (ws: string, list: NoteListKind, limit?: number) =>
   cmd<PageRef[]>(ws, 'note.mine', { list, limit })
+
+/** The A1 fields note.get and note.list return beside the Note type in lib/api.ts. */
+export type NoteChrome = { status: PageStatus | null; icon: string | null; wide: boolean }
+export const STATUS_LABEL: Record<PageStatus, string> = {
+  draft: 'Draft',
+  in_review: 'In review',
+  final: 'Final',
+}
+export const STATUS_TONE: Record<PageStatus, 'neutral' | 'warn' | 'ok'> = {
+  draft: 'neutral',
+  in_review: 'warn',
+  final: 'ok',
+}
+/** Sidebar lists and the home page listen for this to reload after a star or an opening. */
+export const MINE_EVENT = 'cnote:mine'
