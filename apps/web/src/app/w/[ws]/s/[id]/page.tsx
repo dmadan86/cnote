@@ -2,6 +2,7 @@
 import { Plus, Settings } from 'lucide-react'
 import Link from 'next/link'
 import { use, useEffect, useState } from 'react'
+import { DocxImportButton } from '@/components/import/docx-button'
 import { PageList } from '@/components/page-list'
 import { useShell } from '@/components/shell'
 import { btn, btnPrimary, Pill } from '@/components/ui'
@@ -38,6 +39,7 @@ export default function SpacePage({ params }: { params: Promise<{ id: string }> 
               <Settings size={14} /> Space settings
             </Link>
           )}
+          {!space.archived && space.my_role !== 'viewer' && <DocxImportButton spaceId={id} />}
           {!space.archived && (
             <button type="button" onClick={() => newPage({ spaceId: id })} className={btnPrimary}>
               <Plus size={14} /> New page

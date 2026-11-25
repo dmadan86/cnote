@@ -38,7 +38,8 @@ func TestBuiltinTemplatesListAndRender(t *testing.T) {
 	}
 
 	// the id is read before UUID parsing; substitution is the one custom templates get
-	r := d.ok(owner, "template.render", map[string]any{"template_id": "builtin:meeting-notes", "space_id": space, "parent_id": parent})
+	r := d.ok(owner, "template.render", map[string]any{"template_id": "builtin:meeting-notes", "space_id": space, "parent_id": parent,
+		"answers": map[string]any{"date": "3 Dec 2026", "attendees": "Asha"}})
 	note := r["note"].(map[string]any)
 	if len(r["unresolved"].([]any)) != 0 || note["parent_id"] != parent || !strings.HasPrefix(note["title"].(string), "Meeting notes ") ||
 		strings.Contains(note["title"].(string), "{{") {

@@ -86,3 +86,19 @@ export async function trashedVisible(tx: Tx, p: Principal, noteId: string): Prom
   ])
   return lv.rows[0].level !== 'none'
 }
+
+/** True when the page is archived and the caller can read it: the socket then closes with CLOSE_ARCHIVED. */
+export async function archivedVisible(tx: Tx, p: Principal, noteId: string): Promise<boolean> {
+  const n = await tx.query(
+    "select freshness = 'archived' as archived from core.notes where id = $1::uuid and deleted_at is null",
+    [noteId],
+  )
+  if (!n.rows[0]?.archived) return false
+  const lv = await tx.query('select core.note_access_any($1::uuid,$2::uuid,$3,$4::text[]::uuid[]) as level', [
+    noteId,
+    p.userId,
+    p.role >= ADMIN,
+    await readableSpaces(tx, p),
+  ])
+  return lv.rows[0].level !== 'none'
+}

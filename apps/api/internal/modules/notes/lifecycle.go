@@ -358,6 +358,14 @@ func movePage(c *command.Ctx, in moveInput) (moveResult, error) {
 		if ps != space {
 			return moveResult{}, command.ErrInvalid("a page's parent must be in the same space")
 		}
+		// Under the tree lock, so a manual archive of that subtree either swept this page already or is refused here.
+		var archived bool
+		if err := c.Tx.QueryRow(c.Context, "select freshness = 'archived' from core.notes where id = $1::uuid", *in.parent).Scan(&archived); err != nil {
+			return moveResult{}, command.DB(err)
+		}
+		if archived {
+			return moveResult{}, command.ErrForbidden(access.ArchivedPageMessage)
+		}
 	}
 	newDepth, newChain, err := chainDepth(c, in.parent)
 	if err != nil {

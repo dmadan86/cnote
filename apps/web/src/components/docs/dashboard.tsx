@@ -203,6 +203,22 @@ export function Dashboard() {
               >
                 Restore
               </button>
+              <button
+                type="button"
+                className={btn}
+                onClick={async () => {
+                  try {
+                    await cmd(ws, 'doc.restore', { note_id: h.id, with_children: true })
+                    // the sub-pages come back too: list again instead of guessing which ones
+                    setArchived(await cmd<Hit[]>(ws, 'doc.archived', {}))
+                    flags.reload()
+                  } catch (x) {
+                    setErr((x as Error).message)
+                  }
+                }}
+              >
+                Restore with sub-pages
+              </button>
             </li>
           ))}
         </ul>

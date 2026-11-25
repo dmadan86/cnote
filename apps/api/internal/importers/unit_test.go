@@ -182,3 +182,12 @@ func TestCSVReaderMatchesCsvCore(t *testing.T) {
 		t.Fatalf("%q", got)
 	}
 }
+
+// docs-parity 14: the Sub-pages list is page chrome, so the Confluence children macro imports as nothing.
+func TestConfluenceChildrenMacroIsNothing(t *testing.T) {
+	html := `<p>before</p><ac:structured-macro ac:name="children"><ac:parameter ac:name="depth">2</ac:parameter></ac:structured-macro><p>after</p><p>x <ac:structured-macro ac:name="children"/>y</p>`
+	md, dropped := htmlToMD(html)
+	if strings.Contains(md, "children") || strings.Contains(md, "2") || dropped != 0 || !strings.HasPrefix(md, "before\n\nafter") {
+		t.Fatalf("%q %d", md, dropped)
+	}
+}

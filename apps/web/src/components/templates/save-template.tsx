@@ -51,7 +51,8 @@ export function SaveAsTemplate({ ws, noteId, title }: { ws: string; noteId: stri
           <form className="space-y-3" onSubmit={save}>
             <p className="text-[13px] text-muted">
               Fields written as {'{{contact.name}}'} are filled from a record when the template is used.
-              Saving an existing name replaces that template.
+              Saving an existing name replaces that template. Write {'{{ask.meeting_date}}'} where the person
+              using the template should type a value; they are asked for it first.
             </p>
             <Field label="Template name">
               {(id) => (

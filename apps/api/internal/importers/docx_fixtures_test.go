@@ -3,7 +3,6 @@ package importers
 import (
 	"archive/zip"
 	"bytes"
-	"compress/flate"
 	"io"
 	"testing"
 )
@@ -85,6 +84,15 @@ func sealDocx(buf *bytes.Buffer, zw *zip.Writer, contentTypes, docRels string) [
 // ---------------------------------------------------------------------------
 // Fixture helpers
 // ---------------------------------------------------------------------------
+
+// numberingXML defines list 1 as bullets and list 2 as decimal numbers.
+const numberingXML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:abstractNum w:abstractNumId="0"><w:lvl w:ilvl="0"><w:numFmt w:val="bullet"/></w:lvl></w:abstractNum>
+  <w:abstractNum w:abstractNumId="1"><w:lvl w:ilvl="0"><w:numFmt w:val="decimal"/></w:lvl></w:abstractNum>
+  <w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>
+  <w:num w:numId="2"><w:abstractNumId w:val="1"/></w:num>
+</w:numbering>`
 
 // docxSimple returns a minimal .docx with a title paragraph, two body
 // paragraphs, one bold run and one italic run. Useful as a baseline import
@@ -197,6 +205,7 @@ func docxRich() []byte {
 	addFile(zw, "[Content_Types].xml", contentTypesXML)
 	addFile(zw, "_rels/.rels", rootRelsXML)
 	addFile(zw, "word/_rels/document.xml.rels", richRels)
+	addFile(zw, "word/numbering.xml", numberingXML)
 	if err := zw.Close(); err != nil {
 		panic(err)
 	}
@@ -295,36 +304,17 @@ func docxZipBomb() []byte {
 	buf := new(bytes.Buffer)
 	zw := zip.NewWriter(buf)
 
-	// Use a raw Deflate-compressed header so we can store 60 MB of zeros
-	// without reading 60 MB into this process during test compilation.
 	const uncompressedSize = 60 * 1024 * 1024 // 60 MiB
 
-	fh := &zip.FileHeader{
-		Name:   "word/document.xml",
-		Method: zip.Deflate,
-	}
-	w, err := zw.CreateHeader(fh)
-	if err != nil {
-		panic(err)
-	}
-	fw, err := flate.NewWriter(w, flate.BestCompression)
+	w, err := zw.CreateHeader(&zip.FileHeader{Name: "word/document.xml", Method: zip.Deflate})
 	if err != nil {
 		panic(err)
 	}
 	zeros := make([]byte, 32*1024)
-	remaining := uncompressedSize
-	for remaining > 0 {
-		n := remaining
-		if n > len(zeros) {
-			n = len(zeros)
-		}
-		if _, err = fw.Write(zeros[:n]); err != nil {
+	for remaining := uncompressedSize; remaining > 0; remaining -= len(zeros) {
+		if _, err = w.Write(zeros); err != nil {
 			panic(err)
 		}
-		remaining -= n
-	}
-	if err = fw.Close(); err != nil {
-		panic(err)
 	}
 
 	addFile(zw, "[Content_Types].xml", contentTypesXML)

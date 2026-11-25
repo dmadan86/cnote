@@ -348,6 +348,9 @@ func (c *conv) inline(nodes []*node) string {
 			src, _ := attrOf(n.attrs, "src")
 			fmt.Fprintf(&out, "![%s](%s)", alt, src)
 		case "ac:structured-macro":
+			if attrIs(n.attrs, "ac:name", "children") {
+				break // the page's Sub-pages list shows the children, so the macro becomes nothing
+			}
 			if !attrIs(n.attrs, "ac:name", "code") {
 				c.macrosDropped++
 			}
@@ -413,7 +416,9 @@ func (c *conv) block(nodes []*node, out *strings.Builder, indent string) {
 			rawText(n.kids, &code)
 			fmt.Fprintf(out, "```%s\n%s\n```\n\n", lang, strings.Trim(code.String(), "\n"))
 		case "ac:structured-macro":
-			if attrIs(n.attrs, "ac:name", "code") {
+			if attrIs(n.attrs, "ac:name", "children") {
+				flush()
+			} else if attrIs(n.attrs, "ac:name", "code") {
 				flush()
 				lang := ""
 				for _, k := range n.kids {

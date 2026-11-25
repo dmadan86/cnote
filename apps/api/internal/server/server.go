@@ -97,8 +97,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case strings.HasPrefix(r.URL.EscapedPath(), "/api/w/") && isFileRoute(r):
 		ws, id, _ := fileRoute(r)
 		s.files(w, r, ws, id)
-	case r.Method == http.MethodPost && regexp.MustCompile(`^/api/w/[^/]+/import/docx$`).MatchString(r.URL.Path):
-		http.Error(w, "not implemented", http.StatusNotImplemented)
+	case strings.HasPrefix(r.URL.EscapedPath(), "/api/w/") && isDocxRoute(r):
+		ws, _ := docxRoute(r)
+		s.importDocx(w, r, ws)
 	case strings.HasPrefix(r.URL.EscapedPath(), "/api/w/") && isImportRoute(r):
 		s.importUpload(w, r)
 	case isTablesImportRoute(r):

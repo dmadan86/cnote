@@ -87,6 +87,12 @@ and run `api migrate` again.
 4. **Order:** API and worker first, then web. The gateway needs the `access.ts` change (an archived space is read-only for editors,
    dropped at the next 10 second recheck); no schema raise, no mobile release.
 
+## Docs B2: Word import and archived pages
+- **Word import cap is per API process.** At most two `.docx` imports run at once per workspace, counted in memory (`modules/importers/docx.go`),
+  so with N API instances a workspace can run up to 2N. Parsing is bounded by size, part and text limits, so this is accepted.
+- **Archived pages are read-only, in the gateway too.** Deploy the gateway with the API: it refuses admission to an archived page and closes
+  open sockets with 4413 at the next recheck (10 seconds); the web reloads into the read-only page. No schema raise, no migration beyond 1344.
+
 ## Tables public forms
 A table form is a link, `/tf/<token>`, that anyone can open and submit without signing in (`GET` and `POST`
 `/api/public/table-form/<token>` on the API). Forms take no file uploads. Settings, API:

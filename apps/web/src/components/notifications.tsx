@@ -139,7 +139,7 @@ export function NotificationBell({ ws }: { ws: string }) {
               </li>
             )}
             {items.map((n) => (
-              <li key={n.id}>
+              <li key={n.id} className="flex items-start">
                 <button
                   type="button"
                   onClick={async () => {
@@ -158,6 +158,15 @@ export function NotificationBell({ ws }: { ws: string }) {
                     <span className="block text-[12px] text-muted">{ago(n.created_at)}</span>
                   </span>
                 </button>
+                {n.kind === 'access_request' && n.note_id && (
+                  <Link
+                    href={`/w/${ws}/n/${n.note_id}?share=${encodeURIComponent(n.actor_name ?? '')}`}
+                    onClick={() => setOpen(false)}
+                    className="mt-1 mr-1 shrink-0 rounded-md border border-line px-2 py-0.5 text-[12px] hover:bg-hover"
+                  >
+                    Share
+                  </Link>
+                )}
               </li>
             ))}
           </ul>

@@ -480,7 +480,7 @@ This bump is the whole schema cost of Phase B. A cheaper alternative exists and 
 - `doc.archive` sets the same two columns by hand. No new state.
 - It takes the page **and its live sub-pages**. Archiving a parent alone would leave its children at the space root, because the tree shows a page whose parent is not listed at the root.
 - `doc.restore` gains `with_children`, which restores the archived pages below the one named.
-- An archived page stays readable by its link, shows an "Archived" banner, and can still be edited. That is today's behaviour for auto-archived pages and it does not change.
+- An archived page stays readable by its link and shows an "Archived" banner. It is read-only until restored: the API refuses writes and the collab gateway refuses live edits (admission is closed and open sockets are closed with 4413 on the next recheck; the web reloads into the read-only page). This also applies to pages archived by the freshness sweep.
 
 **Left out:** an archive reason, archiving typed pages, auto-delete of old archives.
 

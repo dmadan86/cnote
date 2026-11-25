@@ -13,13 +13,15 @@ import { useEffect, useRef, useState } from 'react'
 import { WebsocketProvider } from 'y-websocket'
 import * as Y from 'yjs'
 import { cmd } from '@/lib/api'
-import { CLOSE_RELOAD, DOC_SCHEMA } from '@/lib/doc-schema'
+import { CLOSE_ARCHIVED, CLOSE_RELOAD, DOC_SCHEMA } from '@/lib/doc-schema'
 import { CLOSE_DELETED } from '@/lib/docs'
 import { blockExtensions, ImageUpload, setGatewayMinSchema } from './editor/blocks'
+import { FileChips, FileUpload } from './editor/file-link'
 import { AlignHeading, AlignParagraph, ColorText, HtmlTable, SafeImage } from './editor/formats'
 import { InlineComments, setThreads, type Thread } from './editor/inline-comments'
 import { MentionPicker } from './editor/mention'
 import { CommentBubble, EditorMenus } from './editor/menus'
+import { PageLinkPicker } from './editor/page-link'
 import { SlashCommand } from './editor/slash'
 import { TaskControls } from './editor/task-controls'
 import { FixedToolbar } from './editor/toolbar'
@@ -91,6 +93,11 @@ export function NoteEditor({
       if (e?.code === CLOSE_DELETED) {
         p.destroy()
         onDeletedRef.current?.()
+      }
+      if (e?.code === CLOSE_ARCHIVED) {
+        // Archived while open: read-only until restored. Reloading shows the archived page.
+        p.destroy()
+        window.location.reload()
       }
       if (e?.code === CLOSE_RELOAD) {
         // The gateway needs a newer editor than this tab runs: stop rather than save over newer content.
@@ -206,6 +213,9 @@ function Surface({
       TaskItem.configure({ nested: true }),
       ...blockExtensions,
       ImageUpload.configure({ ws, noteId: id }),
+      FileUpload.configure({ ws, noteId: id }),
+      FileChips,
+      PageLinkPicker.configure({ ws }),
       Placeholder.configure({ placeholder: "Type '/' for commands" }),
       SlashCommand,
       MentionPicker.configure({ ws }),
