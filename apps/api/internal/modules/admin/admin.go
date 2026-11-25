@@ -52,7 +52,7 @@ func Commands() []command.Command {
 		c.ReturnsSecret = s.secret
 		out = append(out, c)
 	}
-	return out
+	return append(out, inviteCommands()...)
 }
 
 // Decode fields separately: Go's case-insensitive struct decoding and null defaults differ from serde.
@@ -223,6 +223,16 @@ func memberAdd(c *command.Ctx, b json.RawMessage) (any, error) {
 	n := strings.Split(email, "@")[0]
 	if name != nil {
 		n = *name
+	}
+	// A person with no account is invited by email (member.invite); this makes a password-less account, which only a
+	// workspace with single sign-on can use.
+	var known, sso bool
+	if e = c.Tx.QueryRow(c.Context, `select exists(select 1 from core.users where email = $1),
+		coalesce((select sso_enabled from core.workspace_security where workspace_id = $2::uuid), false)`, email, c.WorkspaceID()).Scan(&known, &sso); e != nil {
+		return nil, e
+	}
+	if !known && !sso {
+		return nil, command.ErrInvalid("this workspace has no single sign-on: invite them by email instead (member.invite)")
 	}
 	var uid string
 	e = c.Tx.QueryRow(c.Context, "insert into core.users (email,name) values ($1,$2) on conflict (email) do update set email=excluded.email returning id::text", email, n).Scan(&uid)

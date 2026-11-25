@@ -71,10 +71,10 @@ func TestSetupStatusRowsTickFromData(t *testing.T) {
 			t.Fatalf("row %s has no href", r.Key)
 		}
 	}
-	eq(t, keys, []string{"company", "customer", "invoice", "website", "table", "import"})
+	eq(t, keys, []string{"company", "customer", "invoice", "website", "table", "import", "team"})
 	m := rowMap(rows)
 	eq(t, m["customer"], true) // newBT makes one customer
-	for _, k := range []string{"company", "invoice", "website", "table", "import"} {
+	for _, k := range []string{"company", "invoice", "website", "table", "import", "team"} {
 		eq(t, m[k], false)
 	}
 
@@ -98,7 +98,7 @@ func TestSetupStatusRowsTickFromData(t *testing.T) {
 	for _, r := range b.setup(b.owner) {
 		keys = append(keys, r.Key)
 	}
-	eq(t, keys, []string{"company", "customer", "import"})
+	eq(t, keys, []string{"company", "customer", "import", "team"})
 }
 
 func TestSetupStatusTenantIsolation(t *testing.T) {
@@ -176,7 +176,7 @@ func TestLegacyModulesListHidesNothing(t *testing.T) {
 	for _, r := range b.setup(b.owner) {
 		keys = append(keys, r.Key)
 	}
-	eq(t, keys, []string{"company", "customer", "invoice", "website", "table", "import"})
+	eq(t, keys, []string{"company", "customer", "invoice", "website", "table", "import", "team"})
 	if _, ok := summary()["payments_pending"]; !ok {
 		t.Fatal("billing tile hidden by a legacy modules list")
 	}

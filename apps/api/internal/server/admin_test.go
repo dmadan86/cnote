@@ -74,9 +74,9 @@ func TestAdminSecretsAndRoles(t *testing.T) {
 			t.Fatalf("peer demotion: %s", r.body)
 		}
 	}
-	added := adminOK(t, e.cmd(e.gosv.URL, admin, owner.ws, "member.add", map[string]any{"email": "  " + rnd() + "@EXAMPLE.TEST  ", "role": "guest"}, nil))
-	if added["role"] != "guest" || strings.Contains(added["email"].(string), " ") {
-		t.Fatal(added)
+	// no account and no single sign-on: a password-less account would be useless, so the answer points to invitations
+	if r := e.cmd(e.gosv.URL, admin, owner.ws, "member.add", map[string]any{"email": "  " + rnd() + "@EXAMPLE.TEST  ", "role": "guest"}, nil); r.status != 400 || !strings.Contains(string(r.body), "invite") {
+		t.Fatalf("member.add of an unknown email without SSO: %d %s", r.status, r.body)
 	}
 	for _, w := range []who{member, guest} {
 		for _, cmd := range []string{"member.add", "agent.create", "apikey.list", "apikey.revoke", "workspace.update", "usage.summary"} {

@@ -15,6 +15,15 @@ const config: NextConfig = {
       },
       // The form link is the credential: never leak it through a referrer.
       { source: '/tf/:path*', headers: [{ key: 'Referrer-Policy', value: 'no-referrer' }] },
+      // The invitation link is a credential: never leak it through a referrer, never cache or index it.
+      {
+        source: '/invite/:path*',
+        headers: [
+          { key: 'Referrer-Policy', value: 'no-referrer' },
+          { key: 'Cache-Control', value: 'no-store' },
+          { key: 'X-Robots-Tag', value: 'noindex, nofollow' },
+        ],
+      },
       // A public page link is a credential too, and the page is not for search engines.
       {
         source: '/pg/:path*',

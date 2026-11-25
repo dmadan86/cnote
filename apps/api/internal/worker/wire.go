@@ -11,6 +11,7 @@ import (
 	"github.com/cnote/api/internal/importers"
 	"github.com/cnote/api/internal/jobs"
 	"github.com/cnote/api/internal/mailer"
+	"github.com/cnote/api/internal/modules/admin"
 	"github.com/cnote/api/internal/modules/agents"
 	"github.com/cnote/api/internal/modules/ai"
 	"github.com/cnote/api/internal/modules/files"
@@ -54,6 +55,7 @@ func New(pool *pgxpool.Pool, reg *command.Registry) *Worker {
 	w.OnJob("hook.deliver", hooks.DeliverJob)
 	w.OnJob(mailer.JobKind, mailSendJob)
 	w.OnJob(NotifyMailJob, notifyMailJob)
+	w.OnJob(admin.InviteMailJob, inviteMailJob)
 	w.OnJob("import.run", importers.RunJob)
 	w.OnJob("data_import.run", importers.RunDataJob)
 	w.OnJob("tables.import", tables.ImportJob)
