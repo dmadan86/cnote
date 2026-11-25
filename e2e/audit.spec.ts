@@ -33,7 +33,7 @@ test('owner finds who did what, exports it, and erases a contact', async ({ page
   // privacy: export, then erase with typed confirmation
   await page.goto(`/w/${ws}/settings?tab=Privacy`)
   await page.getByLabel('Find a contact').fill('Meera')
-  await page.getByRole('button', { name: new RegExp(person) }).click()
+  await page.getByRole('button', { name: new RegExp(`^(?!Actions for).*${person}`) }).click() // not the tree row's menu button
   const exp = page.waitForEvent('download')
   await page.getByRole('button', { name: 'Export their data (JSON)' }).click()
   expect((await exp).suggestedFilename()).toContain('-data.json')

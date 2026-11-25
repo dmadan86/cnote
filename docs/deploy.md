@@ -48,6 +48,25 @@ Roll out in one window:
    "C Note was updated. Reload to keep editing." Between steps 1 and 2 an old tab still connected can delete new
    blocks, so keep the gap short. Never set the minimum without deploying web first.
 
+## Docs page lifecycle (Phase A2): staged migrations and the follow-up release
+Migrations 1334 to 1338 are staged so no step rewrites or scans `core.notes`, and each starts with `SET LOCAL lock_timeout = '5s'`
+(it fails fast and can be re-run rather than queue behind a long transaction).
+1. **Before deploying**: no tree may be deeper than 50 levels or loop (migration 1337 makes access fail closed on both). Run on the
+   production database and expect 0 rows:
+   `with recursive up as (select id, parent_id, 1 d from core.notes union all select p.id, p.parent_id, up.d + 1 from core.notes p join up on p.id = up.parent_id where up.d < 52) select count(*) from up where d > 50;`
+2. **Deploy** the API, worker and collab together (the API calls `POST /internal/fold` on collab with `COLLAB_URL` and the same
+   `COLLAB_INTERNAL_SECRET`; without them a delete or duplicate of a page with unsaved live edits is refused with "Couldn't save the
+   latest edits. Try again.", while pages with no pending edits are unaffected). 1334 adds nullable columns only; 1335 and 1336 build the
+   indexes `CONCURRENTLY`; 1337 recreates `core.note_access` and `core.note_access_any`; 1338 adds `notes_deletion_consistent` `NOT VALID`.
+3. **The worker sweep `docs.a2_backfill`** gives each page deleted before A2 its own `deletion_id` (500 per batch, once a minute). Check
+   it is done: `select count(*) from core.notes where deleted_at is not null and deletion_id is null;` must reach 0. Those pages have no
+   restore evidence, so only an admin can restore them.
+4. **Follow-up release (not in this one)**, once step 3 shows 0:
+   `ALTER TABLE core.notes VALIDATE CONSTRAINT notes_deletion_consistent;` and `ALTER TABLE core.notes VALIDATE CONSTRAINT notes_deleted_by_fk;`
+   (both take a `SHARE UPDATE EXCLUSIVE` lock and do not block writes), then add the strict form
+   `ADD CONSTRAINT notes_deletion_strict CHECK ((deleted_at IS NULL) = (deletion_id IS NULL)) NOT VALID`, `VALIDATE` it, and drop
+   `notes_deletion_consistent`. Never validate before step 3 is complete.
+
 ## Tables public forms
 A table form is a link, `/tf/<token>`, that anyone can open and submit without signing in (`GET` and `POST`
 `/api/public/table-form/<token>` on the API). Forms take no file uploads. Settings, API:

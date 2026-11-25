@@ -35,8 +35,11 @@ func proposeEditJob(c *command.Ctx, payload json.RawMessage) error {
 	var title, content string
 	var owner *string
 	var baseVersion int32
-	if err := c.Tx.QueryRow(c.Context, "select title, content_md, owner_id::text, version from core.notes where id = $1::uuid", page).
+	if err := c.Tx.QueryRow(c.Context, "select title, content_md, owner_id::text, version from core.notes where id = $1::uuid and deleted_at is null", page).
 		Scan(&title, &content, &owner, &baseVersion); err != nil {
+		if err == pgx.ErrNoRows {
+			return nil // the page is in the trash: nothing to propose against
+		}
 		return err
 	}
 	// Quote the source only if the page owner may read it (the proposal is shown to the owner).

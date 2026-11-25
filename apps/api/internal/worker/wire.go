@@ -63,6 +63,7 @@ func New(pool *pgxpool.Pool, reg *command.Registry) *Worker {
 	day := 24 * time.Hour
 	w.AddSweep(Sweep{"docs.freshness_sweep", day, FreshnessSweep})
 	w.AddSweep(Sweep{"docs.search_plain_backfill", time.Minute, SearchPlainBackfill})
+	w.AddSweep(Sweep{"docs.a2_backfill", time.Minute, A2DeletionBackfill})
 	w.AddSweep(Sweep{"finance.irn_window", day, func(ctx context.Context, w *Worker) error {
 		_, err := IRNWindowSweep(ctx, w, todayIST())
 		return err

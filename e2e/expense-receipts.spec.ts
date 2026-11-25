@@ -54,7 +54,7 @@ test('Member attaches a receipt photo to a claim; it locks on submit and the own
     // the reviewer sees the same receipt
     await owner.goto(`/w/${ws}/billing/expenses`)
     await owner.getByRole('tab', { name: /To approve/ }).click()
-    await owner.getByRole('button', { name: /Travel/ }).click()
+    await owner.getByRole('button', { name: /^Travel/ }).click() // not the tree row's "Actions for Expense: Travel"
     const href = await owner
       .getByRole('region', { name: 'Receipts' })
       .getByRole('link', { name: /taxi\.png/ })

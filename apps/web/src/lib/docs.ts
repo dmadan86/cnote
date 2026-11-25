@@ -58,3 +58,68 @@ export const STATUS_TONE: Record<PageStatus, 'neutral' | 'warn' | 'ok'> = {
 }
 /** Sidebar lists and the home page listen for this to reload after a star or an opening. */
 export const MINE_EVENT = 'cnote:mine'
+
+// ---- Docs parity A2: page lifecycle (docs/design/docs-parity.md 7.5 and 7.9). Mirrors A2OutputSchema in
+// apps/api/internal/modules/notes/a2_commands.go. ----
+
+/** The one message every refusal of move, reorder, delete and duplicate carries; it never names a hidden page. */
+export const RESTRICTED_MESSAGE = 'Some pages here are restricted'
+/** Close code the collab gateway sends when the page was moved to the trash. Show "This page was moved to the trash". */
+export const CLOSE_DELETED = 4411
+
+export type RestoreTarget = 'original' | 'space_root' | 'blocked'
+export type TrashEntry = {
+  deletion_id: string
+  space_id: string
+  root: { id: string; title: string; icon: string | null }
+  page_count: number
+  deleted_at: string
+  deleted_by: { user_id: string; name: string } | null
+  restore_to: RestoreTarget
+  blocked_reason: string | null
+}
+
+/** Move to a new parent (null = space root), before a sibling (omitted or null = last). Same space only. */
+export const noteMove = (ws: string, id: string, parent_id: string | null, before_id?: string | null) =>
+  cmd<{ id: string; space_id: string; parent_id: string | null; position: number }>(ws, 'note.move', {
+    id,
+    parent_id,
+    before_id,
+  })
+/** Reorder among the current siblings; before_id null = last. */
+export const noteReorder = (ws: string, id: string, before_id: string | null) =>
+  cmd<{ id: string; parent_id: string | null; position: number }>(ws, 'note.reorder', { id, before_id })
+export const noteDelete = (ws: string, id: string) =>
+  cmd<{ deleted: true; deletion_id: string; count: number }>(ws, 'note.delete', { id })
+export const noteTrash = (
+  ws: string,
+  o?: { space_id?: string; limit?: number; before?: string; before_id?: string },
+) => cmd<TrashEntry[]>(ws, 'note.trash', o ?? {})
+export const noteUndelete = (ws: string, deletion_id: string) =>
+  cmd<{
+    deletion_id: string
+    root_id: string
+    space_id: string
+    count: number
+    placed: 'original' | 'space_root'
+  }>(ws, 'note.undelete', { deletion_id })
+export const noteDuplicate = (ws: string, id: string) =>
+  cmd<{
+    id: string
+    space_id: string
+    parent_id: string | null
+    title: string
+    position: number
+    attachments_copied: number
+  }>(ws, 'note.duplicate', { id })
+
+/** Tree order of siblings (7.9): position, then created_at, then id. A page whose parent is in the trash shows at the space root. */
+export const bySiblingOrder = (
+  a: { position?: number; created_at?: string; id: string },
+  b: { position?: number; created_at?: string; id: string },
+) =>
+  (a.position ?? 0) - (b.position ?? 0) ||
+  (a.created_at ?? '').localeCompare(b.created_at ?? '') ||
+  a.id.localeCompare(b.id)
+/** Window event: the tree, Trash and the open page reload after a move, delete, restore or duplicate. */
+export const TREE_EVENT = 'cnote:tree'

@@ -20,6 +20,11 @@ import (
 
 const defaultVerifyDays = 90
 
+func withDescribe(c command.Command) command.Command {
+	c.Description, c.Schema = A2Describe(c.Name)
+	return c
+}
+
 func writeCommands() []command.Command {
 	guest := func(c command.Command) command.Command { c.MinRole = command.Guest; return c } // page access (shares) is checked per note
 	w, d, r := command.GroupWriteNotes, command.GroupDestructive, command.GroupRead
@@ -28,7 +33,7 @@ func writeCommands() []command.Command {
 		command.NewCommand("note.create", w, noteCreate),
 		guest(command.NewCommand("note.update", w, noteUpdate)),
 		command.NewCommand("note.list", r, noteList),
-		command.NewCommand("note.delete", d, noteDelete),
+		withDescribe(command.NewCommand("note.delete", d, noteDelete)),
 		command.NewCommand("relation.add", w, relationAdd),
 		command.NewCommand("relation.remove", w, relationRemove),
 		guest(command.NewCommand("comment.add", w, commentAdd)),
@@ -165,6 +170,9 @@ func insertNote(c *command.Ctx, i createNote) (any, error) {
 	if err := access.AssertSpaceAccess(c, i.spaceID, true); err != nil {
 		return nil, err
 	}
+	if err := lockTree(c, i.spaceID); err != nil { // before reading the parent: a delete or move of it finishes first
+		return nil, err
+	}
 	if i.parentID != nil {
 		// a child inherits the parent's restrictions, so creating one is an edit of the parent
 		if _, err := access.AssertNoteAccess(c, *i.parentID, true); err != nil {
@@ -176,6 +184,11 @@ func insertNote(c *command.Ctx, i createNote) (any, error) {
 		}
 		if ps != i.spaceID {
 			return nil, command.ErrInvalid("a page's parent must be in the same space")
+		}
+		if d, _, err := chainDepth(c, i.parentID); err != nil {
+			return nil, err
+		} else if d+1 > maxTreeDepth {
+			return nil, errTooDeep()
 		}
 	}
 	owner := i.owner
@@ -263,17 +276,13 @@ func noteUpdate(c *command.Ctx, input json.RawMessage) (any, error) {
 	if err := fenceBodySave(c, content != nil, schema, expE); err != nil {
 		return nil, err
 	}
-	if parent != nil {
-		if _, err := access.AssertNoteAccess(c, *parent, true); err != nil {
-			return nil, err
-		}
-	}
 	before, err := loadNote(c, id)
 	if err != nil {
 		return nil, err
 	}
-	if parent != nil {
-		if err := checkMove(c, before, *parent); err != nil {
+	moving := parent != nil && !samePtr(parent, before.ParentID)
+	if moving { // a parent change is a move: same gate, same subtree and restriction checks (7.10.2)
+		if err := requireStructural(c); err != nil {
 			return nil, err
 		}
 	}
@@ -287,13 +296,18 @@ func noteUpdate(c *command.Ctx, input json.RawMessage) (any, error) {
 		t := strings.TrimSpace(*title)
 		title = &t
 	}
+	if moving {
+		if _, err := movePage(c, moveInput{id: id, parent: parent, space: before.SpaceID}); err != nil {
+			return nil, err
+		}
+	}
 	n, err := scanNote(c.Tx.QueryRow(c.Context,
 		`update core.notes set title = coalesce($2::text, title), content_md = coalesce($3::text, content_md),
-		   owner_id = coalesce($4::uuid, owner_id), verify_by = coalesce($5::date, verify_by), parent_id = coalesce($6::uuid, parent_id),
-		   page_status = case when $7::bool then $8::text else page_status end,
-		   icon = case when $9::bool then $10::text else icon end, wide = coalesce($11::bool, wide),
+		   owner_id = coalesce($4::uuid, owner_id), verify_by = coalesce($5::date, verify_by),
+		   page_status = case when $6::bool then $7::text else page_status end,
+		   icon = case when $8::bool then $9::text else icon end, wide = coalesce($10::bool, wide),
 		   updated_at = now(), version = version + 1
-		 where id = $1::uuid returning `+noteCols, id, title, content, owner, vby, parent,
+		 where id = $1::uuid returning `+noteCols, id, title, content, owner, vby,
 		pc.setStatus, pc.status, pc.setIcon, pc.icon, pc.wide))
 	if err != nil {
 		return nil, err
@@ -338,28 +352,6 @@ func noteUpdate(c *command.Ctx, input json.RawMessage) (any, error) {
 }
 
 func samePtr(a, b *string) bool { return a == nil && b == nil || a != nil && b != nil && *a == *b }
-
-// A page may only move under a page of the same space that is not itself or one of its descendants.
-func checkMove(c *command.Ctx, n Note, parent string) error {
-	ps, err := parentSpace(c, parent)
-	if err != nil {
-		return err
-	}
-	if ps != n.SpaceID {
-		return command.ErrInvalid("a page's parent must be in the same space")
-	}
-	var cycle bool
-	if err := c.Tx.QueryRow(c.Context,
-		`with recursive up as (select id, parent_id, 1 d from core.notes where id = $2::uuid
-		   union all select p.id, p.parent_id, up.d + 1 from core.notes p join up on p.id = up.parent_id where up.d < 1000)
-		 select exists(select 1 from up where id = $1::uuid)`, n.ID, parent).Scan(&cycle); err != nil {
-		return err
-	}
-	if cycle {
-		return command.ErrInvalid("a page cannot move under itself or one of its own sub-pages")
-	}
-	return nil
-}
 
 // Seconds between automatic page-version checkpoints while someone keeps editing.
 const checkpointEverySecs = 600.0
@@ -488,23 +480,6 @@ func noteList(c *command.Ctx, input json.RawMessage) (any, error) {
 		out = append(out, n)
 	}
 	return out, rows.Err()
-}
-
-func noteDelete(c *command.Ctx, input json.RawMessage) (any, error) {
-	id, err := byID(input)
-	if err != nil {
-		return nil, err
-	}
-	if _, err := access.AssertNoteAccess(c, id, true); err != nil {
-		return nil, err
-	}
-	if _, err := c.Tx.Exec(c.Context, "update core.notes set deleted_at = now() where id = $1::uuid", id); err != nil {
-		return nil, err
-	}
-	if _, err := c.Emit("note.deleted", &id, map[string]any{}); err != nil {
-		return nil, err
-	}
-	return map[string]bool{"deleted": true}, nil
 }
 
 // ---------- relations ----------

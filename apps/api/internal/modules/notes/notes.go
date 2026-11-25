@@ -21,7 +21,7 @@ func Commands() []command.Command {
 		command.NewCommand("space.list", command.GroupRead, spaceList),
 		command.NewCommand("note.get", command.GroupRead, noteGet),
 		command.NewCommand("note.history", command.GroupRead, noteHistory),
-	}, append(writeCommands(), a1Commands()...)...)
+	}, append(writeCommands(), append(a1Commands(), a2Commands()...)...)...)
 }
 
 var uuidRe = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
@@ -104,6 +104,7 @@ type Note struct {
 	Status       *string     `json:"status"` // draft, in_review, final or null (column page_status); Verified stays in freshness
 	Icon         *string     `json:"icon"`
 	Wide         bool        `json:"wide"`
+	Position     int64       `json:"position"` // sibling order inside (space, parent), docs-parity 7.9
 }
 
 type Relation struct {
@@ -125,7 +126,7 @@ type NoteDetail struct {
 
 const noteCols = `id::text, space_id::text, parent_id::text, title, types, content_md, owner_id::text, verify_by::text,
 	verified_at, freshness, source_system, source_id, source_url, created_by::text, created_at, updated_at,
-	version, restriction, collab_epoch, page_status, icon, wide`
+	version, restriction, collab_epoch, page_status, icon, wide, coalesce(position, 0)`
 
 func scanNote(row pgx.Row) (Note, error) {
 	var n Note
@@ -134,7 +135,7 @@ func scanNote(row pgx.Row) (Note, error) {
 	err := row.Scan(
 		&n.ID, &n.SpaceID, &n.ParentID, &n.Title, &n.Types, &n.ContentMD, &n.OwnerID, &n.VerifyBy,
 		&verifiedAt, &n.Freshness, &n.SourceSystem, &n.SourceID, &n.SourceURL, &n.CreatedBy, &createdAt, &updatedAt,
-		&n.Version, &n.Restriction, &n.CollabEpoch, &n.Status, &n.Icon, &n.Wide)
+		&n.Version, &n.Restriction, &n.CollabEpoch, &n.Status, &n.Icon, &n.Wide, &n.Position)
 	n.VerifiedAt, n.CreatedAt, n.UpdatedAt = command.TsPtr(verifiedAt), command.Ts(createdAt), command.Ts(updatedAt)
 	if n.Types == nil {
 		n.Types = []string{}

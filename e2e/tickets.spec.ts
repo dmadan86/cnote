@@ -57,7 +57,7 @@ test('customer raises a ticket, staff replies and resolves it, breach shows on h
   await list.getByRole('link', { name: subject }).click()
   await expect(page.getByLabel('Assignee')).toBeVisible()
   await page.getByLabel('Status').selectOption('resolved')
-  await expect(page.getByRole('status')).toHaveText('Saved')
+  await expect(page.getByRole('region', { name: 'Ticket' }).getByRole('status')).toHaveText('Saved') // the tree has its own live regions
   await page.goto(`${base}/crm/tickets`)
   await expect(list.getByRole('link', { name: subject })).toHaveCount(0)
   await page.getByRole('button', { name: 'Resolved' }).click()
