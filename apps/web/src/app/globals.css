@@ -162,6 +162,119 @@ dialog::backdrop {
   overflow-x: auto;
 }
 
+/* Highlight, cell colour and numbered column (docs-parity C1). The tints are theme-aware: a tint is mixed into the
+   page colours, so text stays readable in dark mode. Not scoped to .prose-note: the public page uses them too. */
+:root {
+  --tint-yellow: #eab308;
+  --tint-green: #16a34a;
+  --tint-blue: #2563eb;
+  --tint-purple: #7c3aed;
+  --tint-red: #dc2626;
+  --tint-orange: #ea580c;
+  --tint-grey: #6b7280;
+  --tint-text: 34%;
+  --tint-cell: 20%;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --tint-text: 42%;
+    --tint-cell: 26%;
+  }
+}
+.ProseMirror [data-highlight] {
+  background: color-mix(in srgb, var(--tint) var(--tint-text), transparent);
+  border-radius: 3px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+.ProseMirror td[data-bg],
+.ProseMirror th[data-bg] {
+  background: color-mix(in srgb, var(--tint) var(--tint-cell), var(--canvas));
+}
+[data-highlight="yellow"],
+[data-bg="yellow"],
+[data-tint="yellow"] {
+  --tint: var(--tint-yellow);
+}
+[data-highlight="green"],
+[data-bg="green"],
+[data-tint="green"] {
+  --tint: var(--tint-green);
+}
+[data-highlight="blue"],
+[data-bg="blue"],
+[data-tint="blue"] {
+  --tint: var(--tint-blue);
+}
+[data-highlight="purple"],
+[data-bg="purple"],
+[data-tint="purple"] {
+  --tint: var(--tint-purple);
+}
+[data-highlight="red"],
+[data-bg="red"],
+[data-tint="red"] {
+  --tint: var(--tint-red);
+}
+[data-highlight="orange"],
+[data-bg="orange"],
+[data-tint="orange"] {
+  --tint: var(--tint-orange);
+}
+[data-highlight="grey"],
+[data-bg="grey"],
+[data-tint="grey"] {
+  --tint: var(--tint-grey);
+}
+/* Palette swatch: the solid tint */
+.cn-swatch {
+  display: block;
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--tint) 70%, var(--canvas));
+}
+/* Numbered column: a CSS counter in a gutter beside each body row's first cell. There are no real cells, so sort,
+   move and paste never renumber data. */
+.ProseMirror table[data-numbered] {
+  counter-reset: cn-row;
+  margin-left: 40px;
+  width: calc(100% - 40px);
+  overflow: visible;
+}
+.ProseMirror table[data-numbered] td,
+.ProseMirror table[data-numbered] th {
+  position: relative;
+}
+.ProseMirror table[data-numbered] tr > td:first-child {
+  counter-increment: cn-row;
+}
+.ProseMirror table[data-numbered] tr > td:first-child::before {
+  content: counter(cn-row);
+  position: absolute;
+  right: 100%;
+  top: 6px;
+  margin-right: 8px;
+  min-width: 20px;
+  text-align: right;
+  color: var(--muted);
+  font-size: 0.8em;
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+  pointer-events: none;
+}
+/* Sticky header row: moved by decorations (editor/sticky-header.ts) while the table crosses the top of the page. */
+.ProseMirror .cn-sticky-cell {
+  z-index: 3;
+  box-shadow:
+    0 1px 0 var(--line),
+    0 3px 6px -3px rgb(0 0 0 / 0.25);
+}
+.ProseMirror table:has(.cn-sticky-cell) {
+  overflow: visible;
+}
+
 /* To-do lists */
 .prose-note ul[data-type="taskList"] {
   list-style: none;

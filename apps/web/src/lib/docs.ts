@@ -45,7 +45,7 @@ export const noteMine = (ws: string, list: NoteListKind, limit?: number) =>
   cmd<PageRef[]>(ws, 'note.mine', { list, limit })
 
 /** The A1 fields note.get and note.list return beside the Note type in lib/api.ts. */
-export type NoteChrome = { status: PageStatus | null; icon: string | null; wide: boolean }
+export type NoteChrome = { status: PageStatus | null; icon: string | null; wide: boolean; cover?: Cover }
 export const STATUS_LABEL: Record<PageStatus, string> = {
   draft: 'Draft',
   in_review: 'In review',
@@ -77,6 +77,9 @@ export type TrashEntry = {
   deleted_by: { user_id: string; name: string } | null
   restore_to: RestoreTarget
   blocked_reason: string | null
+  /** When retention deletes it for good; null when the workspace keeps trash forever. */
+  purge_at: string | null
+  can_purge: boolean
 }
 
 /** Move to a new parent (null = space root), before a sibling (omitted or null = last). Same space only. */
@@ -202,6 +205,8 @@ export type PublicPage = {
   body_md: string
   updated_on: string
   workspace_name: string
+  cover_url?: string | null
+  cover_y?: number | null
 }
 
 export const pageLinkGet = (ws: string, note_id: string) => cmd<PageLinkGet>(ws, 'page_link.get', { note_id })
@@ -275,16 +280,34 @@ export type TreeRow = {
   icon: string | null
   position: number
   status: PageStatus | null
+  restriction: 'none' | 'view' | 'edit'
+  freshness: string
+  verify_by: string | null
+  updated_at: string
   has_children: boolean
 }
 /** parent_id is a page id, null for the space root, or "shared" for the synthetic "Shared with you" root. */
-export type TreeLevel = { parent_id: string | null; rows: TreeRow[]; next: string | null; shared?: boolean }
+export type TreeLevel = {
+  parent_id: string | null
+  rows: TreeRow[]
+  next: string | null
+  /** Cursor for the rows before this page (`before`), or the first row itself (`from`) to refresh a window. */
+  prev?: string | null
+  shared?: boolean
+}
 export type Cover = { file_id: string; y?: number } | null
 export type TrashRetention = { days: number; purge_from: string | null }
 
 export const treeLevel = (
   ws: string,
-  input: { space_id: string; parent_id?: string | null; after?: string; limit?: number },
+  input: {
+    space_id: string
+    parent_id?: string | null
+    after?: string
+    before?: string
+    from?: string
+    limit?: number
+  },
 ) => cmd<TreeLevel>(ws, 'note.tree', input)
 export const revealInTree = (ws: string, noteId: string) =>
   cmd<{ levels: TreeLevel[] }>(ws, 'note.tree', { reveal: noteId })

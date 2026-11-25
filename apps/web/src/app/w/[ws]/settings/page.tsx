@@ -33,6 +33,7 @@ import { AuditLog } from '@/components/audit/log'
 import { Privacy } from '@/components/audit/privacy'
 import { CompanyProfile } from '@/components/business-type'
 import { CompanyTab } from '@/components/company/profile'
+import { TrashSettings } from '@/components/docs/trash-settings'
 import { HooksTab } from '@/components/hooks-settings'
 import { InvitePeople } from '@/components/invites/invite-people'
 import { CustomerMessages } from '@/components/messages/customer-messages'
@@ -230,6 +231,7 @@ function WorkspaceTab({ ws }: { ws: string }) {
           }}
         />
       </section>
+      <TrashSettings ws={ws} />
     </div>
   )
 }

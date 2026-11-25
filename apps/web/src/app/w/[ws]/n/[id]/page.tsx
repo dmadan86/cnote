@@ -6,6 +6,7 @@ import { useSearchParams } from 'next/navigation'
 import { Suspense, use, useEffect, useMemo, useRef, useState } from 'react'
 import { type Anchor, type Comment, CommentsTab, openThreads } from '@/components/comments-panel'
 import { AttachmentsPanel } from '@/components/docs/attachments-panel'
+import { Cover } from '@/components/docs/cover'
 import { LabelChips } from '@/components/docs/labels'
 import { DocActions, Proposals } from '@/components/docs/note-tools'
 import { PageMenuButton } from '@/components/docs/page-actions'
@@ -20,6 +21,7 @@ import {
 } from '@/components/docs/page-header'
 import { RequestAccess } from '@/components/docs/request-access'
 import { SubPages } from '@/components/docs/sub-pages'
+import { countSubtree } from '@/components/docs/tree-loader'
 import { Viewers } from '@/components/docs/viewers'
 import { locate } from '@/components/editor/inline-comments'
 import { NoteEditor } from '@/components/note-editor'
@@ -33,7 +35,7 @@ import { VersionsTab } from '@/components/versions-panel'
 import { WatchButton } from '@/components/watch-button'
 import { activity, activityRest, type Evt } from '@/lib/activity'
 import { cmd, type NoteDetail } from '@/lib/api'
-import { type NoteChrome, type SpaceB1, STATUS_LABEL } from '@/lib/docs'
+import { type NoteChrome, type SpaceB1, STATUS_LABEL, treeLevel } from '@/lib/docs'
 import { ago, useCmd } from '@/lib/hooks'
 
 type Tab = 'relations' | 'history' | 'versions' | 'comments'
@@ -114,23 +116,26 @@ function Panel({
   )
 }
 
-/** Live pages under id, for the Archive confirmation. */
-function countBelow(notes: { id: string; parent_id: string | null }[], id: string) {
-  const seen = new Set([id])
-  for (let grew = true; grew; ) {
-    grew = false
-    for (const n of notes)
-      if (n.parent_id && seen.has(n.parent_id) && !seen.has(n.id)) {
-        seen.add(n.id)
-        grew = true
-      }
-  }
-  return seen.size - 1
+/** Live sub-pages under a page, for the Archive confirmation: the tree knows whether there are any, then they are counted. */
+function useSubPageCount(ws: string, id: string, spaceId: string | undefined, known: boolean | undefined) {
+  const [count, setCount] = useState(0)
+  useEffect(() => {
+    if (!spaceId || known === false) return setCount(0)
+    let live = true
+    treeLevel(ws, { space_id: spaceId, parent_id: id, limit: 1 })
+      .then((lv) => (lv.rows.length ? countSubtree(ws, spaceId, id) : { total: 1 }))
+      .then((r) => live && setCount(r.total - 1))
+      .catch(() => live && setCount(0))
+    return () => {
+      live = false
+    }
+  }, [ws, id, spaceId, known])
+  return count
 }
 
 function NotePageInner({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params)
-  const { ws, me, spaces, members, notes, reload, newPage } = useShell()
+  const { ws, me, spaces, members, tree, reload, newPage } = useShell()
   const {
     data: note,
     error,
@@ -160,6 +165,7 @@ function NotePageInner({ params }: { params: Promise<{ id: string }> }) {
       wsRole === 'owner' ||
       wsRole === 'admin')
   const threads = useMemo(() => openThreads(comments.data), [comments.data])
+  const subPages = useSubPageCount(ws, id, note?.space_id, tree.byId.get(id)?.has_children)
   const showComments = () => {
     setPanel(true)
     setTab('comments')
@@ -197,7 +203,6 @@ function NotePageInner({ params }: { params: Promise<{ id: string }> }) {
 
   const archived = note.freshness === 'archived'
   const canEdit = note.level === 'edit' && !archived // an archived page is read-only until it is restored
-  const subPages = countBelow(notes, id)
 
   async function saveTitle() {
     if (!note || !canEdit || title.trim() === note.title) return
@@ -258,6 +263,10 @@ function NotePageInner({ params }: { params: Promise<{ id: string }> }) {
                 title,
                 status: note.status ? STATUS_LABEL[note.status] : null,
                 labels: note.labels ?? [],
+                cover: note.cover && {
+                  src: `/api/w/${ws}/files/${note.cover.file_id}`,
+                  y: note.cover.y ?? 50,
+                },
                 updatedAt: new Date(note.updated_at).toLocaleDateString('en-GB', {
                   day: 'numeric',
                   month: 'short',
@@ -312,6 +321,15 @@ function NotePageInner({ params }: { params: Promise<{ id: string }> }) {
           </p>
         )}
         <article className={`mx-auto px-6 py-10 ${note.wide ? 'max-w-[1120px]' : 'max-w-[720px]'}`}>
+          <Cover
+            ws={ws}
+            noteId={id}
+            title={title}
+            cover={note.cover}
+            wide={note.wide}
+            canEdit={canEdit}
+            onChange={reloadNote}
+          />
           <div className="mb-6 flex items-center">
             <EmojiPicker
               ws={ws}

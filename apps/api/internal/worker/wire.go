@@ -84,6 +84,7 @@ func New(pool *pgxpool.Pool, reg *command.Registry) *Worker {
 	w.AddSweep(Sweep{"sites.cloudflare", time.Minute, func(ctx context.Context, w *Worker) error { return sites.CloudflareSweep(ctx, w.Pool) }})
 	w.AddSweep(Sweep{"sites.abuse", day, func(ctx context.Context, w *Worker) error { return sites.AbuseSweep(ctx, w.Pool) }})
 	w.AddSweep(Sweep{"tables.purge", day, func(ctx context.Context, w *Worker) error { return tables.PurgeSweep(ctx, w.Pool) }})
+	w.AddSweep(Sweep{"docs.trash_purge", day, TrashPurgeSweep}) // runs once at worker start, then daily
 	w.AddSweep(Sweep{"files.record_sweep", time.Hour, func(ctx context.Context, w *Worker) error { return files.RecordSweep(ctx, w.Pool) }})
 	w.AddSweep(Sweep{"notify.mail_direct", 2 * time.Minute, NotifyDirectSweep})
 	w.AddSweep(Sweep{"reminders.send", 5 * time.Minute, func(ctx context.Context, w *Worker) error {

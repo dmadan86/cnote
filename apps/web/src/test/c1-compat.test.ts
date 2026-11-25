@@ -1,17 +1,29 @@
 // docs-parity C1 13.3.5: what an old tab does to a block that carries the C1 attributes (highlight on textStyle,
 // background on cells, numbered on a table). C1 keeps schema 2, so a tab that has not reloaded keeps its old schema.
 // Client A's schema has the new attributes, client B's (the real editor extensions as they are today) does not.
-// The assertions record today's behaviour. The contract is: B's edit never loses text; formatting-only loss is accepted.
+// The assertions record the behaviour of the old schema. The contract is: B's edit never loses text; formatting-only loss is accepted.
 import Collaboration from '@tiptap/extension-collaboration'
 import { TableCell, TableHeader, TableRow } from '@tiptap/extension-table'
 import { Color } from '@tiptap/extension-text-style'
+import { Markdown } from '@tiptap/markdown'
 import { Editor } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import { describe, expect, it } from 'vitest'
 import * as Y from 'yjs'
 import { ColorText, HtmlTable } from '../components/editor/formats'
+import { ColorText as OldColorText, HtmlTable as OldHtmlTable } from './fixtures/old-formats'
 
+// B: the editor as it was before C1. A: the real extensions, which carry the new attributes (HtmlTable brings the cell tint).
 const base = [
+  StarterKit.configure({ undoRedo: false }),
+  OldColorText,
+  Color,
+  OldHtmlTable.configure({ resizable: true }),
+  TableRow,
+  TableHeader,
+  TableCell,
+]
+const newer = [
   StarterKit.configure({ undoRedo: false }),
   ColorText,
   Color,
@@ -19,22 +31,6 @@ const base = [
   TableRow,
   TableHeader,
   TableCell,
-]
-// The new attributes, declared the way R1 will: extra attributes on the existing node and mark types.
-const withAttr = <T extends { extend: (c: object) => T }>(ext: T, name: string, def: unknown = null) =>
-  ext.extend({
-    addAttributes() {
-      return { ...((this as any).parent?.() ?? {}), [name]: { default: def } }
-    },
-  })
-const newer = [
-  StarterKit.configure({ undoRedo: false }),
-  withAttr(ColorText, 'highlight'),
-  Color,
-  withAttr(HtmlTable.configure({ resizable: true }), 'numbered', false),
-  TableRow,
-  withAttr(TableHeader, 'background'),
-  withAttr(TableCell, 'background'),
 ]
 
 const mount = (doc: Y.Doc, extensions: unknown[]) =>
@@ -195,5 +191,46 @@ describe('an old tab edits blocks that carry the C1 attributes', () => {
     expect(tb.a).not.toContain('numbered')
     expect(tb.a).not.toContain('background="grey"')
     expect(tb.a).toContain('background="red"')
+  })
+})
+
+// The old tab's Markdown converter, saving the stored form again and again: the link must not change (C1 13.6 finding,
+// fixed by writing the highlight inside the link text, `[<mark>text</mark>](url)`, which an old reader keeps as it is).
+describe('an old tab saves a highlighted link repeatedly', () => {
+  const save = (md: string) => {
+    const e = new Editor({
+      element: document.createElement('div'),
+      extensions: [...base, Markdown],
+      content: md,
+      contentType: 'markdown',
+    })
+    const out = e.getMarkdown()
+    e.destroy()
+    return out
+  }
+  it('keeps the link target and text stable over many saves', () => {
+    const stored = 'See [<mark data-color="blue">a link</mark>](https://example.com/guide) now.'
+    let cur = stored
+    const seen: string[] = []
+    for (let i = 0; i < 5; i++) {
+      cur = save(cur)
+      seen.push(cur)
+    }
+    expect(new Set(seen).size).toBe(1) // stable from the first save
+    expect(cur.match(/https:\/\/example\.com\/guide/g)).toHaveLength(1)
+    expect(cur).toContain('a link')
+    expect(cur).not.toContain('](\\[')
+  })
+  it('the new editor writes exactly that form', () => {
+    const e = new Editor({
+      element: document.createElement('div'),
+      extensions: [...newer, Markdown],
+      content: 'See [<mark data-color="blue">a link</mark>](https://example.com/guide) now.',
+      contentType: 'markdown',
+    })
+    expect(e.getMarkdown()).toBe(
+      'See [<mark data-color="blue">a link</mark>](https://example.com/guide) now.',
+    )
+    e.destroy()
   })
 })

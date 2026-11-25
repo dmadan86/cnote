@@ -42,3 +42,24 @@ func TestMarkdownStartingWithAnExpandKeepsItsTags(t *testing.T) {
 		t.Fatalf("body changed: %q", p.Recs[0].BodyMD)
 	}
 }
+
+// docs C1: a page whose first block is a highlight, a numbered table or a coloured cell is the editor's own Markdown,
+// not an HTML document, so the tint and the numbering survive the import.
+func TestMarkdownStartingWithC1FormsKeepsThem(t *testing.T) {
+	for name, md := range map[string]string{
+		"highlight":      `<mark data-color="green">Approved</mark> by finance.`,
+		"bare highlight": `<mark>Approved</mark> by finance.`,
+		"numbered table": `<table data-numbered="true"><tr><th><p>Item</p></th></tr><tr><td><p>Rice</p></td></tr></table>`,
+		"coloured cell":  `<table><tr><th data-bg="grey"><p>Item</p></th></tr><tr><td data-bg="red"><p>Rice</p></td></tr></table>`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			p, err := parsePages("notion", md)
+			if err != nil || len(p.Recs) != 1 {
+				t.Fatalf("parse: %v", err)
+			}
+			if p.Recs[0].BodyMD != md {
+				t.Fatalf("body changed: %q", p.Recs[0].BodyMD)
+			}
+		})
+	}
+}

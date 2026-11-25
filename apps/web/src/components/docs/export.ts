@@ -4,7 +4,14 @@
 
 export const MAX_IMAGE_BYTES = 25 << 20
 
-export type ExportMeta = { title: string; status: string | null; labels: string[]; updatedAt: string }
+export type ExportMeta = {
+  title: string
+  status: string | null
+  labels: string[]
+  updatedAt: string
+  /** The page cover: its file route and vertical position. Shown above the title. */
+  cover?: { src: string; y: number } | null
+}
 export type Built = { root: HTMLElement; notes: string[] }
 type FetchImage = (src: string) => Promise<Blob>
 /** A page's current title, or null when the reader cannot see it. */
@@ -135,6 +142,18 @@ const STATUS_STYLE: Record<string, [string, string]> = {
   purple: ['#e9defa', '#44337a'],
 }
 
+// docs-parity C1: highlight and cell tints, as fixed light colours (the exported page is always light).
+const TINT_BG: Record<string, string> = {
+  yellow: '#fde68a',
+  green: '#bbf7d0',
+  blue: '#bfdbfe',
+  purple: '#ddd6fe',
+  red: '#fecaca',
+  orange: '#fed7aa',
+  grey: '#e5e7eb',
+}
+const tint = (v: string | null) => (v && Object.hasOwn(TINT_BG, v) ? v : null)
+
 function safeHref(h: string | null) {
   if (!h) return null
   if (/^(?:https?:|mailto:|#)/i.test(h)) return h
@@ -169,7 +188,10 @@ function clean(src: Node, into: Node, doc: Document) {
     const isExpand = e.hasAttribute('data-expand')
     const status = e.getAttribute('data-status')
     const keepSpan =
-      tag === 'span' && ((status && STATUS.includes(status as never)) || e.getAttribute('style'))
+      tag === 'span' &&
+      ((status && STATUS.includes(status as never)) ||
+        e.getAttribute('style') ||
+        tint(e.getAttribute('data-highlight')))
     if (!TAGS.has(tag) || (tag === 'span' && !keepSpan)) {
       clean(e, into, doc)
       continue
@@ -237,6 +259,13 @@ function clean(src: Node, into: Node, doc: Document) {
           const v = Number(e.getAttribute(a))
           if (Number.isInteger(v) && v > 1 && v < 100) out.setAttribute(a, String(v))
         }
+        const bg = tint(e.getAttribute('data-bg'))
+        if (bg) {
+          out.setAttribute('data-bg', bg)
+          out.setAttribute('style', `background: ${TINT_BG[bg]}`)
+        }
+      } else if (tag === 'table') {
+        if (e.getAttribute('data-numbered') === 'true') out.setAttribute('data-numbered', 'true')
       } else if (tag === 'time') {
         const d = e.getAttribute('datetime') ?? ''
         if (/^\d{4}-\d{2}-\d{2}$/.test(d)) out.setAttribute('datetime', d)
@@ -255,7 +284,11 @@ function clean(src: Node, into: Node, doc: Document) {
           `background: ${bg}; color: ${fg}; border: 1px solid ${fg}; border-radius: 3px; padding: 0 5px; font-size: 0.85em; font-weight: 600; text-transform: uppercase`,
         )
       } else if (tag === 'span') {
-        const st = safeStyle(e.getAttribute('style'))
+        const hl = tint(e.getAttribute('data-highlight'))
+        const st = [safeStyle(e.getAttribute('style')), hl ? `background: ${TINT_BG[hl]}` : '']
+          .filter(Boolean)
+          .join('; ')
+        if (hl) out.setAttribute('data-highlight', hl)
         if (st) out.setAttribute('style', st)
       }
       if (['p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6'].includes(tag)) {
@@ -331,6 +364,14 @@ export async function buildExportDom(
   root.className = 'cn-export'
 
   const head = doc.createElement('header')
+  if (meta.cover && UPLOAD.test(meta.cover.src)) {
+    const img = doc.createElement('img')
+    img.className = 'cn-cover'
+    img.setAttribute('src', meta.cover.src)
+    img.setAttribute('alt', `Cover of ${meta.title || 'Untitled'}`)
+    img.setAttribute('style', `object-position: 50% ${Math.min(100, Math.max(0, Math.round(meta.cover.y)))}%`)
+    head.appendChild(img)
+  }
   const h1 = doc.createElement('h1')
   h1.textContent = meta.title || 'Untitled'
   head.appendChild(h1)
@@ -356,7 +397,7 @@ export async function buildExportDom(
 
   await resolvePageLinks(body, opts?.resolveTitle ?? defaultTitle)
 
-  const imgs = Array.from(body.querySelectorAll('img'))
+  const imgs = Array.from(root.querySelectorAll('img')) // the cover is in the header
   const { done, failed, notes } = await embed(
     imgs.map((i) => i.getAttribute('src') ?? ''),
     opts,
@@ -418,9 +459,11 @@ export const EXPORT_CSS = `
 .cn-export .cn-code-lang{margin-top:.8em;padding:2px 8px;background:#e4e6ea;border:1px solid #ddd;border-bottom:0;font:600 11px ui-monospace,Menlo,monospace;text-transform:uppercase}
 .cn-export table{border-collapse:collapse;margin:.8em 0;width:100%}.cn-export th,.cn-export td{border:1px solid #bbb;padding:4px 8px;vertical-align:top;text-align:left}
 .cn-export th{background:#f1f2f4}.cn-export td p,.cn-export th p{margin:0}
+.cn-export table[data-numbered]{counter-reset:cn-row;margin-left:36px;width:calc(100% - 36px)}.cn-export table[data-numbered] td,.cn-export table[data-numbered] th{position:relative}
+.cn-export table[data-numbered] tr>td:first-child{counter-increment:cn-row}.cn-export table[data-numbered] tr>td:first-child::before{content:counter(cn-row);position:absolute;right:100%;top:4px;margin-right:8px;color:#666;font-size:.8em}
 .cn-export details{border:1px solid #ddd;padding:6px 10px;margin:.8em 0}.cn-export summary{font-weight:600}
 .cn-export nav[data-toc]{border:1px solid #ddd;padding:6px 12px;margin:.8em 0}.cn-export nav[data-toc] ul{list-style:none;padding-left:1em}
-.cn-export img{max-width:100%;height:auto}.cn-export hr{border:0;border-top:1px solid #ccc;margin:1em 0}
+.cn-export img{max-width:100%;height:auto}.cn-export img.cn-cover{display:block;width:100%;height:160px;object-fit:cover;margin:0 0 .6em}.cn-export hr{border:0;border-top:1px solid #ccc;margin:1em 0}
 .cn-export .cn-img-missing{font-style:italic;color:#555}
 @page{size:A4;margin:18mm}
 @media print{

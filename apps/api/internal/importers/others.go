@@ -114,7 +114,8 @@ func parseTSPtr(s *string) *time.Time {
 
 // mdBlockStart: a page that opens with one of the editor's own HTML-subset block forms is Markdown (an exported
 // page that begins with an expand, a status or a date), not an HTML document.
-var mdBlockStart = regexp.MustCompile(`(?i)^<(details>|span data-status=|time datetime=)`)
+// C1 adds a page that begins with a highlight, a numbered table or a coloured first cell.
+var mdBlockStart = regexp.MustCompile(`(?i)^<(details>|span data-status=|time datetime=|mark[ >]|table[^>]*\sdata-numbered=|table>\s*(<tbody>\s*)?<tr>\s*<t[dh]\s[^>]*data-bg=)`)
 
 func parsePages(source, content string) (*Parsed, error) {
 	p := &Parsed{}

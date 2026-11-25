@@ -5,6 +5,7 @@ import { useShell } from '@/components/shell'
 import { btn, ErrorText, inputCls, Pill } from '@/components/ui'
 import { cmd } from '@/lib/api'
 import { ago, useCmd } from '@/lib/hooks'
+import { useRecentPages } from './tree-loader'
 
 type Flag = { id: string; title: string; verify_by: string | null; reasons: string[] }
 type Score = {
@@ -55,7 +56,8 @@ const H = ({ children }: { children: React.ReactNode }) => (
 )
 
 export function Dashboard() {
-  const { ws, members, notes } = useShell()
+  const { ws, members } = useShell()
+  const notes = useRecentPages(ws, 200)
   const flags = useCmd<Flag[]>(ws, 'doc.flags')
   const score = useCmd<Score>(ws, 'doc.freshness_score')
   const caps = useCmd<Capture[]>(ws, 'capture.list')
@@ -139,13 +141,11 @@ export function Dashboard() {
                   className={`${inputCls} ml-auto max-w-56`}
                 >
                   <option value="">Link a page...</option>
-                  {notes
-                    .filter((n) => n.types.length === 0)
-                    .map((n) => (
-                      <option key={n.id} value={n.id}>
-                        {n.title || 'Untitled'}
-                      </option>
-                    ))}
+                  {notes.map((n) => (
+                    <option key={n.id} value={n.id}>
+                      {n.title || 'Untitled'}
+                    </option>
+                  ))}
                 </select>
                 <button type="submit" className={btn}>
                   Answer

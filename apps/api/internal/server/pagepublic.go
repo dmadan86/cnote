@@ -86,6 +86,8 @@ type PublicPage struct {
 	BodyMD        string  `json:"body_md"`
 	UpdatedOn     string  `json:"updated_on"`
 	WorkspaceName string  `json:"workspace_name"`
+	CoverURL      *string `json:"cover_url"`
+	CoverY        *int    `json:"cover_y"`
 }
 
 type pageFile struct {
@@ -249,10 +251,21 @@ func (s *Server) servePage(r *http.Request, token, hash, linkID, ws, note, creat
 		}
 		var pg PublicPage
 		var md string
-		if err := c.Tx.QueryRow(ctx, `select n.title, n.icon, n.wide, n.content_md, (n.updated_at at time zone 'UTC')::date::text, w.name
+		var coverID *string
+		var coverY *int16
+		if err := c.Tx.QueryRow(ctx, `select n.title, n.icon, n.wide, n.content_md, (n.updated_at at time zone 'UTC')::date::text, w.name,
+			  (select a.id::text from core.attachments a where a.id = n.cover_file_id and a.note_id = n.id
+			     and a.content_type in ('image/jpeg','image/png','image/gif','image/webp') and (a.data is not null or a.storage_key = 's3')), n.cover_y
 			from core.notes n join core.workspaces w on w.id = n.workspace_id where n.id = $1::uuid`, note).
-			Scan(&pg.Title, &pg.Icon, &pg.Wide, &md, &pg.UpdatedOn, &pg.WorkspaceName); err != nil {
+			Scan(&pg.Title, &pg.Icon, &pg.Wide, &md, &pg.UpdatedOn, &pg.WorkspaceName, &coverID, &coverY); err != nil {
 			return err
+		}
+		if coverID != nil { // the cover is served by the same public file route as the body's images
+			u, y := "/api/public/page/"+token+"/files/"+*coverID, 50
+			if coverY != nil {
+				y = int(*coverY)
+			}
+			pg.CoverURL, pg.CoverY = &u, &y
 		}
 		rows, err := c.Tx.Query(ctx, `select id::text from core.attachments where note_id = $1::uuid`, note)
 		if err != nil {
@@ -275,7 +288,8 @@ func (s *Server) servePage(r *http.Request, token, hash, linkID, ws, note, creat
 		}
 		// A file is served only when it is attached to this page AND the body still shows it.
 		fileID = strings.ToLower(fileID)
-		if !scope.OwnFiles[fileID] || !strings.Contains(pg.BodyMD, "/api/public/page/"+scope.Token+"/files/"+fileID) {
+		isCover := pg.CoverURL != nil && strings.HasSuffix(*pg.CoverURL, "/files/"+fileID)
+		if !scope.OwnFiles[fileID] || !(isCover || strings.Contains(pg.BodyMD, "/api/public/page/"+scope.Token+"/files/"+fileID)) {
 			return errNoPage
 		}
 		out, err := c.Call("file.download", map[string]string{"id": fileID})

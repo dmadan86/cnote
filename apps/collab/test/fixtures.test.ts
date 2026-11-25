@@ -23,7 +23,7 @@ const BLOCKS_LANDED = true
 const blockIt = BLOCKS_LANDED ? it : it.skip
 /** Flip to true in the commit that teaches md.ts highlight, cell colour and numbered tables (C1 R1). Until then the
  * `pending: "c1"` fixtures only assert what an older converter must keep: no lost text, stable second pass. */
-const C1_LANDED = false
+const C1_LANDED = true
 const c1It = (f: Fixture) => (f.pending === 'c1' && !C1_LANDED ? it.skip : blockIt)
 
 const rt = (md: string) => {

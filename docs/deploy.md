@@ -93,6 +93,12 @@ and run `api migrate` again.
 - **Archived pages are read-only, in the gateway too.** Deploy the gateway with the API: it refuses admission to an archived page and closes
   open sockets with 4413 at the next recheck (10 seconds); the web reloads into the read-only page. No schema raise, no migration beyond 1344.
 
+## Docs C1: trash purge and retention
+
+Pages in Trash are deleted for good after the workspace's retention (30 days by default; 90, 365 or never, set by an admin in Settings). The `docs.trash_purge` sweep in the worker does it: once when the worker starts, then daily, up to 200 deletions per workspace per run, each in its own short transaction. Nothing is purged sooner than one full period after the rule took effect (`core.workspaces.trash_purge_from`; NULL disables the purge for that workspace). Pages that hold typed records, have unsaved edits, or are the source of a template are skipped.
+
+Purging cannot be undone. The only way back is a database backup, and a purged page stays in backups until they rotate. Page files are removed from object storage by the hourly file sweep after the purge commits.
+
 ## Tables public forms
 A table form is a link, `/tf/<token>`, that anyone can open and submit without signing in (`GET` and `POST`
 `/api/public/table-form/<token>` on the API). Forms take no file uploads. Settings, API:

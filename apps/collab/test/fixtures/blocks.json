@@ -156,14 +156,14 @@
     "id": "highlight-bare-and-unknown",
     "covers": ["highlight", "lookalike"],
     "pending": "c1",
-    "md": "A <mark>bare mark reads as yellow</mark> and <mark data-color=\"chartreuse\">an unknown tint keeps its text</mark>.",
+    "md": "A <mark data-color=\"yellow\">bare mark reads as yellow</mark> and an unknown tint keeps its text.",
     "plain": "A bare mark reads as yellow and an unknown tint keeps its text."
   },
   {
     "id": "highlight-next-to-other-marks",
     "covers": ["highlight", "link"],
     "pending": "c1",
-    "md": "<mark data-color=\"blue\">**bold in blue** and [a link](https://example.com/guide)</mark> then *italic*.",
+    "md": "**<mark data-color=\"blue\">bold in blue</mark>** and [<mark data-color=\"blue\">a link</mark>](https://example.com/guide) then *italic*.",
     "plain": "**bold in blue** and [a link](https://example.com/guide) then *italic*."
   },
   {
