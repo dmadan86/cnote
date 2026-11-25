@@ -9,14 +9,18 @@ import { Placeholder } from '@tiptap/extensions'
 import { Markdown } from '@tiptap/markdown'
 import { type Editor, EditorContent, useEditor } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
+import { Search } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { WebsocketProvider } from 'y-websocket'
 import * as Y from 'yjs'
 import { cmd } from '@/lib/api'
 import { CLOSE_ARCHIVED, CLOSE_RELOAD, DOC_SCHEMA } from '@/lib/doc-schema'
 import { CLOSE_DELETED } from '@/lib/docs'
+import { FindBar } from './docs/find-bar'
+import { FIND_EVENT } from './docs/page-actions'
 import { blockExtensions, ImageUpload, setGatewayMinSchema } from './editor/blocks'
 import { FileChips, FileUpload } from './editor/file-link'
+import { FindReplace } from './editor/find-replace'
 import { AlignHeading, AlignParagraph, ColorText, HtmlTable, SafeImage } from './editor/formats'
 import { InlineComments, setThreads, type Thread } from './editor/inline-comments'
 import { MentionPicker } from './editor/mention'
@@ -83,6 +87,8 @@ export function NoteEditor({
   const onDeletedRef = useRef(onDeleted)
   onDeletedRef.current = onDeleted
   const provider = useRef<WebsocketProvider>(null)
+  const editableRef = useRef(editable)
+  editableRef.current = editable
 
   useEffect(() => {
     const d = new Y.Doc()
@@ -105,9 +111,12 @@ export function NoteEditor({
         onDeletedRef.current?.()
       }
       if (e?.code === CLOSE_ARCHIVED) {
-        // Archived while open: read-only until restored. Reloading shows the archived page.
-        p.destroy()
-        window.location.reload()
+        // Archived while open: read-only until restored. Reloading shows the archived page. A page that was already read-only
+        // (opened archived) shows its stored text without a socket instead; reloading it would loop.
+        if (editableRef.current) {
+          p.destroy()
+          window.location.reload()
+        } else decide('solo')
       }
       if (e?.code === CLOSE_RELOAD) {
         // The gateway needs a newer editor than this tab runs: stop rather than save over newer content.
@@ -188,6 +197,12 @@ function Surface({
   epoch?: number
 }) {
   const { me } = useShell()
+  const [finding, setFinding] = useState<string | null>(null) // the find bar is open, seeded with this text
+  useEffect(() => {
+    const open = () => setFinding((f) => f ?? '')
+    window.addEventListener(FIND_EVENT, open)
+    return () => window.removeEventListener(FIND_EVENT, open)
+  }, [])
   // Extensions are created once; read the latest callbacks through a ref.
   const commentsRef = useRef(comments)
   commentsRef.current = comments
@@ -231,6 +246,7 @@ function Surface({
       TaskList,
       TaskItem.configure({ nested: true }),
       ...blockExtensions,
+      FindReplace,
       ImageUpload.configure({ ws, noteId: id }),
       FileUpload.configure({ ws, noteId: id }),
       FileChips,
@@ -358,7 +374,41 @@ function Surface({
   return (
     <div>
       {provider && <Presence provider={provider} selfId={me.user.id} />}
-      <div className="prose-note">
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: Ctrl/Cmd+F while focus is in the page; a read-only page needs the tabindex to hold focus */}
+      <div
+        className="prose-note"
+        tabIndex={editable ? undefined : -1}
+        onKeyDown={(e) => {
+          // A second Ctrl/Cmd+F while the bar is open goes to the browser's own find.
+          if (
+            !editor ||
+            !(e.metaKey || e.ctrlKey) ||
+            e.altKey ||
+            e.key.toLowerCase() !== 'f' ||
+            finding !== null
+          )
+            return
+          e.preventDefault()
+          const { from, to } = editor.state.selection
+          setFinding(to - from > 0 && to - from < 100 ? editor.state.doc.textBetween(from, to, ' ') : '')
+        }}
+      >
+        {editor && finding !== null && (
+          <FindBar editor={editor} editable={editable} seed={finding} onClose={() => setFinding(null)} />
+        )}
+        {editor && finding === null && (
+          <div className="flex justify-end">
+            <button
+              type="button"
+              aria-label="Find and replace"
+              title="Find and replace (Ctrl/Cmd+F)"
+              className="rounded p-1 text-muted hover:bg-hover"
+              onClick={() => setFinding('')}
+            >
+              <Search size={14} />
+            </button>
+          </div>
+        )}
         {editor && editable && <FixedToolbar editor={editor} />}
         {editor && editable && <EditorMenus editor={editor} onComment={comments?.onNew} />}
         {editor && !editable && comments && <CommentBubble editor={editor} onComment={comments.onNew} />}

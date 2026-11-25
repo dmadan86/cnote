@@ -14,6 +14,7 @@ interface Marks {
   code: boolean
   link: string | null
   color: string | null
+  highlight: string | null
   status: string | null
   date: string | null
 }
@@ -24,6 +25,7 @@ interface Cell {
   colspan: number
   rowspan: number
   colwidth: number[] | null
+  background: string | null
   paras: Inl[]
 }
 interface Item {
@@ -41,7 +43,7 @@ type Block =
   | { k: 'code'; lang: string | null; code: string }
   | { k: 'quote'; paras: Inl[] }
   | { k: 'list'; ordered: boolean; items: Item[] }
-  | { k: 'table'; rows: Cell[][] }
+  | { k: 'table'; rows: Cell[][]; numbered: boolean }
   | { k: 'tasks'; items: TaskEntry[] }
   | { k: 'image'; src: string; alt: string; title: string | null }
   | { k: 'panel'; kind: string; blocks: Block[] }
@@ -50,6 +52,8 @@ type Block =
 
 // docs-parity 5.1: the fixed lists every converter validates against.
 const STATUS_COLORS = ['grey', 'blue', 'green', 'yellow', 'red', 'purple']
+// docs-parity C1 13.6: the seven highlight and cell tints.
+const TINTS = ['yellow', 'green', 'blue', 'purple', 'red', 'orange', 'grey']
 const PANEL_KINDS = ['info', 'note', 'success', 'warning', 'error']
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 
@@ -60,6 +64,7 @@ const defMarks = (): Marks => ({
   code: false,
   link: null,
   color: null,
+  highlight: null,
   status: null,
   date: null,
 })
@@ -70,6 +75,7 @@ const marksEq = (a: Marks, b: Marks) =>
   a.code === b.code &&
   a.link === b.link &&
   a.color === b.color &&
+  a.highlight === b.highlight &&
   a.status === b.status &&
   a.date === b.date
 
@@ -131,14 +137,16 @@ const i64 = (s: string): number | null => {
 
 const esc = (s: string) =>
   s.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;')
+const ENTITY: Record<string, string> = { lt: '<', gt: '>', quot: '"', apos: "'", amp: '&' }
+/** One pass, so `&amp;lt;` is `&lt;` and never `<`. */
 const unesc = (s: string) =>
-  s
-    .replaceAll('&lt;', '<')
-    .replaceAll('&gt;', '>')
-    .replaceAll('&quot;', '"')
-    .replaceAll('&#39;', "'")
-    .replaceAll('&apos;', "'")
-    .replaceAll('&amp;', '&')
+  s.replace(/&(?:#(\d+)|(lt|gt|quot|apos|amp));/g, (entity, n?: string, name?: string) => {
+    if (name !== undefined) return ENTITY[name]
+    const code = Number(n)
+    return code > 0 && code <= 0x10ffff && !(code >= 0xd800 && code <= 0xdfff)
+      ? String.fromCodePoint(code)
+      : entity
+  })
 
 interface Tag {
   name: string
@@ -231,6 +239,12 @@ function styleColor(style: string): string | null {
   return p === null ? null : normColor(p)
 }
 
+/** A bare mark reads as yellow; an unknown tint keeps its text and no tint. */
+const tintOf = (t: Tag): string | null => {
+  const c = attrOf(t, 'data-color')
+  return c === null ? 'yellow' : TINTS.includes(c) ? c : null
+}
+
 function safeHref(h0: string): boolean {
   const h = lower(trim(h0))
   if (/[\u0000-\u001f\u007f-\u009f]/.test(h)) return false
@@ -314,6 +328,9 @@ function htmlInline(s: string): Inl | null {
             m.date = DATE_RE.test(dt) ? dt : m.date
             break
           }
+          case 'mark':
+            m.highlight = tintOf(t)
+            break
           default:
             return null
         }
@@ -387,7 +404,7 @@ function construct(rest: string, prev: string | undefined, m: Marks, br: boolean
       if (e < 0) return null
       const code = rest.slice(1, e)
       if (code === '') return null
-      return [e + 1, [{ t: 'text', s: code, m: { ...m, code: true, color: null } }]]
+      return [e + 1, [{ t: 'text', s: code, m: { ...m, code: true, color: null, highlight: null } }]]
     }
     case '*':
     case '_':
@@ -422,6 +439,17 @@ function construct(rest: string, prev: string | undefined, m: Marks, br: boolean
       const t = tagAt(rest)
       if (!t) return null
       if (t.name === 'br' && br && !t.closing) return [t.len, [{ t: 'br' }]]
+      if (t.name === 'mark' && !t.closing) {
+        const e = closeTag(rest, 'mark', t.len)
+        if (e < 0) return null
+        const inner = rest.slice(t.len, e)
+        const mm = { ...m, highlight: tintOf(t) }
+        // The editors store highlighted text as HTML entities, never raw Markdown punctuation or tags, so such text is read as
+        // HTML. Anything with raw punctuation (older or hand-written pages) keeps the Markdown reading.
+        if (!/[<\\*_`~[\]]/.test(inner))
+          return [e + 7, inner === '' ? [] : [{ t: 'text', s: unesc(inner), m: mm }]]
+        return [e + 7, mdInline(inner, mm, br)]
+      }
       if ((t.name === 'span' || t.name === 'time') && !t.closing) {
         const ds = t.name === 'span' ? attrOf(t, 'data-status') : attrOf(t, 'datetime')
         if (ds !== null) {
@@ -613,6 +641,7 @@ function image(line: string): Block | null {
 }
 
 function parseCell(t: Tag, body: string): Cell | null {
+  const bg = attrOf(t, 'data-bg')
   const n = (k: string) => {
     const v = attrOf(t, k)
     const x = v === null ? null : i64(trim(v))
@@ -645,10 +674,17 @@ function parseCell(t: Tag, body: string): Cell | null {
       break
     }
   }
-  return { header: t.name === 'th', colspan: n('colspan'), rowspan: n('rowspan'), colwidth, paras }
+  return {
+    header: t.name === 'th',
+    colspan: n('colspan'),
+    rowspan: n('rowspan'),
+    colwidth,
+    background: bg !== null && TINTS.includes(bg) ? bg : null,
+    paras,
+  }
 }
 
-function tableBlock(s: string, pos0: number): Block | null {
+function tableBlock(s: string, pos0: number, numbered: boolean): Block | null {
   const lc = lower(s)
   let pos = pos0
   const rows: Cell[][] = []
@@ -677,7 +713,7 @@ function tableBlock(s: string, pos0: number): Block | null {
     } else if (key === 'table' && t.closing) break
     else return null
   }
-  return trim(s.slice(pos)) === '' && rows.length > 0 && cur === null ? { k: 'table', rows } : null
+  return trim(s.slice(pos)) === '' && rows.length > 0 && cur === null ? { k: 'table', rows, numbered } : null
 }
 
 function htmlAt(lines: string[], i: number): [Block, number] | null {
@@ -704,7 +740,8 @@ function htmlAt(lines: string[], i: number): [Block, number] | null {
   const lc = lower(s)
   if (t.closing) return null
   if (t.name === 'table') {
-    const b = tableBlock(s, t.len)
+    const dn = attrOf(t, 'data-numbered')
+    const b = tableBlock(s, t.len, dn !== null && lower(dn) !== 'false')
     return b ? [b, used] : null
   }
   let level: number
@@ -827,9 +864,11 @@ function parse(text: string): Block[] {
             colspan: 1,
             rowspan: 1,
             colwidth: null,
+            background: null,
             paras: [mdInline(row[c] ?? '', defMarks(), true)],
           })),
         ),
+        numbered: false,
       })
     } else if (task(line)) {
       blocks.push(
@@ -883,7 +922,12 @@ function markAttrs(m: Marks): Record<string, unknown> {
   if (m.strike) a.strike = {}
   if (m.code) a.code = {}
   if (m.link !== null) a.link = { href: m.link }
-  if (m.color !== null) a.textStyle = { color: m.color }
+  if (m.color !== null || m.highlight !== null) {
+    const ts: Record<string, string> = {}
+    if (m.color !== null) ts.color = m.color
+    if (m.highlight !== null) ts.highlight = m.highlight
+    a.textStyle = ts
+  }
   if (m.status !== null) a.status = { color: m.status }
   if (m.date !== null) a.date = { datetime: m.date }
   return a
@@ -964,6 +1008,7 @@ function writeBlock(parent: Parent, b: Block) {
     case 'table': {
       const table = new Y.XmlElement('table')
       parent.push([table])
+      if (b.numbered) table.setAttribute('numbered', true as never)
       for (const row of b.rows) {
         const tr = new Y.XmlElement('tableRow')
         table.push([tr])
@@ -973,6 +1018,7 @@ function writeBlock(parent: Parent, b: Block) {
           if (c.colspan > 1) cell.setAttribute('colspan', c.colspan as never)
           if (c.rowspan > 1) cell.setAttribute('rowspan', c.rowspan as never)
           if (c.colwidth) cell.setAttribute('colwidth', c.colwidth as never)
+          if (c.background) cell.setAttribute('background', c.background)
           for (const p of c.paras) textEl(cell, 'paragraph', p)
           if (c.paras.length === 0) textEl(cell, 'paragraph', [])
         }
@@ -1024,6 +1070,11 @@ function color(a: Attrs): string | null {
   const ts = a.textStyle
   return isObj(ts) && typeof ts.color === 'string' ? normColor(ts.color) : null
 }
+function highlight(a: Attrs): string | null {
+  const ts = a.textStyle
+  return isObj(ts) && typeof ts.highlight === 'string' && TINTS.includes(ts.highlight) ? ts.highlight : null
+}
+const markTag = (h: string, inner: string) => `<mark data-color="${h}">${inner}</mark>`
 function linkHref(a: Attrs): string | null {
   const l = a.link
   return isObj(l) && typeof l.href === 'string' && safeHref(l.href) ? l.href : null
@@ -1066,11 +1117,13 @@ function mark(text: string, a: Attrs | undefined, mode: Mode, literal = false): 
   const code = has('code')
   if (mode === 'md' && !code && !literal) text = tocEscape(text)
   let col = color(a)
-  if (code) col = null
+  let hl = highlight(a)
+  if (code) col = hl = null
   if (mode === 'plain') return esc(text)
   if (mode === 'html') {
     let s = esc(text)
     if (col !== null) s = span(col, s)
+    if (hl !== null) s = markTag(hl, s)
     for (const [on, tag] of [
       [code, 'code'],
       [has('strike'), 's'],
@@ -1085,7 +1138,13 @@ function mark(text: string, a: Attrs | undefined, mode: Mode, literal = false): 
   if (inner === '') return text
   const lead = text.slice(0, text.length - trimStart(text).length)
   const trail = text.slice(trimEnd(text).length)
-  let s = col !== null ? span(col, esc(mdEscape(inner))) : inner
+  let s =
+    col !== null
+      ? span(col, esc(mdEscape(inner)))
+      : hl !== null
+        ? esc(inner).replace(/[\\*_`~[\]]/g, (c) => `&#${c.charCodeAt(0)};`)
+        : inner
+  if (hl !== null) s = markTag(hl, s)
   if (code) s = `\`${s}\``
   if (has('italic') || has('em')) s = `*${s}*`
   if (has('bold') || has('strong')) s = `**${s}**`
@@ -1190,16 +1249,19 @@ function render(node: unknown, top: boolean): string | null {
     return lines.join('\n')
   }
   if (tag === 'table')
-    return cells(el)
-      .flat()
-      .some((c) => c[2][0] !== 1 || c[2][1] !== 1 || c[2][2] !== null)
+    return isNumbered(el) ||
+      cells(el)
+        .flat()
+        .some((c) => c[2][0] !== 1 || c[2][1] !== 1 || c[2][2] !== null || c[2][3] !== null)
       ? tableHtml(el)
       : tableMd(el)
   if (tag === 'horizontalRule') return '---'
   return trim(inline(el, 'md'))
 }
 
-type CellAttrs = [number, number, number[] | null]
+type CellAttrs = [number, number, number[] | null, string | null]
+
+const tintAttr = (v: unknown) => (typeof v === 'string' && TINTS.includes(v) ? v : null)
 
 /** Every cell as [element, is-header, [colspan, rowspan, colwidth]], row by row. */
 export function cells(table: Y.XmlElement): [Y.XmlElement, boolean, CellAttrs][][] {
@@ -1222,23 +1284,33 @@ export function cells(table: Y.XmlElement): [Y.XmlElement, boolean, CellAttrs][]
         })
         if (w.every((x) => x !== null) && w.length) width = w as number[]
       }
-      row.push([cell, cell.nodeName === 'tableHeader', [span('colspan'), span('rowspan'), width]])
+      row.push([
+        cell,
+        cell.nodeName === 'tableHeader',
+        [span('colspan'), span('rowspan'), width, tintAttr(cell.getAttribute('background'))],
+      ])
     }
     rows.push(row)
   }
   return rows
 }
 
+const isNumbered = (t: Y.XmlElement) => {
+  const v = t.getAttribute('numbered') as unknown
+  return v === true || v === 'true'
+}
+
 function tableHtml(table: Y.XmlElement): string {
-  let out = '<table>'
+  let out = isNumbered(table) ? '<table data-numbered="true">' : '<table>'
   for (const row of cells(table)) {
     out += '<tr>'
-    for (const [cell, header, [cs, rs, w]] of row) {
+    for (const [cell, header, [cs, rs, w, bg]] of row) {
       const tag = header ? 'th' : 'td'
       out += `<${tag}`
       if (cs > 1) out += ` colspan="${cs}"`
       if (rs > 1) out += ` rowspan="${rs}"`
       if (w) out += ` colwidth="${w.join(',')}"`
+      if (bg) out += ` data-bg="${bg}"`
       out += '>'
       let any = false
       for (const p of cell.toArray()) {

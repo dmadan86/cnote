@@ -16,13 +16,16 @@ import {
   ChevronUp,
   GripHorizontal,
   GripVertical,
+  Hash,
   Heading,
+  Paintbrush,
   TableCellsMerge,
   TableCellsSplit,
   Trash2,
   X,
 } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { TINTS } from './html-inline'
 
 const pop = 'rounded-lg border border-line bg-canvas p-1 text-fg shadow-xl'
 const item = 'flex w-full items-center gap-2.5 rounded px-2 py-1.5 text-left text-[13px] hover:bg-hover'
@@ -207,6 +210,67 @@ function Menu({
   )
 }
 
+/** The seven cell tints and "None", applied to the selected cells; Escape closes, the arrow keys walk the swatches. */
+function CellTints({ editor, onClose }: { editor: Editor; onClose: () => void }) {
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    ref.current?.querySelector('button')?.focus()
+    const down = (e: MouseEvent) => !ref.current?.contains(e.target as Node) && onClose()
+    document.addEventListener('mousedown', down)
+    return () => document.removeEventListener('mousedown', down)
+  }, [onClose])
+  const at = locate(editor)
+  const cur = (at && at.cellPos >= 0 ? editor.state.doc.nodeAt(at.cellPos)?.attrs.background : null) ?? null
+  const pick = (t: string | null) => {
+    onClose()
+    editor.chain().focus().setCellAttribute('background', t).run()
+  }
+  return (
+    <div
+      ref={ref}
+      role="dialog"
+      aria-label="Cell colour"
+      className={`absolute bottom-full left-0 z-50 mb-1 flex flex-wrap gap-0.5 ${pop}`}
+      onKeyDown={(e) => {
+        if (e.key === 'Escape') {
+          e.preventDefault()
+          onClose()
+          editor.commands.focus()
+        } else if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+          e.preventDefault()
+          const all = [...(ref.current?.querySelectorAll('button') ?? [])]
+          const i = all.indexOf(document.activeElement as HTMLButtonElement)
+          all[(i + (e.key === 'ArrowRight' ? 1 : all.length - 1)) % all.length]?.focus()
+        }
+      }}
+    >
+      {TINTS.map((t) => (
+        <button
+          key={t}
+          type="button"
+          aria-label={`Cell colour ${t}`}
+          title={t}
+          aria-pressed={cur === t}
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => pick(t)}
+          className="grid size-7 place-items-center rounded hover:bg-hover focus:bg-hover focus:outline-none aria-pressed:ring-2 aria-pressed:ring-accent"
+        >
+          <span className="cn-swatch" data-tint={t} />
+        </button>
+      ))}
+      <button
+        type="button"
+        aria-label="No cell colour"
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => pick(null)}
+        className="grid h-7 place-items-center rounded px-1.5 text-[11px] hover:bg-hover focus:bg-hover focus:outline-none"
+      >
+        None
+      </button>
+    </div>
+  )
+}
+
 const grip =
   'fixed z-40 grid place-items-center rounded border border-line bg-canvas text-muted shadow-sm hover:bg-hover hover:text-fg aria-expanded:bg-accent aria-expanded:text-white'
 
@@ -214,8 +278,8 @@ const grip =
 export function TableControls({ editor }: { editor: Editor }) {
   const keepOpen = useRef(false)
   const [r, refresh] = useTableRects(editor, keepOpen)
-  const [open, setOpenState] = useState<'col' | 'row' | null>(null)
-  const setOpen = (o: 'col' | 'row' | null) => {
+  const [open, setOpenState] = useState<'col' | 'row' | 'tint' | null>(null)
+  const setOpen = (o: 'col' | 'row' | 'tint' | null) => {
     keepOpen.current = o !== null
     setOpenState(o)
   }
@@ -301,25 +365,55 @@ export function TableControls({ editor }: { editor: Editor }) {
       <div
         role="toolbar"
         aria-label="Table"
-        style={{ left: r.table.left + r.table.width / 2, top: r.table.bottom + 8 }}
-        className={`fixed z-40 flex -translate-x-1/2 items-center gap-0.5 ${pop}`}
+        style={{
+          left: window.innerWidth < 640 ? '50%' : r.table.left + r.table.width / 2,
+          // a tall table's bottom edge is off screen: keep the toolbar reachable at the bottom of the viewport
+          top: Math.min(r.table.bottom + 8, window.innerHeight - 52),
+        }}
+        className={`fixed z-40 flex w-max max-w-[calc(100vw-1rem)] -translate-x-1/2 flex-wrap items-center justify-center gap-0.5 ${pop}`}
       >
         <button
           type="button"
           aria-pressed={r.header}
           onMouseDown={keep}
           onClick={() => c().toggleHeaderRow().run()}
-          className={`${item} w-auto aria-pressed:text-accent`}
+          className={`${item} !w-auto aria-pressed:text-accent`}
         >
           <Heading size={15} /> Header row
         </button>
+        <button
+          type="button"
+          aria-pressed={at?.table.attrs.numbered === true}
+          onMouseDown={keep}
+          onClick={() =>
+            c()
+              .updateAttributes('table', { numbered: at?.table.attrs.numbered !== true })
+              .run()
+          }
+          className={`${item} !w-auto aria-pressed:text-accent`}
+        >
+          <Hash size={15} /> Numbered
+        </button>
+        <div className="relative">
+          <button
+            type="button"
+            aria-haspopup="dialog"
+            aria-expanded={open === 'tint'}
+            onMouseDown={keep}
+            onClick={() => setOpen(open === 'tint' ? null : 'tint')}
+            className={`${item} !w-auto`}
+          >
+            <Paintbrush size={15} /> Cell colour
+          </button>
+          {open === 'tint' && <CellTints editor={editor} onClose={close} />}
+        </div>
         <span className="mx-0.5 h-5 w-px bg-line" />
         <button
           type="button"
           disabled={!editor.can().mergeCells()}
           onMouseDown={keep}
           onClick={() => c().mergeCells().run()}
-          className={`${item} w-auto disabled:opacity-40 disabled:hover:bg-transparent`}
+          className={`${item} !w-auto disabled:opacity-40 disabled:hover:bg-transparent`}
         >
           <TableCellsMerge size={15} /> Merge cells
         </button>
@@ -328,7 +422,7 @@ export function TableControls({ editor }: { editor: Editor }) {
           disabled={!editor.can().splitCell()}
           onMouseDown={keep}
           onClick={() => c().splitCell().run()}
-          className={`${item} w-auto disabled:opacity-40 disabled:hover:bg-transparent`}
+          className={`${item} !w-auto disabled:opacity-40 disabled:hover:bg-transparent`}
         >
           <TableCellsSplit size={15} /> Split cell
         </button>
@@ -337,7 +431,7 @@ export function TableControls({ editor }: { editor: Editor }) {
           type="button"
           onMouseDown={keep}
           onClick={() => c().deleteTable().run()}
-          className={`${item} w-auto text-red-600`}
+          className={`${item} !w-auto text-red-600`}
         >
           <Trash2 size={15} /> Delete table
         </button>

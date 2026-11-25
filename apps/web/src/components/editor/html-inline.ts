@@ -16,6 +16,14 @@ export function hex(c: string): string | null {
   return /^#[0-9a-f]{6}$/.test(t) ? t : null
 }
 
+/** docs-parity C1: the seven highlight and cell tints. Anything else keeps its text and drops the tint. */
+export const TINTS = ['yellow', 'green', 'blue', 'purple', 'red', 'orange', 'grey'] as const
+export const tintOf = (v: unknown): string | null =>
+  typeof v === 'string' && (TINTS as readonly string[]).includes(v) ? v : null
+/** Text inside <mark> is stored HTML-escaped with markdown punctuation as numeric entities: a backslash escape would be read back as literal text. Same rule as the gateway. */
+export const hlEsc = (s: string) => esc(s).replace(/[\\*_`~[\]]/g, (c) => `&#${c.charCodeAt(0)};`)
+export const markTag = (tint: string, inner: string) => `<mark data-color="${tint}">${inner}</mark>`
+
 export const span = (color: string, inner: string) => {
   const h = hex(color)
   return h ? `<span style="color: ${h}">${inner}</span>` : inner
@@ -45,17 +53,30 @@ const WRAP: [string, (a: Record<string, string>, s: string) => string][] = [
   ['italic', (_, s) => `<em>${s}</em>`],
   ['strike', (_, s) => `<s>${s}</s>`],
   ['code', (_, s) => `<code>${s}</code>`],
-  ['textStyle', (a, s) => (a.color ? span(a.color, s) : s)],
+  [
+    'textStyle',
+    (a, s) => {
+      const t = tintOf(a.highlight)
+      const c = a.color ? span(a.color, s) : s
+      return t ? markTag(t, c) : c
+    },
+  ],
 ]
 
 export function inlineHtml(content: JSONContent[] = []): string {
   return content
     .map((n) => {
       if (n.type === 'hardBreak') return '<br>'
-      let out = esc(n.text ?? '')
+      const ts = n.marks?.find((x) => x.type === 'textStyle')
+      const hl = !!tintOf(ts?.attrs?.highlight) && !n.marks?.some((x) => x.type === 'code')
+      let out = hl ? hlEsc(n.text ?? '') : esc(n.text ?? '')
       for (const [name, wrap] of [...WRAP].reverse()) {
         const m = n.marks?.find((x) => x.type === name)
-        if (m) out = wrap((m.attrs ?? {}) as Record<string, string>, out)
+        if (!m) continue
+        const attrs = (m.attrs ?? {}) as Record<string, string>
+        // a highlight inside inline code is left out (same as the gateway)
+        const code = name === 'textStyle' && n.marks?.some((x) => x.type === 'code')
+        out = wrap(code ? { ...attrs, highlight: '' } : attrs, out)
       }
       return out
     })

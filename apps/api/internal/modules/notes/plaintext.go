@@ -2,6 +2,7 @@ package notes
 
 import (
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/cnote/api/internal/command"
@@ -10,7 +11,7 @@ import (
 // PlainText turns stored page Markdown into the text that search snippets and AI context should show
 // (docs-parity 7.4). It removes only the markers of the editor's HTML subset and block forms, so older pages are
 // unchanged apart from tags: panel marker lines ([!INFO] ...) and quote prefixes, <details> and <summary> tags
-// (the title and the body are kept), a line holding only [[toc]], <span data-status> and <time> wrappers, HTML table
+// (the title and the body are kept), a line holding only [[toc]], <span data-status>, <mark> and <time> wrappers, HTML table
 // tags, and ![alt](url) becomes alt. Code fences keep their lines verbatim (fence lines go) and so do code spans. Other
 // Markdown (headings, **bold**, links, pipe tables) is left alone. Lines are trimmed, blanks dropped, joined by "\n".
 //
@@ -64,7 +65,7 @@ func PlainText(md string) string {
 var (
 	panelMarker = regexp.MustCompile(`(?i)^\[!(info|note|success|warning|error)\]$`)
 	summaryLine = regexp.MustCompile(`^<details>\s*<summary>(.*)</summary>$`)
-	tagRe       = regexp.MustCompile(`</?(details|summary|span|time|a|table|thead|tbody|tr|th|td|p|br)(\s[^>]*)?/?>`)
+	tagRe       = regexp.MustCompile(`</?(details|summary|span|time|a|table|thead|tbody|tr|th|td|p|br|mark)(\s[^>]*)?/?>`)
 	cellEnd     = regexp.MustCompile(`</(td|th|tr|p|summary)>|<br\s*/?>`)
 	// ![alt](src "title"): alt and title may hold backslash escapes (\] \[ \\ \"), which the editor writes.
 	imageRe  = regexp.MustCompile(`!\[((?:\\.|[^\]\\])*)\]\([^)\s]*(?:\s+"(?:\\.|[^"\\])*")?\)`)
@@ -93,9 +94,22 @@ func stripMarkup(line string) string {
 	return strings.Join(parts, "`")
 }
 
-var htmlEntities = strings.NewReplacer("&lt;", "<", "&gt;", ">", "&quot;", `"`, "&#39;", "'", "&amp;", "&")
+var htmlEntities = strings.NewReplacer("&lt;", "<", "&gt;", ">", "&quot;", `"`, "&amp;", "&")
+var numericEntity = regexp.MustCompile(`&amp;|&#(\d{1,7});|&(?:lt|gt|quot);`)
 
-func unescapeHTML(s string) string { return htmlEntities.Replace(s) }
+// unescapeHTML decodes in one pass, so "&amp;#42;" stays "&#42;". Numeric entities are how the editor writes markdown
+// punctuation inside <mark>.
+func unescapeHTML(s string) string {
+	return numericEntity.ReplaceAllStringFunc(s, func(m string) string {
+		if sub := numericEntity.FindStringSubmatch(m); sub[1] != "" {
+			if n, _ := strconv.Atoi(sub[1]); n > 0 && n <= 0x10ffff && !(n >= 0xd800 && n <= 0xdfff) {
+				return string(rune(n))
+			}
+			return m
+		}
+		return htmlEntities.Replace(m)
+	})
+}
 
 // Snippets returns a ts_headline excerpt of PlainText(body) for each body, in order. Search queries select the
 // page body in the snippet column and pass the column through here, so panels, expands and status wrappers never

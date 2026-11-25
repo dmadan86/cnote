@@ -1,28 +1,48 @@
 'use client'
 import { MoreHorizontal } from 'lucide-react'
 import { usePathname, useRouter } from 'next/navigation'
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
-import type { Note } from '@/lib/api'
-import { noteDelete, noteDuplicate, noteMove, noteReorder, TREE_EVENT } from '@/lib/docs'
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
+import {
+  noteDelete,
+  noteDuplicate,
+  noteMove,
+  noteReorder,
+  TREE_EVENT,
+  type TreeRow,
+  treeLevel,
+} from '@/lib/docs'
 import { useShell } from '../shell'
 import { btn, ErrorText, Modal } from '../ui'
 import { MoveDialog } from './move-dialog'
-import { buildKids, kidKey, liveParent, subtreeIds } from './tree-model'
+import { countSubtree } from './tree-loader'
+import { kidKey, liveParent, parentOfKey, subtreeIds } from './tree-model'
+
+/** Asks the open page's editor to show its find bar. */
+export const FIND_EVENT = 'cnote:find'
+
+/** What the page menu needs of a page: a tree row, or the open page's note. */
+export type PageRef = {
+  id: string
+  space_id: string
+  parent_id: string | null
+  title: string
+  types?: string[]
+}
 
 /** Shown verbatim when a delete could not fold unsaved edits; the dialog offers a retry (docs-parity 7.10 item 4). */
 export const SAVE_FAILED = "Couldn't save the latest edits. Try again."
 
 type Actions = {
-  kids: Map<string, Note[]>
-  byId: Map<string, Note>
+  kids: Map<string, TreeRow[]>
+  byId: Map<string, TreeRow>
   /** The one tree row in the tab order (roving tabindex). */
   tabStop: string | null
   setTabStop: (id: string) => void
-  openMenu: (n: Note, at: { x: number; y: number }, back?: HTMLElement | null) => void
+  openMenu: (n: PageRef, at: { x: number; y: number }, back?: HTMLElement | null) => void
   /** Reorder among siblings by one (Alt+Up, Alt+Down, menu). */
-  step: (n: Note, dir: -1 | 1) => Promise<void>
+  step: (n: PageRef, dir: -1 | 1) => Promise<void>
   /** Move to a parent (null = space root) before a sibling (null = last); throws the API error. */
-  place: (n: Note, parent: string | null, before: string | null) => Promise<void>
+  place: (n: PageRef, parent: string | null, before: string | null) => Promise<void>
   announce: (msg: string) => void
 }
 const Ctx = createContext<Actions | null>(null)
@@ -38,17 +58,16 @@ const item =
 
 /** Move, delete and duplicate for the tree rows and the page header, with one menu, two dialogs and one announcer. */
 export function TreeActionsProvider({ children }: { children: React.ReactNode }) {
-  const { ws, notes, spaces, reload } = useShell()
+  const { ws, tree, spaces } = useShell()
+  const { kids, byId, refresh } = tree
   const router = useRouter()
   const path = usePathname()
-  const kids = useMemo(() => buildKids(notes), [notes])
-  const byId = useMemo(() => new Map(notes.map((n) => [n.id, n])), [notes])
   const cur = path.match(/\/n\/([^/?]+)/)?.[1]
   const first = spaces.map((s) => kids.get(kidKey(s.id, null))?.[0]?.id).find(Boolean) ?? null
   const [msg, setMsg] = useState('')
   const [tab, setTab] = useState<string | null>(null)
-  const [menu, setMenu] = useState<{ n: Note; x: number; y: number } | null>(null)
-  const [dlg, setDlg] = useState<{ kind: 'move' | 'delete'; n: Note } | null>(null)
+  const [menu, setMenu] = useState<{ n: PageRef; x: number; y: number } | null>(null)
+  const [dlg, setDlg] = useState<{ kind: 'move' | 'delete'; n: PageRef } | null>(null)
   const stop = tab && byId.has(tab) ? tab : cur && byId.has(cur) ? cur : first
   const back = useRef<HTMLElement | null>(null)
   const refocus = useRef<string | null>(null)
@@ -62,9 +81,9 @@ export function TreeActionsProvider({ children }: { children: React.ReactNode })
     return () => clearTimeout(t)
   }, [msg])
   useEffect(() => {
-    window.addEventListener(TREE_EVENT, reload)
-    return () => window.removeEventListener(TREE_EVENT, reload)
-  }, [reload])
+    window.addEventListener(TREE_EVENT, refresh)
+    return () => window.removeEventListener(TREE_EVENT, refresh)
+  }, [refresh])
   // biome-ignore lint/correctness/useExhaustiveDependencies: restore focus after the tree re-rendered
   useEffect(() => {
     const id = refocus.current
@@ -74,7 +93,7 @@ export function TreeActionsProvider({ children }: { children: React.ReactNode })
   }, [kids])
 
   const place = useCallback(
-    async (n: Note, parent: string | null, before: string | null) => {
+    async (n: PageRef, parent: string | null, before: string | null) => {
       if (parent === (n.parent_id ?? null)) await noteReorder(ws, n.id, before)
       else await noteMove(ws, n.id, parent, before)
       const to = parent
@@ -87,24 +106,36 @@ export function TreeActionsProvider({ children }: { children: React.ReactNode })
     [ws, byId, spaces, announce],
   )
   const step = useCallback(
-    async (n: Note, dir: -1 | 1) => {
-      const sibs = kids.get(kidKey(n.space_id, liveParent(n, byId))) ?? []
-      const i = sibs.findIndex((s) => s.id === n.id)
+    async (n: PageRef, dir: -1 | 1) => {
+      const key = tree.keyOf.get(n.id) ?? kidKey(n.space_id, liveParent(n, byId))
+      const parent = parentOfKey(key)
+      // A level can be longer than what is loaded: ask for the neighbours past the loaded rows before deciding.
+      let sibs = kids.get(key) ?? []
+      let i = sibs.findIndex((s) => s.id === n.id)
+      if (i < 0) return announce(`${name(n)} is not in the tree yet.`)
+      if (dir > 0 && i + 2 >= sibs.length)
+        sibs = [...sibs, ...(await tree.peek(n.space_id, parent, 'next', i + 3 - sibs.length))]
+      if (dir < 0 && i === 0) {
+        const before = await tree.peek(n.space_id, parent, 'prev', 1)
+        sibs = [...before, ...sibs]
+        i = before.length
+      }
       const j = i + dir
-      if (i < 0 || j < 0 || j >= sibs.length)
-        return announce(`${name(n)} is already ${dir < 0 ? 'first' : 'last'}.`)
+      if (j < 0 || j >= sibs.length) return announce(`${name(n)} is already ${dir < 0 ? 'first' : 'last'}.`)
       try {
         await noteReorder(ws, n.id, dir < 0 ? sibs[i - 1].id : (sibs[i + 2]?.id ?? null))
-        announce(`Moved ${name(n)} ${dir < 0 ? 'up' : 'down'}. Position ${j + 1} of ${sibs.length}.`)
+        announce(
+          `Moved ${name(n)} ${dir < 0 ? 'up' : 'down'}.${tree.levels.get(key)?.next || tree.levels.get(key)?.prev ? '' : ` Position ${j + 1} of ${sibs.length}.`}`,
+        )
         refocus.current = n.id
         tell()
       } catch (e) {
         announce((e as Error).message)
       }
     },
-    [kids, byId, ws, announce],
+    [kids, byId, tree, ws, announce],
   )
-  const duplicate = async (n: Note) => {
+  const duplicate = async (n: PageRef) => {
     try {
       const r = await noteDuplicate(ws, n.id)
       announce(`Created ${r.title}.`)
@@ -114,7 +145,7 @@ export function TreeActionsProvider({ children }: { children: React.ReactNode })
       announce((e as Error).message)
     }
   }
-  const copyLink = async (n: Note) => {
+  const copyLink = async (n: PageRef) => {
     try {
       await navigator.clipboard.writeText(`${location.origin}/w/${ws}/n/${n.id}`)
       announce('Link copied.')
@@ -193,7 +224,7 @@ export function TreeActionsProvider({ children }: { children: React.ReactNode })
           <button type="button" role="menuitem" className={item} onClick={run(() => step(menu.n, 1))}>
             Move down
           </button>
-          {menu.n.types.length === 0 && (
+          {!menu.n.types?.length && (
             <button type="button" role="menuitem" className={item} onClick={run(() => duplicate(menu.n))}>
               Duplicate
             </button>
@@ -201,6 +232,16 @@ export function TreeActionsProvider({ children }: { children: React.ReactNode })
           <button type="button" role="menuitem" className={item} onClick={run(() => copyLink(menu.n))}>
             Copy link
           </button>
+          {path.endsWith(`/n/${menu.n.id}`) && (
+            <button
+              type="button"
+              role="menuitem"
+              className={item}
+              onClick={run(() => window.dispatchEvent(new Event(FIND_EVENT)))}
+            >
+              Find and replace
+            </button>
+          )}
           <button
             type="button"
             role="menuitem"
@@ -215,7 +256,7 @@ export function TreeActionsProvider({ children }: { children: React.ReactNode })
       {dlg?.kind === 'delete' && (
         <DeleteDialog
           note={dlg.n}
-          count={subtreeIds(kids, dlg.n.id).size}
+          hasKids={byId.get(dlg.n.id)?.has_children ?? true}
           onClose={() => setDlg(null)}
           onDone={(count, title) => {
             setDlg(null)
@@ -245,37 +286,47 @@ export function TreeActionsProvider({ children }: { children: React.ReactNode })
 
 function DeleteDialog({
   note,
-  count,
+  hasKids,
   onClose,
   onDone,
 }: {
-  note: Note
-  count: number
+  note: PageRef
+  hasKids: boolean
   onClose: () => void
   onDone: (count: number, title: string) => void
 }) {
   const { ws } = useShell()
   const [err, setErr] = useState<string>()
   const [busy, setBusy] = useState(false)
+  const [count, setCount] = useState<{ total: number; exact: boolean }>()
+  useEffect(() => {
+    if (!hasKids) return setCount({ total: 1, exact: true })
+    countSubtree(ws, note.space_id, note.id)
+      .then(setCount)
+      .catch(() => setCount({ total: 2, exact: false }))
+  }, [ws, note.id, note.space_id, hasKids])
   const retry = err === SAVE_FAILED
   async function go() {
     setBusy(true)
     setErr(undefined)
     try {
       const r = await noteDelete(ws, note.id)
-      onDone(r.count ?? count, name(note))
+      onDone(r.count ?? count?.total ?? 1, name(note))
     } catch (e) {
       setErr((e as Error).message)
       setBusy(false)
     }
   }
+  const one = !hasKids
   return (
     <Modal open onClose={onClose} title="Delete page">
       <p className="mb-3 text-[13px]">
-        {count === 1
+        {one
           ? `Move "${name(note)}" to Trash?`
-          : `Move "${name(note)}" and its ${count - 1} ${count === 2 ? 'sub-page' : 'sub-pages'} to Trash? That is ${count} pages in all.`}{' '}
-        You can restore {count === 1 ? 'it' : 'them'} from Trash.
+          : count?.exact
+            ? `Move "${name(note)}" and its ${count.total - 1} ${count.total === 2 ? 'sub-page' : 'sub-pages'} to Trash? That is ${count.total} pages in all.`
+            : `Move "${name(note)}" and all its sub-pages to Trash?`}{' '}
+        You can restore {one ? 'it' : 'them'} from Trash.
       </p>
       <ErrorText error={err} />
       <div className="mt-3 flex justify-end gap-2">
@@ -291,7 +342,7 @@ function DeleteDialog({
 }
 
 /** The page header's "Page actions" button: opens the same menu as a tree row. */
-export function PageMenuButton({ note }: { note: Note }) {
+export function PageMenuButton({ note }: { note: PageRef }) {
   const { openMenu } = useTreeActions()
   return (
     <button

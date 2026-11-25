@@ -307,7 +307,7 @@ func TestPublicBodyHasNothingBeyondThePage(t *testing.T) {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
-	if strings.Join(keys, ",") != "body_md,icon,title,updated_on,wide,workspace_name" {
+	if strings.Join(keys, ",") != "body_md,cover_url,cover_y,icon,title,updated_on,wide,workspace_name" {
 		t.Fatalf("PublicPage key set drifted: %v", keys)
 	}
 	md := m["body_md"].(string)

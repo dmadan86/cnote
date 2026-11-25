@@ -191,10 +191,10 @@ describe('md', () => {
     seed(doc, HTML_TABLE)
     const rows = cells(el(frag(doc).get(0)))
     expect(rows.length).toBe(3)
-    expect(rows[0][0][2]).toEqual([2, 1, [120, 80]])
+    expect(rows[0][0][2]).toEqual([2, 1, [120, 80], null])
     expect(rows[0][0][1] && !rows[1][0][1]).toBe(true)
-    expect(rows[1][0][2]).toEqual([1, 2, null])
-    expect(rows[2][0][2]).toEqual([1, 1, [50]])
+    expect(rows[1][0][2]).toEqual([1, 2, null, null])
+    expect(rows[2][0][2]).toEqual([1, 1, [50], null])
   })
 
   it('html_table_input_is_parsed_leniently', () => {
@@ -355,5 +355,44 @@ describe('A1 blocks', () => {
     const doc = new Y.Doc()
     seed(doc, '![x](/api/w/7b3f1c2e-5a4d-4e6f-8a9b-0c1d2e3f4a5b/files/0f0e0d0c-0b0a-4908-8706-050403020100)')
     expect(el(frag(doc).get(0)).nodeName).toBe('image')
+  })
+})
+
+describe('C1 highlight and table attributes', () => {
+  it('a bare mark reads as yellow and an unknown tint keeps its text without one', () => {
+    expect(rt('a <mark>one</mark> b <mark data-color="chartreuse">two</mark>')).toBe(
+      'a <mark data-color="yellow">one</mark> b two',
+    )
+  })
+
+  it('colour and highlight share one textStyle mark', () => {
+    const md = '<mark data-color="green"><span style="color: #c0392b">both</span></mark>'
+    const doc = new Y.Doc()
+    seed(doc, md)
+    const p = el(frag(doc).get(0))
+    expect((p.firstChild as Y.XmlText).toDelta()[0].attributes.textStyle).toEqual({
+      color: '#c0392b',
+      highlight: 'green',
+    })
+    expect(toMarkdown(doc)).toBe(md)
+  })
+
+  it('a highlight inside a link and inside bold is stable and nests inside them', () => {
+    const md = '[**<mark data-color="blue">a link</mark>**](https://x.y/z)'
+    expect(rt(md)).toBe(md)
+  })
+
+  it('inline code drops the highlight', () => {
+    expect(rt('<mark data-color="red">`code`</mark>')).toBe('`code`')
+  })
+
+  it('cell colour and numbering force the HTML table and survive a merge', () => {
+    const md =
+      '<table data-numbered="true"><tr><th colspan="2" data-bg="blue"><p>H</p></th></tr><tr><td data-bg="orange"><p>a <mark data-color="yellow">b</mark></p></td><td><p>c</p></td></tr></table>'
+    expect(rt(md)).toBe(md)
+    // an unknown cell tint keeps the text; data-numbered="false" is off
+    expect(
+      rt('<table data-numbered="false"><tr><td data-bg="mauve"><p>x</p></td></tr></table>'),
+    ).not.toContain('<table')
   })
 })

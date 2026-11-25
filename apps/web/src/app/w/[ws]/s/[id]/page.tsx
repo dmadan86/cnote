@@ -2,6 +2,7 @@
 import { Plus, Settings } from 'lucide-react'
 import Link from 'next/link'
 import { use, useEffect, useState } from 'react'
+import { kidKey } from '@/components/docs/tree-model'
 import { DocxImportButton } from '@/components/import/docx-button'
 import { PageList } from '@/components/page-list'
 import { useShell } from '@/components/shell'
@@ -11,7 +12,11 @@ import type { SpaceB1 } from '@/lib/docs'
 
 export default function SpacePage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params)
-  const { ws, spaces, notes, newPage } = useShell()
+  const { ws, spaces, tree, newPage } = useShell()
+  const { ensure } = tree
+  useEffect(() => ensure(id, null), [ensure, id])
+  const level = tree.levels.get(kidKey(id, null))
+  const [more, setMore] = useState(false)
   // An archived space is not in the shell's list but stays readable, so the page asks for it by itself.
   const [space, setSpace] = useState<SpaceB1>()
   const [missing, setMissing] = useState(false)
@@ -53,10 +58,21 @@ export default function SpacePage({ params }: { params: Promise<{ id: string }> 
         </p>
       )}
       {space.description && <p className="text-[14px] text-muted">{space.description}</p>}
-      <PageList
-        pages={notes.filter((n) => n.space_id === id && n.types.length === 0)}
-        empty="No pages in this space yet."
-      />
+      <PageList pages={tree.kids.get(kidKey(id, null)) ?? []} empty="No pages in this space yet." />
+      {level?.next && (
+        <button
+          type="button"
+          className={btn}
+          disabled={more}
+          onClick={async () => {
+            setMore(true)
+            await tree.more(id, null, 'next')
+            setMore(false)
+          }}
+        >
+          {more ? 'Loading…' : 'Show more'}
+        </button>
+      )}
     </div>
   )
 }

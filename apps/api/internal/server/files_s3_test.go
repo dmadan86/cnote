@@ -108,6 +108,8 @@ func TestFilesS3BackendSignsAndKeepsAccessChecks(t *testing.T) {
 		t.Fatal("outsider downloaded")
 	}
 	b.okAs(m, "file.delete", map[string]any{"id": fid})
+	eq(t, len(fake.objs), 1) // C1 13.3.1: the command only queues the object
+	b.sweep()
 	eq(t, len(fake.objs), 0)
 
 	// a wrong secret is refused by the bucket: the upload fails and leaves no row
