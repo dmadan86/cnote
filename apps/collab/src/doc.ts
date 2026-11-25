@@ -15,7 +15,7 @@ export function seedClient(note: string): number {
 export async function loadDoc(
   tx: Tx,
   note: string,
-): Promise<{ doc: Y.Doc; epoch: number; version: number; ids: string[]; seed: Uint8Array | null }> {
+): Promise<{ doc: Y.Doc; epoch: number; version: number; ids: string[]; seedMd: string | null }> {
   const n = await tx.query(
     'select content_md, content_ydoc, collab_epoch, version from core.notes where id = $1 and deleted_at is null',
     [note],
@@ -37,9 +37,9 @@ export async function loadDoc(
     [note, epoch],
   )
   const ids = log.rows.map((r) => String(r.id))
-  // No snapshot yet: the gateway is the only seeder, so it stores this seed with the first update it logs (see logUpdate).
-  const seed = ydoc && ydoc.length > 0 ? null : Y.encodeStateAsUpdate(buildDoc(note, mdText, null, []))
   return {
+    // Set while the note has no snapshot: the doc was seeded from this Markdown (see logUpdate, which pins the seed).
+    seedMd: ydoc && ydoc.length > 0 ? null : mdText,
     doc: buildDoc(
       note,
       mdText,
@@ -49,12 +49,8 @@ export async function loadDoc(
     epoch,
     version,
     ids,
-    seed,
   }
 }
-
-/** Most logged updates buildDoc will test one by one against content_md (a snapshot lands within seconds of idle). */
-const MAX_PREFIX_CHECK = 300
 
 /** The pure part of loadDoc: snapshot (or seed) plus the logged updates. Also used by the stateless render endpoint. */
 export function buildDoc(
@@ -78,20 +74,6 @@ export function buildDoc(
     if (ok && md.same(md.toMarkdown(d), mdText)) {
       replay = true
       doc = d
-    } else if (ok && updates.length <= MAX_PREFIX_CHECK) {
-      // A live editor saves its own Markdown through the API while its edits are still only in the log. If the saved
-      // text is the document after some logged update, it came from this history: keep the whole log, drop nothing.
-      let hit = false
-      for (const u of updates) {
-        try {
-          Y.applyUpdate(d, u)
-        } catch {}
-        hit ||= md.same(md.toMarkdown(d), mdText)
-      }
-      if (hit) {
-        doc = d
-        replay = false // every update is already applied
-      }
     }
   }
   if (!doc) {

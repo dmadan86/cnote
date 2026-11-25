@@ -65,8 +65,10 @@ interface Room {
    * edited the note since and wins; live editors also save through the API (same text), so then it is ignored. */
   version: number
   doc: Y.Doc
-  /** The seed this room built from content_md, until the first logged update stores it as the snapshot base. */
-  seed: Uint8Array | null
+  /** content_md this room was seeded from (no snapshot existed), until the first logged update pins the seed. */
+  seedMd: string | null
+  /** The in-flight or finished pin of that seed; every update waits for it. */
+  pin: Promise<void> | null
   peers: Map<number, Peer>
   nextPeer: number
   dirty: boolean
@@ -228,7 +230,8 @@ export function createServer(opts: Options) {
       epoch: l.epoch,
       version: l.version,
       doc: l.doc,
-      seed: l.seed,
+      seedMd: l.seedMd,
+      pin: null,
       peers: new Map(),
       nextPeer: 0,
       dirty: false,
@@ -269,19 +272,42 @@ export function createServer(opts: Options) {
     })
   }
 
+  /** Store the seed as the snapshot base, only if the row is exactly what the seed was built from (an update that
+   * would not pin its own text; a server-side write since the room loaded makes the room stale: it reloads). */
+  async function pinSeed(room: Room, seedMd: string): Promise<void> {
+    const seed = Buffer.from(Y.encodeStateAsUpdate(buildDoc(room.note, seedMd, null, [])))
+    const r = await tenant(pool, room.ws, (tx) =>
+      tx.query(
+        `update core.notes set content_ydoc = $3 where id = $1 and collab_epoch = $2 and version = $4
+         and content_md = $5 and content_ydoc is null and deleted_at is null and freshness <> 'archived'
+         and (fenced_until is null or fenced_until <= now())`,
+        [room.note, room.epoch, seed, room.version, seedMd],
+      ),
+    )
+    if (r.rowCount) return
+    const g = await tenant(pool, room.ws, (tx) =>
+      tx.query(
+        `select content_ydoc is null and deleted_at is null and freshness <> 'archived'
+                and (fenced_until is null or fenced_until <= now()) as bare from core.notes where id = $1`,
+        [room.note],
+      ),
+    )
+    // Not bare: a snapshot exists already, or the page is gone, archived or fenced (the insert below says which).
+    // Bare: the row changed since load, so the seed is stale and the room is dropped.
+    if (g.rows[0]?.bare) throw new FencedError()
+  }
+
   /** Commit one update to the log, fenced on the room's epoch. Conflict means the page was restored since. */
   async function logUpdate(room: Room, update: Uint8Array): Promise<string> {
-    // Pin the seed the log is built on before the first update: a content_md the API writes later (a client's flush
-    // on reload) then differs from the snapshot, so the API text wins instead of being replayed onto itself.
-    // Its own statement, taken before any FOR SHARE below: upgrading a share lock to a write would deadlock concurrent edits.
-    if (room.seed)
-      await tenant(pool, room.ws, (tx) =>
-        tx.query(
-          `update core.notes set content_ydoc = $3 where id = $1 and collab_epoch = $2 and content_ydoc is null
-           and deleted_at is null and freshness <> 'archived' and (fenced_until is null or fenced_until <= now())`,
-          [room.note, room.epoch, Buffer.from(room.seed as Uint8Array)],
-        ),
-      )
+    // Pin the seed the log is built on before the first update, so a content_md written later no longer looks like
+    // the text these updates were typed on (seed + replay would then apply them twice). Taken synchronously, so
+    // updates arriving together share one pin.
+    const seedMd = room.seedMd
+    if (seedMd !== null) {
+      room.seedMd = null
+      room.pin = pinSeed(room, seedMd)
+    }
+    await room.pin
     const id = await tenant(pool, room.ws, async (tx) => {
       // FOR SHARE: a delete holds the page row FOR UPDATE, so an edit is either logged before it (and found there) or refused after it.
       const r = await tx.query(
@@ -307,7 +333,6 @@ export function createServer(opts: Options) {
           : id.fenced
             ? new FencedError()
             : new CmdError('conflict', 'page restored')
-    room.seed = null
     return String(id.id)
   }
 
@@ -355,6 +380,7 @@ export function createServer(opts: Options) {
           )
           if (!v.rows[0]) return false // restored, deleted, or (nobody connected) API-edited since this room loaded: fenced out
           room.version = v.rows[0].version as number
+          room.seedMd = null // a snapshot now exists
           await tx.query('delete from core.note_updates where id = any($1::bigint[])', [applied])
           await tx.query(
             `insert into core.note_revisions (workspace_id, note_id, number, title, content_md, reason, created_by)

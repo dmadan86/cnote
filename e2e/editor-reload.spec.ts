@@ -22,3 +22,18 @@ for (const delay of [500, 1500]) {
     }
   })
 }
+
+// With no gateway the editor is solo: the pagehide flush is the only copy of an edit typed in the last 700 ms.
+test('solo mode: typing then reloading at once still saves the text', async ({ page }) => {
+  await signup(page)
+  await createSpace(page)
+  await page.routeWebSocket(/\/collab\//, (ws) => ws.close())
+  await page.getByRole('button', { name: 'New page' }).last().click()
+  await expect(page).toHaveURL(/\/n\/[0-9a-f-]+$/)
+  const box = page.getByRole('textbox', { name: 'Page content' })
+  await box.click()
+  await page.keyboard.type('Solo words')
+  await page.reload()
+  await expect(box).toContainText('Solo words')
+  expect(await box.innerText()).toBe('Solo words')
+})

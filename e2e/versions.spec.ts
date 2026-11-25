@@ -26,6 +26,7 @@ test('restore an earlier version: history is kept and an open editor reloads ont
   await a.keyboard.press('End')
   await a.keyboard.type(' plus a bad edit')
   await expect(editor).toContainText('plus a bad edit')
+  await a.waitForTimeout(2500) // let the collab gateway fold the edit into its snapshot: a restore reads the saved rows
 
   // A second tab on the same page: it must reload onto the restored text.
   const b = await ctx.newPage()

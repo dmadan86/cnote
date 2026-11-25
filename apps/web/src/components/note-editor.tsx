@@ -187,6 +187,8 @@ function Surface({
   const last = useRef(initialMd)
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined)
   const pending = useRef<(() => string) | null>(null) // set until the latest edit is saved
+  // True while the gateway connection is up: its log already holds every edit.
+  const live = useRef(!!provider?.wsconnected)
 
   const editor = useEditor({
     immediatelyRender: false,
@@ -272,7 +274,9 @@ function Surface({
       clearTimeout(timer.current)
       const get = pending.current
       pending.current = null
-      if (!get) return
+      // Connected: the gateway's log has the edits and its snapshot persists them. Saving content_md here too would
+      // make a reload before that snapshot apply the same edit twice. Solo or offline: this save is the only copy.
+      if (!get || live.current) return
       try {
         const md = get()
         if (md === last.current) return
@@ -298,7 +302,10 @@ function Surface({
   // Live: an edit is saved once the gateway has it; while disconnected, edits wait in this tab.
   useEffect(() => {
     if (!provider) return
-    const on = ({ status }: { status: string }) => setStatus(status === 'connected' ? 'saved' : 'offline')
+    const on = ({ status }: { status: string }) => {
+      live.current = status === 'connected'
+      setStatus(status === 'connected' ? 'saved' : 'offline')
+    }
     provider.on('status', on)
     return () => provider.off('status', on)
   }, [provider])
