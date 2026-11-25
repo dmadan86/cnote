@@ -86,6 +86,7 @@ export function NoteEditor({
         p.destroy()
         onStaleRef.current?.()
       }
+      // 4412 (an edit was refused during a delete fence) is deliberately not handled: the provider reconnects and the resync resends it.
       if (e?.code === CLOSE_DELETED) {
         p.destroy()
         onDeletedRef.current?.()

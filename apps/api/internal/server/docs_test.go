@@ -2,6 +2,8 @@ package server_test
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -18,6 +20,11 @@ type dg struct {
 func newDG(t *testing.T) (dg, who) {
 	e := newEnv(t)
 	owner := e.signup("Tess", true)
+	// note.delete fences every page through the collab gateway: a stand-in that accepts, until a test starts the real one.
+	ok := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(`{"ok":true}`)) }))
+	t.Cleanup(ok.Close)
+	t.Setenv("COLLAB_URL", ok.URL)
+	t.Setenv("COLLAB_INTERNAL_SECRET", "x")
 	return dg{gw{t, e}, owner.ws}, owner
 }
 

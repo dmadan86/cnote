@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -631,6 +633,11 @@ func TestSearchPlainTriggerAndBackfill(t *testing.T) {
 // no restore evidence. New deletions and live pages are left alone.
 func TestA2DeletionBackfill(t *testing.T) {
 	e := newEnv(t)
+	// the pages live in the open transaction of newGoSide, which a gateway cannot see: a stand-in gateway accepts the fence
+	gw := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(`{"ok":true}`)) }))
+	defer gw.Close()
+	t.Setenv("COLLAB_URL", gw.URL)
+	t.Setenv("COLLAB_INTERNAL_SECRET", "x")
 	w := e.signup("Bea")
 	e.settle(w.ws)
 	g := e.newGoSide(w)

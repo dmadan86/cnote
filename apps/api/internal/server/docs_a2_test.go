@@ -543,6 +543,56 @@ func TestA2UndeleteRestrictionEvidenceAndAuthority(t *testing.T) {
 	d.code("not_found", member, "note.undelete", map[string]any{"deletion_id": delHid})
 }
 
+func TestA2RestoreAfterPurgedParentNeedsAnAdminEvenWithoutRestrictions(t *testing.T) {
+	d, owner := newDG(t)
+	member := d.member(owner)
+	sp := d.space(owner, "OPN", "open")
+	p := d.page(owner, sp, "Parent", nil, "x")
+	c := d.child(member, sp, "Child", p)
+	del := d.ok(member, "note.delete", map[string]any{"id": c})["deletion_id"].(string)
+	if d.scalar("select deleted_restricted_by::text from core.notes where id = $1::uuid", c) != "{}" {
+		t.Fatal("the fixture needs an empty restriction set")
+	}
+	// the parent is hard-deleted: its audit events keep the row, so state what the FK leaves behind (ON DELETE SET NULL)
+	d.sql("update core.notes set parent_id = null where id = $1::uuid", c)
+	if code, msg := d.errOf(member, "note.undelete", map[string]any{"deletion_id": del}); code != "conflict" || !strings.Contains(msg, "no longer exists") {
+		t.Fatalf("member: %s %s", code, msg)
+	}
+	if got := d.ok(owner, "note.undelete", map[string]any{"deletion_id": del}); got["placed"] != "space_root" {
+		t.Fatalf("admin: %v", got)
+	}
+}
+
+func TestA2DeleteFencesEveryPageOfTheSubtreeNotOnlyPendingOnes(t *testing.T) {
+	d, owner := newDG(t)
+	sp := d.space(owner, "OPN", "open")
+	top := d.page(owner, sp, "Top", nil, "")
+	kid := d.child(owner, sp, "Kid", top)
+	var mu sync.Mutex
+	fenced := map[string]bool{}
+	gw := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var b struct {
+			NoteID string `json:"note_id"`
+			Fence  bool   `json:"fence"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&b)
+		mu.Lock()
+		fenced[b.NoteID] = b.Fence
+		mu.Unlock()
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer gw.Close()
+	t.Setenv("COLLAB_URL", gw.URL)
+	t.Setenv("COLLAB_INTERNAL_SECRET", "x")
+	d.ok(owner, "note.delete", map[string]any{"id": top}) // no page has pending updates
+	if !fenced[top] || !fenced[kid] {
+		t.Fatalf("fenced folds: %v", fenced)
+	}
+	if d.scalar("select (fenced_until is null)::text from core.notes where id = $1::uuid", top) != "true" {
+		t.Fatal("the deletion commit must clear the fence")
+	}
+}
+
 // ---------- the coordinated fold (needs the real collab service) ----------
 
 func newCollabEnv(t *testing.T) (dg, who) {
@@ -610,9 +660,11 @@ func TestA2FailedFoldRefusesTheDeleteAndNothingIsStranded(t *testing.T) {
 	if d.scalar("select (deleted_at is null and deletion_id is null)::text from core.notes where id = $1::uuid", page) != "true" || d.scalar("select count(*)::text from core.note_updates where note_id = $1::uuid", page) != "1" {
 		t.Fatal("a refused delete changed the page")
 	}
-	// a page without pending edits does not need the gateway at all
+	// every page is fenced through the gateway, pending edits or not: a down gateway refuses a plain page too
 	plain := d.page(owner, sp, "Plain", nil, "x")
-	d.ok(owner, "note.delete", map[string]any{"id": plain})
+	if code, _ := d.errOf(owner, "note.delete", map[string]any{"id": plain}); code != "conflict" {
+		t.Fatalf("plain page with the gateway down: %s", code)
+	}
 	// the gateway comes back (a restart): the same delete now works
 	startCollab(t)
 	d.ok(owner, "note.delete", map[string]any{"id": page})

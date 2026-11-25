@@ -16,7 +16,7 @@ import (
 
 // note.delete (docs-parity 7.9 steps 1 to 6 with the coordinated fold of 7.10.4). Order of work, which matters:
 //  1. page access, the tree lock, the subtree, the edit rule on every page (no row locks yet);
-//  2. every page with unfolded live edits is folded by the collab gateway with a fence (its own transactions, which commit),
+//  2. every page of the subtree is folded by the collab gateway with a fence (its own transactions, which commit),
 //     so the room accepts no more writes. The gateway needs the page rows, so this runs before this transaction locks them;
 //  3. rows FOR UPDATE, then a second look: still unfolded edits (a frame logged in between) refuse the delete, never strand them;
 //  4. one UPDATE with the deletion id, the actor, the parent and the restricted ancestors (restore evidence), a checkpoint
@@ -48,11 +48,7 @@ func noteDelete(c *command.Ctx, input json.RawMessage) (any, error) {
 	} else if !ok {
 		return nil, errRestricted()
 	}
-	pending, err := pendingPages(c, ids)
-	if err != nil {
-		return nil, err
-	}
-	for _, p := range pending {
+	for _, p := range ids { // every page is fenced, pending edits or not: the fence is what keeps a racing edit out
 		if err := foldNote(c, p, true); err != nil {
 			return nil, err
 		}
@@ -80,7 +76,7 @@ func noteDelete(c *command.Ctx, input json.RawMessage) (any, error) {
 		   select up.origin, p.id, p.parent_id, p.restriction, up.d + 1 from up join core.notes p on p.id = up.nxt where up.d < 51),
 		 ev as (select origin, coalesce(array_agg(node order by d) filter (where r <> 'none'), '{}'::uuid[]) arr from up group by origin)
 		 update core.notes n set deleted_at = now(), deletion_id = $2::uuid, deleted_by = $3::uuid, updated_at = now(),
-		   deleted_parent_id = n.parent_id, deleted_restricted_by = coalesce(ev.arr, '{}'::uuid[])
+		   fenced_until = null, deleted_parent_id = n.parent_id, deleted_restricted_by = coalesce(ev.arr, '{}'::uuid[])
 		 from (select id from core.notes where id = any($1::text[]::uuid[])) s left join ev on ev.origin = s.id
 		 where n.id = s.id`, ids, did, c.Principal.UserID); err != nil {
 		return nil, command.DB(err)

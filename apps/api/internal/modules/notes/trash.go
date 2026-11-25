@@ -19,7 +19,7 @@ func init() {
 // Why a restore is refused (7.9 table, extended by 7.10.5). Shown to people as written.
 const (
 	blockedTrashRestricted = "The parent page is in the trash and this page was inside a restricted area. Restore the parent first, or ask a space admin."
-	blockedGoneRestricted  = "The parent page no longer exists and this page was inside a restricted area. Ask a space admin."
+	blockedGoneRestricted  = "The parent page no longer exists. Ask a space admin."
 	blockedReleased        = "This page was inside a restricted area that no longer covers its parent. Ask the owner of that page or a space admin."
 	blockedNoEvidence      = "This page was deleted before restore rules were recorded. Ask a space admin."
 	blockedSaving          = "This page is still being saved. Try again in a moment."
@@ -144,9 +144,20 @@ func planRestore(c *command.Ctx, pages []trashPage) (restorePlan, error) {
 		}
 		plan.ParentEdit = root.Parent
 	default: // the parent is in the trash or gone
-		if len(root.Evidence) > 0 && !admin {
+		purged := parent == nil // purged parents are gone; a recorded ancestor may have been purged too
+		for _, e := range root.Evidence {
+			if purged {
+				break
+			}
+			var n int
+			if err := c.Tx.QueryRow(c.Context, "select count(*) from core.notes where id = $1::uuid", e).Scan(&n); err != nil {
+				return plan, command.DB(err)
+			}
+			purged = n == 0
+		}
+		if (purged || len(root.Evidence) > 0) && !admin { // 7.10.5: a purged parent or ancestor needs an admin, restriction or not
 			plan.Placed, plan.Blocked = "blocked", blockedTrashRestricted
-			if parent == nil {
+			if purged {
 				plan.Blocked = blockedGoneRestricted
 			}
 			return plan, nil

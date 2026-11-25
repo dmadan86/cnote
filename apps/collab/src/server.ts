@@ -15,17 +15,24 @@ import { mayWrite, trashedVisible } from './access.ts'
 import { authenticate, type Principal } from './auth.ts'
 import { CmdError, tenant } from './db.ts'
 import { buildDoc, loadDoc } from './doc.ts'
-import { CLOSE_DELETED, CLOSE_RELOAD } from './doc-schema.ts'
+import { CLOSE_DELETED, CLOSE_RELOAD, CLOSE_RETRY } from './doc-schema.ts'
 import * as md from './md.ts'
 
 export const CLOSE_STALE_EPOCH = 4409
-/** How long a fold with fence:true keeps a page closed to writes while the API finishes deleting it. */
+/** How long a fold with fence:true keeps a page closed to writes (core.notes.fenced_until) while the API finishes deleting it. */
 const FENCE_MS = 60_000
 const MAX_FRAME = 8 << 20
 const CHECKPOINT_EVERY_SECS = 600
 const MSG_SYNC = 0
 const MSG_AWARENESS = 1
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/** The page is fenced for a delete: the edit was not logged. The peer closes with CLOSE_RETRY and resends after reconnecting. */
+class FencedError extends CmdError {
+  constructor() {
+    super('conflict', 'page is being deleted')
+  }
+}
 
 /** The page was moved to the trash: its sockets close with CLOSE_DELETED, not CLOSE_STALE_EPOCH. */
 class GoneError extends CmdError {
@@ -62,8 +69,6 @@ interface Room {
   /** Fires 'stale' when the room is fenced out (restored elsewhere): every connection then closes. */
   events: EventEmitter
   retired: boolean
-  /** Set by a fenced fold: update frames are dropped until the page is seen deleted (or the fence expires). */
-  fenced: boolean
   /** WebSocket close code of the 'stale' fence; CLOSE_DELETED when the page was deleted. */
   closeCode: number
   /** The note's advisory lock has been released (or handed back); set once. */
@@ -167,49 +172,10 @@ export function createServer(opts: Options) {
     void lockQuery('unlock', room.note).catch(() => {})
   }
 
-  /** Pages a fenced fold closed to writes until their delete commits: `${ws}/${note}` -> expiry. */
-  const fences = new Map<string, number>()
-  let fenceTimer: NodeJS.Timeout | null = null
-  const fenceActive = (key: string) => (fences.get(key) ?? 0) > Date.now()
-
   /** The page is in the trash: close every socket of its room with CLOSE_DELETED and drop the room. */
   function retireGone(room: Room) {
     room.closeCode = CLOSE_DELETED
     retire(room)
-  }
-
-  /** Watch fenced pages: once the delete has committed their sockets close with 4411; an unfinished delete lifts the fence. */
-  function watchFences() {
-    if (fenceTimer) return
-    fenceTimer = setInterval(() => {
-      for (const [key, until] of [...fences]) {
-        const [ws, note] = key.split('/')
-        const room = rooms.get(key)
-        if (until <= Date.now()) {
-          fences.delete(key)
-          if (room) room.fenced = false
-          continue
-        }
-        tenant(
-          pool,
-          ws,
-          async (tx) =>
-            (await tx.query('select deleted_at is not null as gone from core.notes where id = $1', [note]))
-              .rows[0]?.gone,
-        )
-          .then((gone) => {
-            if (!gone) return
-            fences.delete(key)
-            if (room) retireGone(room)
-          })
-          .catch(() => {}) // transient: next tick
-      }
-      if (fences.size === 0 && fenceTimer) {
-        clearInterval(fenceTimer)
-        fenceTimer = null
-      }
-    }, 500)
-    fenceTimer.unref()
   }
 
   /** Fence a room out: drop it from the map (if still there) and close all of its connections. */
@@ -227,7 +193,6 @@ export function createServer(opts: Options) {
   /** Access check plus room lookup/creation. Returns the room and whether this caller may edit. */
   async function prepare(p: Principal, ws: string, note: string): Promise<{ room: Room; write: boolean }> {
     const key = `${ws}/${note}`
-    if (fenceActive(key)) throw new CmdError('conflict', 'page is being deleted')
     await rooms.get(key)?.persisting // so the version read below includes this room's own last write
     const a = await tenant(pool, ws, async (tx) => {
       const write = await mayWrite(tx, p, note)
@@ -263,7 +228,6 @@ export function createServer(opts: Options) {
       applied: l.ids,
       events: new EventEmitter().setMaxListeners(0),
       retired: false,
-      fenced: false,
       closeCode: CLOSE_STALE_EPOCH,
       unlocked: false,
       persisting: Promise.resolve(),
@@ -301,18 +265,24 @@ export function createServer(opts: Options) {
       const r = await tx.query(
         `insert into core.note_updates (workspace_id, note_id, epoch, update)
          select workspace_id, id, collab_epoch, $3 from core.notes
-         where id = $1 and collab_epoch = $2 and deleted_at is null
+         where id = $1 and collab_epoch = $2 and deleted_at is null and (fenced_until is null or fenced_until <= now())
          for share
          returning id`,
         [room.note, room.epoch, Buffer.from(update)],
       )
       if (r.rows[0]) return { id: r.rows[0].id as string }
-      const g = await tx.query('select deleted_at is not null as gone from core.notes where id = $1', [
-        room.note,
-      ])
-      return { gone: !!g.rows[0]?.gone }
+      const g = await tx.query(
+        'select deleted_at is not null as gone, collab_epoch = $2 and fenced_until > now() as fenced from core.notes where id = $1',
+        [room.note, room.epoch],
+      )
+      return { gone: !!g.rows[0]?.gone, fenced: !!g.rows[0]?.fenced }
     })
-    if ('gone' in id) throw id.gone ? new GoneError() : new CmdError('conflict', 'page restored')
+    if ('gone' in id)
+      throw id.gone
+        ? new GoneError()
+        : id.fenced
+          ? new FencedError()
+          : new CmdError('conflict', 'page restored')
     return String(id.id)
   }
 
@@ -461,7 +431,7 @@ export function createServer(opts: Options) {
       sendAll(room, me, data)
       for (const [client, clock, json] of msg.entries) peer.awareness.set(client, { clock, json })
     } else {
-      if (!write || room.fenced) return // read-only, or a fold has closed the page to writes: the sender keeps the edit
+      if (!write) return // read-only
       // The doc's own emitted update, not msg.body: an out-of-order update that completes parked ones carries them too.
       let changed: Uint8Array | null = null
       const mark = (u: Uint8Array) => {
@@ -506,6 +476,7 @@ export function createServer(opts: Options) {
       cleanup()
       retire(room)
       if (room.closeCode === CLOSE_DELETED) socket.close(CLOSE_DELETED, 'page deleted')
+      else if (room.closeCode === CLOSE_RETRY) socket.close(CLOSE_RETRY, 'page is being deleted, retry')
       else socket.close(CLOSE_STALE_EPOCH, 'page restored')
     }
     const cleanup = () => {
@@ -562,6 +533,8 @@ export function createServer(opts: Options) {
           await onFrame(room, me, p, write, new Uint8Array(buf.buffer, buf.byteOffset, buf.length))
         } catch (e) {
           if (e instanceof GoneError) room.closeCode = CLOSE_DELETED
+          // The room's doc already holds the refused edit: drop the room unsaved; every client keeps its edit and resyncs.
+          if (e instanceof FencedError) room.closeCode = CLOSE_RETRY
           if (e instanceof CmdError && e.code === 'conflict') return fence()
           // Not logged, so not relayed: the client still has the edit and resends it on reconnect.
           console.error('collab update not persisted', room.note, e)
@@ -667,17 +640,12 @@ export function createServer(opts: Options) {
 
   /** Fold a page's snapshot plus every logged edit of its current epoch into content_md and the snapshot, in one transaction
    * that locks the page row. Works with no open room (it reads only the database). With fence the room first stops
-   * accepting writes and the frames already queued finish, so nothing can be logged after the fold. */
+   * accepting writes (fenced_until), so nothing can be logged after the fold. */
   async function foldNote(ws: string, note: string, fence: boolean) {
-    const key = `${ws}/${note}`
-    const room = rooms.get(key)
-    if (fence) {
-      fences.set(key, Date.now() + FENCE_MS)
-      watchFences()
-      if (room) room.fenced = true
-    }
+    const room = rooms.get(`${ws}/${note}`)
     if (room) {
-      await Promise.allSettled([...room.peers.values()].map((p) => chains.get(p.ws))) // drain in-flight frames
+      // Frames already queued finish and are logged before the fence takes effect (it is set in the transaction below).
+      await Promise.allSettled([...room.peers.values()].map((p) => chains.get(p.ws)))
       await room.persisting
     }
     return tenant(pool, ws, async (tx) => {
@@ -686,6 +654,12 @@ export function createServer(opts: Options) {
         [note],
       )
       if (!n.rows[0]) throw new CmdError('not_found', 'note')
+      // The fence is a database fact: logUpdate on every gateway instance refuses while it is in the future.
+      if (fence)
+        await tx.query(
+          'update core.notes set fenced_until = now() + make_interval(secs => $2) where id = $1',
+          [note, FENCE_MS / 1000],
+        )
       const { content_md: mdText, content_ydoc: ydoc, collab_epoch: epoch, version } = n.rows[0]
       const log = await tx.query(
         'select id, update from core.note_updates where note_id = $1 and epoch = $2 order by id',
@@ -806,7 +780,6 @@ export function createServer(opts: Options) {
     setMinSchema,
     /** Flush every dirty room, then close. */
     async close() {
-      if (fenceTimer) clearInterval(fenceTimer)
       for (const w of wss.clients) w.terminate()
       await Promise.allSettled([...rooms.values()].map(persist))
       server.close()
@@ -815,7 +788,6 @@ export function createServer(opts: Options) {
     },
     /** Simulate a crash in-process: drop sockets and locks without flushing anything. */
     async abandon() {
-      if (fenceTimer) clearInterval(fenceTimer)
       for (const w of wss.clients) w.terminate()
       rooms.clear()
       server.close()
