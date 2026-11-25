@@ -1009,3 +1009,11 @@ Changes to the plan:
 6. The first co-edit of a page with mentions that predate the mention store notifies only people not already notified, until the seeding sweep has covered it (about a minute per 10,000 pages).
 7. Archived-space refusals from subtree commands carry the generic restricted text (13.3, rule 3).
 
+
+### 13.5 Review fixes to mail, sweeps and mentions (B1 review, 2026-11-25)
+
+- **Mail after a revocation.** The mail job holds `FOR SHARE` on the person's membership row and their `notify_prefs` row (created with the defaults when missing, so there is a row to lock) from its check to the end of its transaction. A removal or unsubscribe that commits after the check waits until the send is over. SMTP is bounded by a 20 second timeout, so the locks are never held long. Page restrictions (`restriction`, `note_permissions`, ancestors) are not locked, because that would lock every page up the chain per item: for them the final eligibility check right before SMTP is the guarantee. It repeats the per-item access test, drops what fails and sends nothing when nothing is left.
+- **At-most-once delivery.** Before SMTP the job commits a `sending` row (the Message-ID) in `core.mail_sends` in its own transaction. A retry that finds `sent` marks the items mailed; one that finds `sending` older than the SMTP timeout marks them `sent_unknown`, logs it and does not send; a younger one waits (error, retried). A send that fails in process clears the marker, since the server did not accept it.
+- **Sweeps never consume a pending event.** The mention seed and the task backfill skip a page while its `note.created` or `note.updated` has an `event.dispatch` job that is queued or running (the exact signal; an age window would be a guess), and judge that under the same per-note lock the handler takes.
+- **Mention authorship.** A mention is attributed to the author of the version that introduced it (the actor of the newest `note.updated` event carrying that version, or the person an agent acted for), not to the actor of the event being dispatched. Self-mention is skipped only when the mentioned person wrote that version.
+- **Digest limit.** One run takes up to 200 people, not rows. Each person is handled under `FOR UPDATE` on their `notify_prefs` row (people in id order): all eligible rows and the claim of the day together.

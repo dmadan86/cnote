@@ -146,7 +146,7 @@ func (e *env) newGoSide(w who) *goSide {
 	}
 	e.t.Cleanup(func() { _ = tx.Rollback(context.Background()) })
 	user := command.Principal{Kind: command.KindUser, UserID: &w.userID, WorkspaceID: w.ws, Role: command.Owner}
-	c := &command.Ctx{Context: context.Background(), Tx: tx, Principal: user}
+	c := &command.Ctx{Context: context.Background(), Tx: tx, Pool: e.pool, Principal: user}
 	e.reg.Bind(c)
 	s := &goSide{e: e, w: w, c: c, user: user}
 	if err := tx.QueryRow(c.Context, "select coalesce(max(id),0) from core.jobs where workspace_id = $1::uuid", w.ws).Scan(&s.baseline); err != nil {

@@ -127,6 +127,7 @@ func TestMentionOfSomeoneWhoCannotReadIsSkipped(t *testing.T) {
 
 func TestMentionSeedSweepMarksOldMentionsAsHandled(t *testing.T) {
 	e, tess, mo, g, note := mentionFixture(t)
+	g.drain(100) // the page's own note.created is handled first: the seed leaves a page with a pending event alone
 	m := mentionLink(tess.ws, mo.userID)
 	// A page that predates the store: body with a mention, no state row.
 	if _, err := g.c.Tx.Exec(g.c.Context, "update core.notes set content_md = $2 where id = $1::uuid", note, "old "+m); err != nil {

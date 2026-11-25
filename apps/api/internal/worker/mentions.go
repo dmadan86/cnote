@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"slices"
 
-	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/cnote/api/internal/command"
 	"github.com/cnote/api/internal/db"
@@ -68,22 +68,45 @@ func mentionSeedBatchRun(ctx context.Context, w *Worker, ws string, batch int) (
 	return n, tx.Commit(ctx)
 }
 
-// mentionSeedRun seeds up to batch pages of the transaction's workspace.
-func mentionSeedRun(ctx context.Context, tx interface {
-	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
-}, batch int) (int64, error) {
-	tag, err := tx.Exec(ctx,
-		`insert into core.note_mention_state (workspace_id, note_id, processed_version, mentioned)
-		 select n.workspace_id, n.id, n.version,
-		        array(select distinct lower(m[1])::uuid from regexp_matches(n.content_md,
-		          '\]\(/w/' || n.workspace_id::text || '/people/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\)', 'gi') m)
-		 from core.notes n
+// pageEventPendingSQL is true while a note.created or note.updated event of page n has an event.dispatch job that has not finished
+// (queued, or running and so holding the page's locks). Such an event may still carry a mention or an assignment that only its
+// handler can announce, so a sweep that "records the page as already handled" must not touch the page until it is gone. The event
+// queue is the exact signal; a page-age window would be a guess. Judged under the page's lock, so the handler that is running
+// has committed (job done, state written) or not yet started (job still queued).
+const pageEventPendingSQL = `exists (select 1 from core.jobs j join core.events e on e.id = (j.payload->>'event_id')::bigint
+	where j.kind = 'event.dispatch' and j.status in ('queued', 'running') and e.note_id = n.id and e.kind in ('note.created', 'note.updated'))`
+
+// mentionSeedRun seeds up to batch pages of the transaction's workspace and returns how many it looked at. A page with a pending
+// note.created or note.updated event is left alone (its handler does the diff) and takes the per-note mention lock like the handler.
+func mentionSeedRun(ctx context.Context, tx pgx.Tx, batch int) (int64, error) {
+	rows, err := tx.Query(ctx,
+		`select n.id::text from core.notes n
 		 where n.deleted_at is null and n.content_md like '%/people/%'
-		   and not exists (select 1 from core.note_mention_state s where s.note_id = n.id)
-		 order by n.id limit $1
-		 on conflict (note_id) do nothing`, batch)
+		   and not exists (select 1 from core.note_mention_state s where s.note_id = n.id) and not `+pageEventPendingSQL+`
+		 order by n.id limit $1`, batch)
 	if err != nil {
 		return 0, err
 	}
-	return tag.RowsAffected(), nil
+	ids, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		return 0, err
+	}
+	for _, id := range ids {
+		// The same per-note lock the handler takes, then the checks again: a handler or an event may have arrived since the list.
+		if _, err := tx.Exec(ctx, "select pg_advisory_xact_lock(hashtextextended('notes.mentions:' || $1::text, 0))", id); err != nil {
+			return 0, err
+		}
+		if _, err := tx.Exec(ctx,
+			`insert into core.note_mention_state (workspace_id, note_id, processed_version, mentioned)
+			 select n.workspace_id, n.id, n.version,
+			        array(select distinct lower(m[1])::uuid from regexp_matches(n.content_md,
+			          '\]\(/w/' || n.workspace_id::text || '/people/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\)', 'gi') m)
+			 from core.notes n
+			 where n.id = $1::uuid and n.deleted_at is null and not exists (select 1 from core.note_mention_state s where s.note_id = n.id)
+			   and not `+pageEventPendingSQL+`
+			 on conflict (note_id) do nothing`, id); err != nil {
+			return 0, err
+		}
+	}
+	return int64(len(ids)), nil
 }

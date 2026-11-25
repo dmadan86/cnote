@@ -151,6 +151,8 @@ func TestBackfillIsSilentAndRacesLiveEditsSafely(t *testing.T) {
 	g.drain(100)
 	// A page that predates the index: a task, no index state.
 	g.gatewaySave(note, taskLine(tess.ws, mo.userID, "Old task", "2026-11-01"))
+	g.drain(100) // its event is handled (a backfill never runs ahead of a pending event, see TestBackfillLeavesAPendingEventAlone)
+	told := g.assignedCount(note, mo.userID)
 	if _, err := g.c.Tx.Exec(g.c.Context, "delete from core.note_task_state where note_id = $1::uuid", note); err != nil {
 		t.Fatal(err)
 	}
@@ -161,13 +163,13 @@ func TestBackfillIsSilentAndRacesLiveEditsSafely(t *testing.T) {
 	if n, _ := g.taskRows(note); n != 1 {
 		t.Fatalf("backfill indexes the page, got %d", n)
 	}
-	g.drain(100) // the live event for the same version arrives afterwards
-	if g.assignedCount(note, mo.userID) != 0 {
-		t.Fatalf("a task that already existed is not announced, got %d", g.assignedCount(note, mo.userID))
+	g.drain(100)
+	if g.assignedCount(note, mo.userID) != told {
+		t.Fatalf("a task that already existed is not announced again, got %d", g.assignedCount(note, mo.userID))
 	}
 	g.gatewaySave(note, taskLine(tess.ws, mo.userID, "Old task", "2026-11-01")+"\n"+taskLine(tess.ws, mo.userID, "New task", ""))
 	g.drain(100)
-	if g.assignedCount(note, mo.userID) != 1 {
+	if g.assignedCount(note, mo.userID) != told+1 {
 		t.Fatalf("only the task added after the backfill is announced, got %d", g.assignedCount(note, mo.userID))
 	}
 	_ = e

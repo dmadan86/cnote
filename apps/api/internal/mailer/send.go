@@ -181,7 +181,11 @@ func Deliver(ctx context.Context, smtpURL, from, to string, build func(eightBit 
 	if implicit {
 		conn = tls.Client(conn, &tls.Config{ServerName: host})
 	}
-	_ = conn.SetDeadline(time.Now().Add(60 * time.Second))
+	dl := time.Now().Add(60 * time.Second)
+	if d, ok := ctx.Deadline(); ok && d.Before(dl) { // the caller's timeout bounds the whole dialogue
+		dl = d
+	}
+	_ = conn.SetDeadline(dl)
 	cl, err := smtp.NewClient(conn, host)
 	if err != nil {
 		_ = conn.Close()

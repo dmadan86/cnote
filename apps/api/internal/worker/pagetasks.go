@@ -68,11 +68,13 @@ func taskBackfillBatchRun(ctx context.Context, w *Worker, ws string, batch int) 
 	return n, tx.Commit(ctx)
 }
 
-// TaskBackfillRun indexes up to batch pages of the transaction's workspace that have no index state.
+// TaskBackfillRun indexes up to batch pages of the transaction's workspace that have no index state, silently. A page with a pending
+// note.created or note.updated event is skipped: the event's handler must announce its assignments, and a silent index would make it
+// find the version done. The check is made again under the page's lock, the one IndexTasks takes.
 func TaskBackfillRun(ctx context.Context, tx pgx.Tx, ws string, batch int) (int, error) {
 	rows, err := tx.Query(ctx,
 		`select n.id::text from core.notes n where n.deleted_at is null
-		   and not exists (select 1 from core.note_task_state s where s.note_id = n.id) order by n.id limit $1`, batch)
+		   and not exists (select 1 from core.note_task_state s where s.note_id = n.id) and not `+pageEventPendingSQL+` order by n.id limit $1`, batch)
 	if err != nil {
 		return 0, err
 	}
@@ -81,6 +83,16 @@ func TaskBackfillRun(ctx context.Context, tx pgx.Tx, ws string, batch int) (int,
 		return 0, err
 	}
 	for _, id := range ids {
+		if _, err := tx.Exec(ctx, "select pg_advisory_xact_lock(hashtextextended('notes.tasks:' || $1::text, 0))", id); err != nil {
+			return 0, err
+		}
+		var skip bool
+		if err := tx.QueryRow(ctx, `select exists(select 1 from core.note_task_state where note_id = $1::uuid) or exists (select 1 from core.notes n where n.id = $1::uuid and `+pageEventPendingSQL+`)`, id).Scan(&skip); err != nil {
+			return 0, err
+		}
+		if skip {
+			continue
+		}
 		if err := notes.IndexTasks(ctx, tx, ws, id, nil, false); err != nil {
 			return 0, err
 		}

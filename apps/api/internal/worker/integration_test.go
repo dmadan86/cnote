@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/cnote/api/internal/hooks"
 	"github.com/cnote/api/internal/secretbox"
@@ -20,6 +21,8 @@ type fakeSMTP struct {
 	mu   sync.Mutex
 	msgs []smtpMsg
 	ln   net.Listener
+	// stall makes the server accept and then say nothing (a hung SMTP server).
+	stall bool
 }
 
 type smtpMsg struct{ from, to, data string }
@@ -47,6 +50,10 @@ func (f *fakeSMTP) serve(c net.Conn) {
 	defer c.Close()
 	r := bufio.NewReader(c)
 	say := func(s string) { _, _ = io.WriteString(c, s+"\r\n") }
+	if f.stall {
+		time.Sleep(30 * time.Second)
+		return
+	}
 	say("220 fake ESMTP")
 	var m smtpMsg
 	for {

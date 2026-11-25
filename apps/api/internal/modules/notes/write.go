@@ -411,15 +411,15 @@ func notifyMentions(c *command.Ctx, noteID, title, oldMD, newMD, eventKey string
 			fresh = append(fresh, u)
 		}
 	}
-	return notifyUsers(c, noteID, title, fresh, eventKey)
+	return notifyUsers(c, noteID, title, fresh, eventKey, c.Principal.UserID)
 }
 
 // notifyUsers sends the mention notification to each user who is not the actor and can read the page, then emits
 // mention.created for hooks and agents (email is the mail sweep's job, from the notification row).
-func notifyUsers(c *command.Ctx, noteID, title string, users []string, eventKey string) error {
+func notifyUsers(c *command.Ctx, noteID, title string, users []string, eventKey string, actor *string) error {
 	ws := strings.ToLower(c.WorkspaceID())
 	for _, user := range users {
-		if c.Principal.UserID != nil && strings.EqualFold(*c.Principal.UserID, user) {
+		if actor != nil && strings.EqualFold(*actor, user) {
 			continue
 		}
 		// Member of this workspace who can read the page, judged with their own role and space access.
@@ -431,7 +431,7 @@ func notifyUsers(c *command.Ctx, noteID, title string, users []string, eventKey 
 			continue
 		}
 		ids, err := notify.Send(c.Context, c.Tx, notify.Notification{
-			WorkspaceID: ws, UserID: user, Kind: "mention", Title: title, NoteID: &noteID, ActorUserID: c.Principal.UserID, EventKey: &eventKey})
+			WorkspaceID: ws, UserID: user, Kind: "mention", Title: title, NoteID: &noteID, ActorUserID: actor, EventKey: &eventKey})
 		if err != nil {
 			return err
 		}

@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html"
 	"log/slog"
@@ -14,7 +15,6 @@ import (
 
 	"github.com/cnote/api/internal/command"
 	"github.com/cnote/api/internal/db"
-	"github.com/cnote/api/internal/jobs"
 	"github.com/cnote/api/internal/mailer"
 	"github.com/cnote/api/internal/notify"
 	"github.com/cnote/api/internal/unsub"
@@ -50,7 +50,6 @@ type notifyMailRef struct {
 	Mode          string   `json:"mode"`
 	Notifications []string `json:"notifications"`
 	MessageID     string   `json:"message_id"`
-	Sent          string   `json:"sent_message_id,omitempty"`
 }
 
 // DigestExtras lets the package that owns tasks add lines to a digest at send time (overdue and due-today tasks the person can
@@ -85,54 +84,47 @@ type mailItem struct {
 	restricted                   bool
 }
 
-// notifyMailJob rebuilds the mail from references and sends it, or sends nothing.
-func notifyMailJob(c *command.Ctx, payload json.RawMessage) error {
-	var ref notifyMailRef
-	if json.Unmarshal(payload, &ref) != nil || !isUUID(ref.UserID) || (len(ref.Notifications) == 0 && ref.Mode != ModeDigest) { // a digest may hold only due tasks
-		return command.ErrInvalid("notify mail payload")
+// smtpTimeout bounds the whole SMTP dialogue, so the row locks the job holds across it are never held long. A `sending` marker
+// older than this belongs to a send that is over, one way or the other.
+var smtpTimeout = 20 * time.Second
+
+// mailHook lets tests stop the job at a named point: "final" (before the final eligibility check), "send" (right before SMTP) and
+// "sent" (right after SMTP, before the job commits; an error it returns plays a crash or failed commit). Nil in production.
+var mailHook func(stage string) error
+
+func hook(stage string) error {
+	if mailHook == nil {
+		return nil
 	}
-	if ref.Sent != "" {
-		return nil // sent by an earlier run whose completion did not commit
+	return mailHook(stage)
+}
+
+// mailMarker runs f in its own short transaction on the pool, so its effect survives a rollback of the job's transaction.
+func mailMarker(c *command.Ctx, f func(tx pgx.Tx) error) error {
+	if c.Pool == nil {
+		return errors.New("notify mail: no pool for the send marker")
 	}
-	mark := func(state string, ids []string) error {
-		_, err := c.Tx.Exec(c.Context, `update core.notifications set email_state = $2 where id = any($1::uuid[]) and user_id = $3::uuid and email_state = 'queued'`, ids, state, ref.UserID)
-		return err
-	}
-	suppressAll := func(why string) error {
-		slog.Debug("notification mail dropped", "why", why)
-		return mark("suppressed", ref.Notifications)
-	}
-	if !mailer.Configured() {
-		return suppressAll("email is not configured")
-	}
-	var email, name, wsName string
-	var member bool
-	err := c.Tx.QueryRow(c.Context,
-		`select u.email, u.name, w.name, exists(select 1 from core.memberships m where m.user_id = u.id and m.workspace_id = w.id)
-		 from core.users u, core.workspaces w where u.id = $1::uuid and w.id = $2::uuid`, ref.UserID, c.WorkspaceID()).Scan(&email, &name, &wsName, &member)
-	if err == pgx.ErrNoRows || (err == nil && !member) {
-		return suppressAll("not a member")
-	}
+	tx, err := db.BeginTenant(c.Context, c.Pool, c.WorkspaceID())
 	if err != nil {
 		return err
 	}
-	// Preferences as they are now. No row means the defaults.
-	mode, directOff, digestOff := "smart", false, false
-	err = c.Tx.QueryRow(c.Context, `select email_mode, direct_off, digest_off from core.notify_prefs where user_id = $1::uuid`, ref.UserID).Scan(&mode, &directOff, &digestOff)
-	if err != nil && err != pgx.ErrNoRows {
+	defer func() { _ = tx.Rollback(context.WithoutCancel(c.Context)) }()
+	if err := f(tx); err != nil {
 		return err
 	}
-	switch {
-	case mode == "off", ref.Mode == ModeDirect && (mode != "smart" || directOff), ref.Mode == ModeDigest && digestOff:
-		return suppressAll("preferences")
-	}
+	return tx.Commit(c.Context)
+}
 
+// mailEligible is the per-item check, run twice: first to decide whether there is anything to send, then again right before SMTP.
+// An item stays only while it is unread, a mailable kind for this mode, and (for a page) readable by the person now, or (for a
+// space) the person is still in the space. Page restrictions cannot be locked cheaply, so this final check is their guarantee.
+func mailEligible(c *command.Ctx, ref notifyMailRef, ids []string) (keep []mailItem, kept, drop []string, err error) {
 	rows, err := c.Tx.Query(c.Context,
 		`select n.id::text, n.kind, n.title, n.note_id::text, coalesce(a.name, ''), n.source, n.read_at is not null
 		 from core.notifications n left join core.users a on a.id = n.actor_user_id
-		 where n.id = any($1::uuid[]) and n.user_id = $2::uuid and n.email_state = 'queued' order by n.created_at, n.id`, ref.Notifications, ref.UserID)
+		 where n.id = any($1::uuid[]) and n.user_id = $2::uuid and n.email_state = 'queued' order by n.created_at, n.id`, ids, ref.UserID)
 	if err != nil {
-		return err
+		return nil, nil, nil, err
 	}
 	type cand struct {
 		mailItem
@@ -145,7 +137,7 @@ func notifyMailJob(c *command.Ctx, payload json.RawMessage) error {
 		var note *string
 		if err := rows.Scan(&x.id, &x.kind, &x.title, &note, &x.actor, &x.source, &x.read); err != nil {
 			rows.Close()
-			return err
+			return nil, nil, nil, err
 		}
 		if note != nil {
 			x.note = *note
@@ -154,17 +146,15 @@ func notifyMailJob(c *command.Ctx, payload json.RawMessage) error {
 	}
 	rows.Close()
 	if rows.Err() != nil {
-		return rows.Err()
+		return nil, nil, nil, rows.Err()
 	}
-	var keep []mailItem
-	var drop, kept []string
 	for _, x := range cands {
 		ok := !x.read && slicesContains(MailKinds, x.kind) && (ref.Mode == ModeDigest || slicesContains(DirectKinds, x.kind))
 		switch {
 		case !ok:
 		case x.note != "": // a page: the person must still be able to read it, with their own role and spaces
 			if err := c.Tx.QueryRow(c.Context, "select "+notify.ReadableExpr("$1::uuid", "$2::uuid"), ref.UserID, x.note).Scan(&ok); err != nil {
-				return err
+				return nil, nil, nil, err
 			}
 			if ok {
 				err := c.Tx.QueryRow(c.Context,
@@ -173,7 +163,7 @@ func notifyMailJob(c *command.Ctx, payload json.RawMessage) error {
 					 select coalesce((select bool_or(restriction <> 'none') from chain), false)
 					     or exists(select 1 from core.notes n join core.spaces s on s.id = n.space_id where n.id = $1::uuid and s.visibility = 'private')`, x.note).Scan(&x.restricted)
 				if err != nil {
-					return err
+					return nil, nil, nil, err
 				}
 			}
 		case x.source != nil && strings.HasPrefix(*x.source, "space:"): // a space: the person must still be in it
@@ -185,7 +175,7 @@ func notifyMailJob(c *command.Ctx, payload json.RawMessage) error {
 					   left join core.space_members sm on sm.space_id = s.id and sm.user_id = m.user_id
 					   where s.id = $2::uuid and (sm.user_id is not null or m.role in ('admin','owner') or (s.visibility = 'open' and m.role <> 'guest')))`,
 					ref.UserID, space).Scan(&ok); err != nil {
-					return err
+					return nil, nil, nil, err
 				}
 			}
 		default:
@@ -198,35 +188,164 @@ func notifyMailJob(c *command.Ctx, payload json.RawMessage) error {
 			drop = append(drop, x.id)
 		}
 	}
+	return keep, kept, drop, nil
+}
+
+// notifyMailJob rebuilds the mail from references and sends it, or sends nothing.
+//
+// Delivery is at most once. The job holds FOR SHARE locks on the person's membership and notify_prefs rows from its check to the
+// end of its transaction, so a removal or an unsubscribe that commits after the check waits until the send is over (SMTP is
+// bounded by smtpTimeout). Page restrictions are not locked; the final check right before SMTP is the guarantee for them. A
+// `sending` marker with the Message-ID is committed in its own transaction before SMTP: a retry that finds it after a crash or a
+// failed commit does not send again.
+func notifyMailJob(c *command.Ctx, payload json.RawMessage) error {
+	var ref notifyMailRef
+	if json.Unmarshal(payload, &ref) != nil || !isUUID(ref.UserID) || (len(ref.Notifications) == 0 && ref.Mode != ModeDigest) { // a digest may hold only due tasks
+		return command.ErrInvalid("notify mail payload")
+	}
+	mark := func(state string, ids []string) error {
+		_, err := c.Tx.Exec(c.Context, `update core.notifications set email_state = $2 where id = any($1::uuid[]) and user_id = $3::uuid and email_state = 'queued'`, ids, state, ref.UserID)
+		return err
+	}
+	suppressAll := func(why string) error {
+		slog.Debug("notification mail dropped", "why", why)
+		return mark("suppressed", ref.Notifications)
+	}
+	// An earlier run may have sent already (its transaction then failed to commit).
+	var prior string
+	var age float64
+	switch err := c.Tx.QueryRow(c.Context, "select state, extract(epoch from now() - started_at) from core.mail_sends where message_id = $1", ref.MessageID).Scan(&prior, &age); {
+	case err == nil && prior == "sent":
+		return mark("mailed", ref.Notifications)
+	case err == nil && age < smtpTimeout.Seconds():
+		return errors.New("notify mail: another run is sending this message") // the queue retries after the SMTP timeout
+	case err == nil:
+		slog.Warn("notification mail may or may not have been sent; not sending again", "message_id", ref.MessageID, "user", ref.UserID)
+		return mark("sent_unknown", ref.Notifications)
+	case !errors.Is(err, pgx.ErrNoRows):
+		return err
+	}
+	if !mailer.Configured() {
+		return suppressAll("email is not configured")
+	}
+	// Lock the person's membership and preferences until this transaction ends. A person with no preferences row has the defaults;
+	// the row is created so there is something to lock (a concurrent unsubscribe upserts the same row and waits).
+	var one int
+	switch err := c.Tx.QueryRow(c.Context, `select 1 from core.memberships where user_id = $1::uuid and workspace_id = $2::uuid for share`, ref.UserID, c.WorkspaceID()).Scan(&one); {
+	case errors.Is(err, pgx.ErrNoRows):
+		return suppressAll("not a member")
+	case err != nil:
+		return err
+	}
+	if _, err := c.Tx.Exec(c.Context, `insert into core.notify_prefs (workspace_id, user_id) values ($1::uuid, $2::uuid) on conflict do nothing`, c.WorkspaceID(), ref.UserID); err != nil {
+		return err
+	}
+	var mode string
+	var directOff, digestOff bool
+	if err := c.Tx.QueryRow(c.Context, `select email_mode, direct_off, digest_off from core.notify_prefs where workspace_id = $1::uuid and user_id = $2::uuid for share`,
+		c.WorkspaceID(), ref.UserID).Scan(&mode, &directOff, &digestOff); err != nil {
+		return err
+	}
+	switch {
+	case mode == "off", ref.Mode == ModeDirect && (mode != "smart" || directOff), ref.Mode == ModeDigest && digestOff:
+		return suppressAll("preferences")
+	}
+	var email, name, wsName string
+	if err := c.Tx.QueryRow(c.Context, `select u.email, u.name, w.name from core.users u, core.workspaces w where u.id = $1::uuid and w.id = $2::uuid`,
+		ref.UserID, c.WorkspaceID()).Scan(&email, &name, &wsName); err != nil {
+		return err
+	}
+
+	extras := func() ([]string, error) {
+		if ref.Mode != ModeDigest || DigestExtras == nil {
+			return nil, nil
+		}
+		return DigestExtras(c, ref.UserID)
+	}
+	keep, kept, drop, err := mailEligible(c, ref, ref.Notifications)
+	if err != nil {
+		return err
+	}
 	if len(drop) > 0 {
 		if err := mark("suppressed", drop); err != nil {
 			return err
 		}
 	}
-	var extra []string
-	if ref.Mode == ModeDigest && DigestExtras != nil {
-		if extra, err = DigestExtras(c, ref.UserID); err != nil {
-			return err
-		}
+	extra, err := extras()
+	if err != nil {
+		return err
 	}
 	if len(keep) == 0 && len(extra) == 0 {
 		return nil // nothing left: send nothing
 	}
 
+	// The marker: committed before SMTP, in its own transaction, so it outlives a rollback of this one.
+	if err := mailMarker(c, func(tx pgx.Tx) error {
+		_, err := tx.Exec(c.Context, `insert into core.mail_sends (message_id, workspace_id, user_id) values ($1, $2::uuid, $3::uuid) on conflict do nothing`, ref.MessageID, c.WorkspaceID(), ref.UserID)
+		return err
+	}); err != nil {
+		return err
+	}
+	clearMarker := func() {
+		if err := mailMarker(c, func(tx pgx.Tx) error {
+			_, err := tx.Exec(c.Context, `delete from core.mail_sends where message_id = $1 and state = 'sending'`, ref.MessageID)
+			return err
+		}); err != nil {
+			slog.Warn("notification mail marker not cleared", "error", err)
+		}
+	}
+
+	// The final check, right before SMTP: the same eligibility on the data as it is now.
+	if err := hook("final"); err != nil {
+		clearMarker()
+		return err
+	}
+	keep, kept2, drop2, err := mailEligible(c, ref, kept)
+	if err != nil {
+		clearMarker()
+		return err
+	}
+	if len(drop2) > 0 {
+		if err := mark("suppressed", drop2); err != nil {
+			clearMarker()
+			return err
+		}
+	}
+	kept = kept2
+	if extra, err = extras(); err != nil {
+		clearMarker()
+		return err
+	}
+	if len(keep) == 0 && len(extra) == 0 {
+		clearMarker()
+		return nil
+	}
 	m, err := buildNotifyMail(c.WorkspaceID(), wsName, ref, name, email, keep, extra)
 	if err != nil {
 		slog.Warn("notification mail not built; dropped", "error", err)
+		clearMarker()
 		return mark("suppressed", kept)
 	}
-	id, err := mailer.Send(c.Context, m)
+	if err := hook("send"); err != nil {
+		clearMarker()
+		return err
+	}
+	sctx, cancel := context.WithTimeout(c.Context, smtpTimeout)
+	_, err = mailer.Send(sctx, m)
+	cancel()
 	if err != nil {
 		slog.Warn("notify.mail send failed", "error", err)
-		return err // the queue retries with backoff; the rows stay queued and the next run checks everything again
+		clearMarker() // the server did not accept it: the retry may send
+		return err    // the queue retries with backoff; the rows stay queued and the next run checks everything again
 	}
-	if jid, ok := jobs.JobID(c.Context); ok {
-		if _, err := c.Tx.Exec(c.Context, `update core.jobs set payload = payload || jsonb_build_object('sent_message_id', $2::text) where id = $1`, jid, id); err != nil {
-			return err
-		}
+	if err := mailMarker(c, func(tx pgx.Tx) error {
+		_, err := tx.Exec(c.Context, `update core.mail_sends set state = 'sent' where message_id = $1`, ref.MessageID)
+		return err
+	}); err != nil {
+		slog.Warn("notification mail marker not updated", "error", err) // a retry still finds `sending` and will not resend
+	}
+	if err := hook("sent"); err != nil {
+		return err
 	}
 	return mark("mailed", kept)
 }

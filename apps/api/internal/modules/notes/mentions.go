@@ -16,7 +16,7 @@ import (
 // last handled version lives in core.note_mention_state, so the second path to arrive finds the version done and does nothing.
 //
 // What is notified: people in the page's current body who were not in the set stored at the last handled version (or, with no
-// stored set, in `baseline` or the notifications they already have for this page), minus the actor, minus anyone who cannot
+// stored set, in `baseline` or the notifications they already have for this page), minus the author of the version (the event's own author, not the dispatching actor), minus anyone who cannot
 // read the page. A mention removed and typed again later notifies again, as the old before/after diff did.
 
 // NotifyPageMentions handles the page's current version. baseline is the body that was replaced, when the caller has it
@@ -71,6 +71,10 @@ func NotifyPageMentions(c *command.Ctx, noteID string, baseline *string) error {
 			seen[strings.ToLower(u)] = true
 		}
 	}
+	author, err := versionAuthor(c, noteID, version)
+	if err != nil {
+		return command.DB(err)
+	}
 	now := mentions(body, ws)
 	var fresh []string
 	for _, u := range now {
@@ -85,7 +89,23 @@ func NotifyPageMentions(c *command.Ctx, noteID string, baseline *string) error {
 		ws, noteID, version, nonNil(now)); err != nil {
 		return command.DB(err)
 	}
-	return notifyUsers(c, noteID, title, fresh, fmt.Sprintf("note:%s:v%d", noteID, version))
+	return notifyUsers(c, noteID, title, fresh, fmt.Sprintf("note:%s:v%d", noteID, version), author)
+}
+
+// versionAuthor is who wrote the version being handled: the person (or the person an agent acted for) on the newest note.updated
+// event that carries this version. Events can run out of order and be folded (a stale event of Alice's can run after Bob's newer
+// version exists), so the actor of the event being dispatched says nothing about who typed a mention; the version's own event does.
+// With no such event (an unusual writer) the dispatching principal is the best answer there is. A system or import author is nil.
+func versionAuthor(c *command.Ctx, noteID string, version int) (*string, error) {
+	var author *string
+	err := c.Tx.QueryRow(c.Context,
+		`select coalesce(on_behalf_of::text, case when actor_type = 'user' and actor_id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' then actor_id end)
+		 from core.events where note_id = $1::uuid and kind = 'note.updated' and payload->>'version' = $2::text order by id desc limit 1`,
+		noteID, fmt.Sprint(version)).Scan(&author)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return c.Principal.UserID, nil
+	}
+	return author, err
 }
 
 // SeedMentionState records a page's current mentions as handled, without notifying anyone: for a page that has no stored set
