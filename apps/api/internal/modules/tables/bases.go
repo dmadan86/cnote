@@ -123,11 +123,15 @@ func baseGet(c *command.Ctx, raw json.RawMessage) (any, error) {
 		return nil, err
 	}
 	l := limitsFor(plan)
+	var attBytes int64
+	if err := c.Tx.QueryRow(c.Context, `select attachment_bytes from tables.bases where workspace_id=$1::uuid and id=$2::uuid`, c.WorkspaceID(), b.ID).Scan(&attBytes); err != nil {
+		return nil, command.DB(err)
+	}
 	return map[string]any{
 		"base": b, "tables": tbls, "role": role,
-		"limits": map[string]int{"records_per_base": l.RecordsPerBase, "tables_per_base": l.TablesPerBase, "fields_per_table": fieldsPerTable,
-			"records_per_table": recordsPerTable, "views_per_table": viewsPerTable},
-		"usage": map[string]int{"records": b.RecordCount, "tables": b.TableCount},
+		"limits": map[string]int64{"records_per_base": int64(l.RecordsPerBase), "tables_per_base": int64(l.TablesPerBase), "fields_per_table": fieldsPerTable,
+			"records_per_table": recordsPerTable, "views_per_table": viewsPerTable, "attachment_bytes_per_base": l.AttachmentBytesPerBase},
+		"usage": map[string]int64{"records": int64(b.RecordCount), "tables": int64(b.TableCount), "attachment_bytes": attBytes},
 	}, nil
 }
 

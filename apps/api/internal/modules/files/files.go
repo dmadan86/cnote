@@ -47,7 +47,7 @@ func Commands() []command.Command {
 		nc("file.list", command.GroupRead, list),
 		nc("file.download", command.GroupRead, download),
 		nc("file.delete", command.GroupWriteNotes, remove),
-	}, imageCommands()...)
+	}, append(imageCommands(), recordCommands()...)...)
 }
 
 var uuidRe = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)

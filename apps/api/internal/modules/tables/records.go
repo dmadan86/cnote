@@ -155,6 +155,9 @@ func prepareWrite(tc *openedTable, values map[string]any, clear []string, links 
 		if !ok {
 			return f, command.ErrInvalid("unknown field " + id)
 		}
+		if f.Type == Attachment {
+			return f, command.ErrInvalid(fmt.Sprintf("field %q holds files: use files to add or remove them", f.Name))
+		}
 		if f.Locked && !tc.Role.AtLeast(RoleManage) {
 			return f, command.ErrForbidden(fmt.Sprintf("field %q is locked: ask a manager", f.Name))
 		}
@@ -372,6 +375,10 @@ func insertRecords(c *command.Ctx, tc *openedTable, news []newRec) ([]string, er
 	if err := checkUserValues(c, tc, news); err != nil {
 		return nil, err
 	}
+	// Lock order is base, then table: the base row first (record_count and the attachment counter live on it).
+	if err := lockBaseOf(c, tc); err != nil {
+		return nil, err
+	}
 	// The next_seq update takes the table row lock, so the per-table cap check below cannot race another writer.
 	var next int64
 	if err := c.Tx.QueryRow(c.Context, `update tables.tables set next_seq = next_seq + $3 where workspace_id=$1::uuid and id=$2::uuid returning next_seq - $3`,
@@ -449,6 +456,7 @@ func bumpRecordCount(c *command.Ctx, baseID string, delta int) error {
 type writeIn struct {
 	Values map[string]any      `json:"values"`
 	Links  map[string][]string `json:"links"`
+	Files  FilesIn             `json:"files"`
 }
 
 func recordCreate(c *command.Ctx, in json.RawMessage) (any, error) {
@@ -471,7 +479,15 @@ func recordCreate(c *command.Ctx, in json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err := emitRecordEvents(c, tc, "created", []evRec{{ID: ids[0], Fields: sortedKeys(p.set)}}); err != nil {
+	fields := sortedKeys(p.set)
+	if len(a.Files) > 0 { // the base is already locked by insertRecords; attach inside the same transaction
+		ff, err := applyFiles(c, tc, ids[0], a.Files, true)
+		if err != nil {
+			return nil, err
+		}
+		fields = sortedCopy(append(fields, ff...))
+	}
+	if _, err := emitRecordEvents(c, tc, "created", []evRec{{ID: ids[0], Fields: fields}}); err != nil {
 		return nil, err
 	}
 	return recordFull(c, tc, ids[0])
@@ -532,9 +548,26 @@ func recordUpdate(c *command.Ctx, in json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	if len(a.Files) > 0 { // lock order: base, then record
+		if err := lockBaseOf(c, tc); err != nil {
+			return nil, err
+		}
+	}
 	changed, err := applyUpdates(c, tc, []upd{{ID: a.ID, prepared: p}})
 	if err != nil {
 		return nil, err
+	}
+	if len(a.Files) > 0 {
+		ff, err := applyFiles(c, tc, a.ID, a.Files, false)
+		if err != nil {
+			return nil, err
+		}
+		if len(ff) > 0 {
+			if len(changed) == 0 {
+				changed = []evRec{{ID: a.ID}}
+			}
+			changed[0].Fields = sortedCopy(append(changed[0].Fields, ff...))
+		}
 	}
 	if _, err := emitRecordEvents(c, tc, "updated", changed); err != nil {
 		return nil, err
@@ -633,7 +666,7 @@ func recordTrash(c *command.Ctx, in json.RawMessage, del bool) (any, error) {
 		from tables.records r
 		join tables.tables t on t.workspace_id=r.workspace_id and t.id=r.table_id and t.deleted_at is null
 		join tables.bases b on b.workspace_id=t.workspace_id and b.id=t.base_id and b.deleted_at is null
-		where r.workspace_id=$1::uuid and r.id = any($2::uuid[]) order by r.id for update of r`, c.WorkspaceID(), ids)
+		where r.workspace_id=$1::uuid and r.id = any($2::uuid[]) order by r.id`, c.WorkspaceID(), ids)
 	if err != nil {
 		return nil, command.DB(err)
 	}
@@ -662,6 +695,10 @@ func recordTrash(c *command.Ctx, in json.RawMessage, del bool) (any, error) {
 	}
 	if err := assertBases(c, baseIDs, RoleWrite); err != nil {
 		return nil, err
+	}
+	// Lock order is base, then table, then record: take the bases (in id order) before any record row.
+	if _, err := c.Tx.Exec(c.Context, `select 1 from tables.bases where workspace_id=$1::uuid and id = any($2::uuid[]) order by id for update`, c.WorkspaceID(), baseIDs); err != nil {
+		return nil, command.DB(err)
 	}
 	if len(ids) > 100 && len(tables) > 1 {
 		return nil, command.ErrInvalid("more than 100 records in one call must all be in one table")

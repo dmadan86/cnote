@@ -36,6 +36,24 @@ Project root `apps/web` (vercel.json installs from the monorepo root). Environme
 Serve web and API under one site (e.g. `app.example.com` and `api.example.com`) so the session cookie is shared, or
 route `/api`, `/mcp`, `/collab` to the backend through the same domain.
 
+## Tables public forms
+A table form is a link, `/tf/<token>`, that anyone can open and submit without signing in (`GET` and `POST`
+`/api/public/table-form/<token>` on the API). Forms take no file uploads. Settings, API:
+- `CNOTE_MASTER_KEY` is **required**. It keys the hash of each visitor's address, so every replica must have the same
+  value. Without it the form endpoints answer 503 (they never fall back to a per-process key) and startup logs a warning.
+- `PUBLIC_TRUSTED_PROXIES` must list every proxy between the visitor and the API, including the Next server that
+  rewrites `/api/*`. If it is empty, all visitors behind the rewrite share one address and one hourly limit (120 requests
+  an hour per address), and startup logs a warning.
+- **The outermost proxy (the edge: CDN, load balancer, Caddy) must replace `X-Forwarded-For` and `X-Real-IP`, not append
+  to what the client sent.** The API takes the rightmost entry that is not a trusted proxy, so a client can only forge
+  entries to the left of what the edge writes; an edge that passes client headers through, or a trusted range wider than
+  your own proxies, lets a visitor pick a fresh address per request and defeats the limits.
+- Limits live in Postgres (`core.rate_buckets`), so replicas agree: per address 120 requests an hour and 20 unknown
+  links an hour, 6,000 an hour for the platform, and per form 120 an hour, 10 an hour per address, and a daily cap by plan.
+- Tokens are 128 random bits, stored only as a sha256. Do not log request paths of `/api/public/table-form/` or
+  `/tf/` at the edge or in analytics: the path is the credential. The API never logs it and sends
+  `Referrer-Policy: no-referrer`.
+
 ## Websites (AI website builder)
 Published sites are served at `<name>.<SITES_DOMAIN>` by the same web app; the app and the sites must be on different
 registrable domains (the API refuses to start otherwise). Environment, API and web unless noted:
