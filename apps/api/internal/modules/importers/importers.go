@@ -22,7 +22,7 @@ func Commands() []command.Command {
 		c.MinRole = command.Admin
 	}
 	setup := command.Exists("setup.import_exists", "select 1 from importers.jobs where workspace_id = $1::uuid and kind <> 'notes' and status = 'done'")
-	return append([]command.Command{start, status, list, setup}, dataCommands()...)
+	return append(append([]command.Command{start, status, list, setup}, dataCommands()...), b2Commands()...)
 }
 
 var sources = map[string]bool{"jira": true, "confluence": true, "notion": true, "trello": true, "csv": true}

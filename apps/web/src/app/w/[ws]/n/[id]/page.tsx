@@ -168,7 +168,12 @@ function NotePageInner({ params }: { params: Promise<{ id: string }> }) {
       </div>
     )
   if (error)
-    return <p className="p-6 text-muted">This page does not exist or you do not have access to it.</p>
+    return (
+      <>
+        <p className="p-6 text-muted">This page does not exist or you do not have access to it.</p>
+        {/* Request-access button mount point. */}
+      </>
+    )
   if (!note) return null
 
   const canEdit = note.level === 'edit'
@@ -338,6 +343,8 @@ function NotePageInner({ params }: { params: Promise<{ id: string }> }) {
               },
             }}
           />
+          {/* Sub-pages chrome mount point. */}
+          {/* Attachments panel mount point. */}
         </article>
       </div>
       {panel && (

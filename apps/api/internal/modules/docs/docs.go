@@ -22,7 +22,7 @@ const (
 
 func Commands() []command.Command {
 	w, r := command.GroupWriteNotes, command.GroupRead
-	return []command.Command{
+	return append([]command.Command{
 		command.NewCommand("doc.verify", w, docVerify),
 		command.NewCommand("doc.set_owner", w, docSetOwner),
 		command.NewCommand("doc.flags", r, docFlags),
@@ -39,9 +39,9 @@ func Commands() []command.Command {
 		command.NewCommand("template.list", r, templateList),
 		command.NewCommand("template.delete", w, templateDelete),
 		command.NewCommand("template.fields", r, templateFields),
-		command.NewCommand("template.render", w, templateRender),
+		templateRenderCommand(),
 		command.NewCommand("template.refresh", w, templateRefresh),
-	}
+	}, b2Commands()...)
 }
 
 func user(c *command.Ctx) (string, error) {

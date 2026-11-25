@@ -251,3 +251,17 @@ export const commentEdit = (ws: string, id: string, body: string) =>
 export const commentDelete = (ws: string, id: string) => cmd<{ deleted: true }>(ws, 'comment.delete', { id })
 export const commentReact = (ws: string, id: string, emoji: Reaction, on: boolean) =>
   cmd<{ id: string; reactions: ReactionCount[] }>(ws, 'comment.react', { id, emoji, on })
+
+// B2 command contracts.
+export type PageViewer = { user_id: string; name: string; last_viewed_at: string }
+export type PageViewers = { count: number; viewers?: PageViewer[] }
+export type DocxImportResult = { id: string; title: string; warnings: string[] }
+export type TemplateAnswers = Record<string, string>
+export const requestAccess = (ws: string, note_id: string, message?: string) =>
+  cmd<{ ok: true }>(ws, 'note.request_access', { note_id, message })
+export const noteViewers = (ws: string, note_id: string) => cmd<PageViewers>(ws, 'note.viewers', { note_id })
+export const docArchive = (ws: string, id: string) => cmd<{ archived: number }>(ws, 'doc.archive', { id })
+export const importDocx = (
+  ws: string,
+  input: { space_id: string; parent_id?: string; filename: string; data_base64: string },
+) => cmd<DocxImportResult>(ws, 'import.docx', input)
