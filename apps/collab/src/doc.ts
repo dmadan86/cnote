@@ -15,7 +15,14 @@ export function seedClient(note: string): number {
 export async function loadDoc(
   tx: Tx,
   note: string,
-): Promise<{ doc: Y.Doc; epoch: number; version: number; ids: string[]; seedMd: string | null }> {
+): Promise<{
+  doc: Y.Doc
+  epoch: number
+  version: number
+  ids: string[]
+  seedMd: string | null
+  reseeded: boolean
+}> {
   const n = await tx.query(
     'select content_md, content_ydoc, collab_epoch, version from core.notes where id = $1 and deleted_at is null',
     [note],
@@ -37,15 +44,19 @@ export async function loadDoc(
     [note, epoch],
   )
   const ids = log.rows.map((r) => String(r.id))
+  const info = { reseeded: false }
+  const doc = buildDoc(
+    note,
+    mdText,
+    ydoc,
+    log.rows.map((r) => r.update),
+    info,
+  )
   return {
+    reseeded: info.reseeded,
     // Set while the note has no snapshot: the doc was seeded from this Markdown (see logUpdate, which pins the seed).
     seedMd: ydoc && ydoc.length > 0 ? null : mdText,
-    doc: buildDoc(
-      note,
-      mdText,
-      ydoc,
-      log.rows.map((r) => r.update),
-    ),
+    doc,
     epoch,
     version,
     ids,
@@ -58,6 +69,7 @@ export function buildDoc(
   mdText: string,
   ydoc: Uint8Array | null,
   updates: Uint8Array[],
+  info?: { reseeded: boolean },
 ): Y.Doc {
   let replay = !ydoc || ydoc.length === 0 // a seed is deterministic, so updates made on it apply again
   let doc: Y.Doc | null = null
@@ -77,6 +89,7 @@ export function buildDoc(
     }
   }
   if (!doc) {
+    if (ydoc && ydoc.length > 0 && info) info.reseeded = true // the API text replaced an existing snapshot
     doc = new Y.Doc()
     doc.clientID = seedClient(note)
     md.seed(doc, mdText)

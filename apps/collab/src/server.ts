@@ -12,7 +12,7 @@ import pg from 'pg'
 import { WebSocket, WebSocketServer } from 'ws'
 import * as Y from 'yjs'
 import { archivedVisible, mayWrite, trashedVisible } from './access.ts'
-import { authenticate, type Principal } from './auth.ts'
+import { authenticate, originOk, type Principal } from './auth.ts'
 import { CmdError, tenant } from './db.ts'
 import { buildDoc, loadDoc } from './doc.ts'
 import { CLOSE_ARCHIVED, CLOSE_DELETED, CLOSE_RELOAD, CLOSE_RETRY } from './doc-schema.ts'
@@ -69,6 +69,10 @@ interface Room {
   seedMd: string | null
   /** The in-flight or finished pin of that seed; every update waits for it. */
   pin: Promise<void> | null
+  /** The room's doc holds an edit that was refused (stale seed): it is never persisted. */
+  discard: boolean
+  /** Loaded from content_md over an existing snapshot (the row was edited through the API). */
+  reseeded: boolean
   peers: Map<number, Peer>
   nextPeer: number
   dirty: boolean
@@ -232,6 +236,8 @@ export function createServer(opts: Options) {
       doc: l.doc,
       seedMd: l.seedMd,
       pin: null,
+      discard: false,
+      reseeded: l.reseeded,
       peers: new Map(),
       nextPeer: 0,
       dirty: false,
@@ -294,7 +300,13 @@ export function createServer(opts: Options) {
     )
     // Not bare: a snapshot exists already, or the page is gone, archived or fenced (the insert below says which).
     // Bare: the row changed since load, so the seed is stale and the room is dropped.
-    if (g.rows[0]?.bare) throw new FencedError()
+    if (g.rows[0]?.bare) {
+      // The refused edit is already in room.doc (applied before it was logged): nothing of this room may be persisted.
+      room.discard = true
+      room.dirty = false
+      room.applied = []
+      throw new FencedError()
+    }
   }
 
   /** Commit one update to the log, fenced on the room's epoch. Conflict means the page was restored since. */
@@ -336,6 +348,20 @@ export function createServer(opts: Options) {
     return String(id.id)
   }
 
+  /** With nobody connected: write the final snapshot, then release the room. */
+  function settle(room: Room) {
+    if (room.peers.size !== 0) return
+    void persist(room)
+      .catch(() => {})
+      .then(() => {
+        // Keep the room if someone joined meanwhile or the final write failed (the timer retries).
+        if (room.peers.size === 0 && !room.dirty && rooms.get(room.key) === room) {
+          rooms.delete(room.key)
+          unlockNote(room)
+        }
+      })
+  }
+
   /** Start the idle timer for this room unless one is already running. */
   function kick(room: Room) {
     if (room.timerRunning) return
@@ -363,7 +389,7 @@ export function createServer(opts: Options) {
   /** Write the doc and its Markdown snapshot, bump the version, and emit note.updated as the last editor. */
   function persist(room: Room): Promise<void> {
     const run = async () => {
-      if (!room.dirty) return
+      if (!room.dirty || room.discard) return
       room.dirty = false
       const state = Buffer.from(Y.encodeStateAsUpdate(room.doc))
       const mdText = md.toMarkdown(room.doc)
@@ -472,6 +498,34 @@ export function createServer(opts: Options) {
     return null
   }
 
+  /** Apply one client update to the room's doc and log it before anyone else sees it (socket frame or close beacon). */
+  async function ingest(room: Room, me: number, p: Principal, body: Uint8Array) {
+    // The doc's own emitted update, not body: an out-of-order update that completes parked ones carries them too.
+    let changed: Uint8Array | null = null
+    const mark = (u: Uint8Array) => {
+      changed = u
+    }
+    room.doc.on('update', mark)
+    try {
+      Y.applyUpdate(room.doc, body)
+    } catch {
+      return
+    } finally {
+      room.doc.off('update', mark)
+    }
+    if (!changed) return
+    // Durable before anyone else sees it. If this fails the connection closes; the sender still holds
+    // the edit and resends it on reconnect (sync step 2), and the in-memory doc reaches the next snapshot.
+    const delta: Uint8Array = changed
+    const id = await logUpdate(room, delta)
+    room.applied.push(id)
+    room.dirty = true
+    room.lastEdit = Date.now()
+    room.editor = p
+    sendAll(room, me, syncFrame(2, delta))
+    kick(room)
+  }
+
   async function onFrame(room: Room, me: number, p: Principal, write: boolean, data: Uint8Array) {
     const peer = room.peers.get(me)
     const msg = parse(data)
@@ -483,30 +537,7 @@ export function createServer(opts: Options) {
       for (const [client, clock, json] of msg.entries) peer.awareness.set(client, { clock, json })
     } else {
       if (!write) return // read-only
-      // The doc's own emitted update, not msg.body: an out-of-order update that completes parked ones carries them too.
-      let changed: Uint8Array | null = null
-      const mark = (u: Uint8Array) => {
-        changed = u
-      }
-      room.doc.on('update', mark)
-      try {
-        Y.applyUpdate(room.doc, msg.body)
-      } catch {
-        return
-      } finally {
-        room.doc.off('update', mark)
-      }
-      if (!changed) return
-      // Durable before anyone else sees it. If this fails the connection closes; the sender still holds
-      // the edit and resends it on reconnect (sync step 2), and the in-memory doc reaches the next snapshot.
-      const delta: Uint8Array = changed
-      const id = await logUpdate(room, delta)
-      room.applied.push(id)
-      room.dirty = true
-      room.lastEdit = Date.now()
-      room.editor = p
-      sendAll(room, me, syncFrame(2, delta))
-      kick(room)
+      await ingest(room, me, p, msg.body)
     }
   }
 
@@ -544,17 +575,7 @@ export function createServer(opts: Options) {
         for (const [c, s] of peer.awareness) gone.set(c, { clock: s.clock + 1, json: 'null' })
         sendAll(room, me, awarenessFrame(gone))
       }
-      if (room.peers.size === 0) {
-        void persist(room)
-          .catch(() => {})
-          .then(() => {
-            // Keep the room if someone joined meanwhile or the final write failed (the timer retries).
-            if (room.peers.size === 0 && !room.dirty && rooms.get(room.key) === room) {
-              rooms.delete(room.key)
-              unlockNote(room)
-            }
-          })
-      }
+      settle(room)
     }
     room.events.on('stale', fence)
     const tick = setInterval(() => {
@@ -780,6 +801,88 @@ export function createServer(opts: Options) {
     })
   }
 
+  /** Largest close-beacon body (base64 of a Yjs update). Browsers cap keepalive requests at 64 KiB anyway. */
+  const MAX_BEACON = 96 * 1024
+
+  /**
+   * POST /collab/{ws}/{note}/update: the page is closing and may hold an edit the socket has not delivered. The body is
+   * the base64 of a Yjs update; it goes through the same checks as a socket frame (session, schema fence, epoch, archive,
+   * delete fence, write access) and is logged like one. Updates are idempotent, so a resend of what the socket already
+   * delivered changes nothing.
+   */
+  async function beacon(
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    url: URL,
+    ws: string,
+    note: string,
+  ) {
+    const send = (status: number, body = '') => {
+      const origin = req.headers.origin
+      if (origin && originOk(req.headers)) {
+        res.setHeader('Access-Control-Allow-Origin', origin)
+        res.setHeader('Access-Control-Allow-Credentials', 'true')
+      }
+      res.statusCode = status
+      res.end(body)
+    }
+    const chunks: Buffer[] = []
+    let size = 0
+    let tooBig = false
+    req.on('data', (c: Buffer) => {
+      size += c.length
+      if (size > MAX_BEACON) tooBig = true
+      else chunks.push(c)
+    })
+    await new Promise((r) => req.once('end', r))
+    if (tooBig) {
+      console.warn('collab close beacon refused: payload over', MAX_BEACON, 'bytes', note)
+      return send(413)
+    }
+    const epochQ = url.searchParams.get('epoch')
+    const schemaQ = url.searchParams.get('schema')
+    if (epochQ !== null && !/^-?\d+$/.test(epochQ)) return send(400)
+    const schema = schemaQ !== null && /^\d{1,6}$/.test(schemaQ) ? Number(schemaQ) : 0
+    if (schema < minSchema) return send(426)
+    let body: Uint8Array
+    try {
+      body = new Uint8Array(Buffer.from(Buffer.concat(chunks).toString('utf8'), 'base64'))
+      if (body.length === 0) return send(400)
+    } catch {
+      return send(400)
+    }
+    let room: Room | null = null
+    try {
+      const p = await authenticate(pool, req.headers, null, ws)
+      if (await tenant(pool, ws, (tx) => trashedVisible(tx, p, note))) return send(410)
+      if (await tenant(pool, ws, (tx) => archivedVisible(tx, p, note))) return send(409)
+      const before = rooms.get(`${ws}/${note}`)
+      const r = await prepare(p, ws, note)
+      room = r.room
+      if (!r.write) return send(403)
+      if (epochQ !== null && Number(epochQ) !== room.epoch) return send(409)
+      // The tab's update is only safe on the history it was typed on. That is the room the tab was talking to (still
+      // open, not rebuilt from the API's text), or a page with no text and no snapshot yet. A room this request had to
+      // load or reload starts from the row, which may already hold the tab's text (its own debounced save) or a
+      // snapshot of a different lineage: the update would land twice. Skip then; the row has what the tab saved.
+      if (room.reseeded || (room !== before && room.seedMd !== '')) return send(204)
+      await ingest(room, -1, p, body)
+      send(204)
+    } catch (e) {
+      if (e instanceof CmdError) {
+        if (room && e instanceof GoneError) room.closeCode = CLOSE_DELETED
+        if (room && e instanceof ArchivedError) room.closeCode = CLOSE_ARCHIVED
+        if (room && e instanceof FencedError) room.closeCode = CLOSE_RETRY
+        if (room && e.code === 'conflict') retire(room) // same as a refused socket frame: every peer reconnects
+        return send(e.status)
+      }
+      console.error('collab close beacon failed', note, e)
+      send(500)
+    } finally {
+      if (room) settle(room)
+    }
+  }
+
   const server = http.createServer((req, res) => {
     if (req.url === '/healthz') return void res.end('ok')
     if (req.method === 'GET' && req.url === '/collab/min-schema') {
@@ -787,6 +890,18 @@ export function createServer(opts: Options) {
       res.setHeader('Access-Control-Allow-Origin', '*')
       res.setHeader('Content-Type', 'application/json')
       return void res.end(JSON.stringify({ min: reportedMin }))
+    }
+    if (req.method === 'POST') {
+      const url = new URL(req.url ?? '/', 'http://x')
+      const m = /^\/collab\/([^/]+)\/([^/]+)\/update$/.exec(url.pathname)
+      if (m) {
+        const [ws, note] = [m[1].toLowerCase(), m[2].toLowerCase()]
+        if (!UUID.test(ws) || !UUID.test(note)) {
+          res.statusCode = 400
+          return void res.end()
+        }
+        return void beacon(req, res, url, ws, note)
+      }
     }
     if (req.method === 'POST' && req.url === '/internal/render') return render(req, res)
     if (req.method === 'POST' && req.url === '/internal/fold') return fold(req, res)
