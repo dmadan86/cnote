@@ -734,3 +734,325 @@ This section overrides anything above that disagrees with it. Builders read it f
 
 Open questions 5–8 in section 16 are answered by 17.3, 17.5 and "bases live in spaces" (kept). Question 6
 (OTP on forms) moves to 1b.
+
+## 18. Phase 1b contracts (binding)
+
+26 Nov 2026. Public forms and attachments. This section overrides sections 1, 3, 7, 9, 14 and 17.8 wherever they
+disagree, and builds on 17.1 item 4 and 17.8. Step 0 (migration 1326, command schemas, stubs, routes, `lib/tables.ts`,
+the `/tf/[token]` placeholder) is already in the tree; the three packages in 18.5 fill in bodies and do not change a
+signature, schema or table without telling the owners of the other packages. OTP on the phone field (question 6)
+stays out of 1b: a form's phone field is plain text.
+
+What changed from the earlier text: migrations are `1320`, `1325`, `1326` (not `1321_record_files.sql`); a form is a
+row in `tables.form_links` with its own config, not a `form` view (the view type check stays `grid, kanban`);
+`table_form.publish|revoke` become `table_form.create|update|get|list|rotate|disable`; `record.attach|detach` become the
+`files` input of `record.create|update`; the public API path is `/api/public/table-form/<token>` and the page is
+`/tf/<token>`.
+
+### 18.1 Attachments
+
+**Storage model (migration 1326).** A record file is a row of `core.attachments` with `field_id`, `base_id`,
+`status` (`pending` | `attached`), `record_id` (null while pending) and `staged_by` (`u:<user id>` or `f:<form id>`).
+The existing check `(note_id IS NULL) <> (site_id IS NULL)` becomes `attachments_owner`: exactly one of `note_id`,
+`site_id`, `field_id`; `field_id` and `base_id` come together; `status = 'pending'` exactly when `record_id` is null.
+The FKs `(workspace_id, base_id | field_id | record_id)` cascade, as `1290_site_publish.sql` did for `site_id`. Rows
+of notes and sites are untouched (`status` defaults to `attached`). `tables.bases.attachment_bytes` is the storage
+counter. Bytes live where the files module puts them: Postgres `data`, or the S3 object `<workspace>/<id>`.
+
+**Allow-list (shared change, files module).** Accepted, by sniffed content:
+
+| Type | Rule |
+|---|---|
+| JPEG, PNG, GIF, WebP, PDF | As today (`http.DetectContentType`) |
+| `.xlsx` (`application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`) | Sniffs as `application/zip`; opens as a zip (at most 2,000 entries, declared uncompressed total at most 250 MB, nothing is decompressed but one entry); has an entry `[Content_Types].xml` (read at most 256 KB) that names `...spreadsheetml.sheet.main+xml`, and an entry `xl/workbook.xml` |
+| `.docx` (`...wordprocessingml.document`) | Same with `...wordprocessingml.document.main+xml` and `word/document.xml` |
+| `.csv` (stored as `text/csv`) | Sniffs as `text/plain` (so HTML, XML and script are already refused), valid UTF-8 (a BOM is fine), no NUL byte, no control character except tab, CR, LF, at least one byte, **and** the filename ends in `.csv` (text has no signature, so the extension is the second check; it is never the only one) |
+
+Refused whatever the name: macro types (`macroEnabled` in `[Content_Types].xml`, an entry `vbaProject.bin`), templates,
+a zip without `[Content_Types].xml`, legacy `.xls`/`.doc` (OLE), SVG, HTML, executables. The stored `content_type` is the
+sniffed one; the client's type and extension never set it. `files.Sniff(data)` keeps its signature and now also
+returns the two OOXML types; new `files.SniffFile(data, filename)` adds the CSV rule, and `file.upload` and
+`file.record_stage` call it. `ProcessImage` (site photos) still accepts only JPEG and PNG.
+
+**Serving.** Every record file is served with `Content-Disposition: attachment; filename*=UTF-8''<name>`,
+`X-Content-Type-Options: nosniff`, `Content-Security-Policy: default-src 'none'; sandbox`, `Cache-Control: private,
+no-store`, and `Content-Type` the stored type (`text/csv; charset=utf-8` for CSV). No preview of office files. An
+`<img src>` of an image still renders, the disposition is ignored for sub-resources, so thumbnails work.
+
+**Upload, step 1: stage.**
+
+```
+POST /api/tables/files?ws=<workspace>&table_id=<uuid>&field_id=<uuid>&filename=<name>     body = the raw file
+-> 200 {"handle": "<uuid>", "filename": "...", "size": 12345, "content_type": "application/pdf"}
+```
+
+Same authentication as `/api/tables/import` (`PrincipalFor`, then `c.Allowed("record.update")`). The size cap is
+`files.MaxBytes` (10 MB): refused before reading when `Content-Length` is larger, and the body is wrapped in
+`http.MaxBytesReader` for a missing or false length. The body is read into memory up to the cap, never through
+`ParseMultipartForm` and never to a temp file ("streaming" here means a bounded read; the S3 client takes a byte
+slice, so true multipart upload to S3 is out of scope). The handler runs `tables.StageFile` in **its own transaction,
+committed before the response**:
+
+1. open the table at write; the field must be a live attachment field of that table (else not found);
+2. at most 20 unattached handles per owner per base (else conflict);
+3. reserve the bytes atomically: `update tables.bases set attachment_bytes = attachment_bytes + $n where ... and attachment_bytes + $n <= $cap`, zero rows means conflict "This base has reached its storage limit (100 MB on the Free plan)";
+4. `c.Call("file.record_stage", ...)`: judge the type (`SniffFile`), cap, insert the pending row, write the S3 object last (a failed write rolls the transaction back, row and reservation with it).
+
+Errors: 400 invalid (type, empty, over the cap), 404 (no access, no such field), 409 (storage, too many pending).
+A handle is valid for 24 hours and only for the caller that staged it, that field and that base.
+
+**Upload, step 2: attach inside the record write.** `record.create` and `record.update` take
+`files: {<attachment field id>: {add: [handle...], remove: [file id...]}}` (schema `sFilesIn`). `values` still cannot
+contain an attachment field. Inside the same transaction as the record insert or update, `applyFiles` for each field
+(removals first):
+
+- `remove`: every id must be attached to this record and field (`file.record_detach`), else the call is invalid and nothing changes; the rows are deleted, the bytes released;
+- `add`: `file.record_attach` checks each handle is `pending`, `staged_by` is the caller's owner string, its `field_id` and `base_id` match, and it is under 24 hours old; sets `status = 'attached'`, `record_id`; the cell may hold at most 10 files after the call (else conflict);
+- rewrites `data[field id]` as `FileMeta[]` (`{id, name, size, type}`, upload order) from the rows, so the cell and the table never disagree, and the 64 KB record limit still applies;
+- the field id is listed in the event's `field_ids` and the history row holds `[old list, new list]` of that metadata (never bytes).
+
+A failed write rolls everything back, so a handle is consumed only when the record write commits and can be retried
+until it expires. A handle the user never attaches (closed panel, removed file) is collected by the 24-hour sweep, and its bytes
+are released by the next reconcile.
+
+**Download.**
+
+```
+GET /api/tables/files/<file id>?ws=<workspace>&record_id=<uuid>      -> the bytes, headers as above
+```
+
+Runs the command `record.file {id, file_id}` (base64 envelope, also usable by MCP): read role on the base, the record
+and its field must be live (a record or field in the trash is not found), then `file.record_get` which checks the
+file belongs to that record. Anything else is 404 with no detail.
+
+**Internal commands (`files/record.go`, `Internal: true`, only `c.Call` from tables).** The tables module checks the
+base role and the plan; the files module checks the rows:
+
+| Command | Input | Checks | Output |
+|---|---|---|---|
+| `file.record_stage` | `{base_id, field_id, filename, data_base64, staged_by, max_bytes}` | sniff, `max_bytes` at most 10 MB, field and base exist and agree | `{id, filename, content_type, size_bytes}` |
+| `file.record_attach` | `{record_id, field_id, handles[], staged_by, max_files}` | pending, owner, field and base match, age under 24 h, count after at most `max_files` | attached files in order |
+| `file.record_detach` | `{record_id, field_id, ids[]}` | every id belongs to that record and field | `{freed_bytes}` |
+| `file.record_get` | `{record_id, id}` | the file belongs to `record_id` | `{id, filename, content_type, data_base64}` |
+| `file.record_discard` | `{ids[], staged_by}` | pending and owned by `staged_by` | `{freed_bytes}` |
+
+**Storage accounting.** One number per base, `tables.bases.attachment_bytes`, compared with a per-plan cap in
+`limits.go` (`AttachmentBytesPerBase`, **[proposal]** Free 100 MB, Team 2 GB, Business 20 GB, Enterprise 100 GB; the
+unit follows 17.1 item 3, per base). Reserved at stage (pending bytes count), released at detach and discard. The
+daily `tables.purge` sweep recomputes it from `core.attachments` for every base of the workspace
+(`ReconcileAttachmentBytes`), which is how cascaded deletes and expired pending rows give their bytes back, within a
+day. `base.get` returns `limits.attachment_bytes_per_base` and `usage.attachment_bytes` (optional properties, the 1a
+required lists are unchanged).
+
+**Orphans and deletion.** An object is never deleted in the same breath as a row, and the sweep never needs an S3
+listing: a trigger `attachments_gc` on `core.attachments` (rows with `field_id` and `storage_key = 's3'` only, so
+notes and sites behave as before) writes the object key to `core.file_gc` for **every** way a row disappears (detach,
+cascade from a purged record, field, table or base, the pending sweep). The worker runs `files.RecordSweep` hourly
+(`files.record_sweep`): per workspace, delete pending rows older than 24 hours, then delete up to 200 queued objects
+(an object that is already gone counts as deleted; a failure raises `tries`, and a row at 10 tries is dropped and
+logged). The one case it cannot see is a commit that fails after the S3 write (no row, no queue entry); the stage
+transaction contains nothing else, so the window is one round trip. Documented, not mitigated. If a workspace hard
+delete is ever added it must drain `core.file_gc` first (the sweep only visits live workspaces).
+
+**Record delete, restore, purge.**
+
+| Event | Files |
+|---|---|
+| `record.delete` (trash) | Stay attached and counted; `record.file` answers not found |
+| `record.restore` | Reachable again, nothing to do |
+| Field delete (trash) | Same, per field; restore brings them back |
+| 30-day purge of records, fields, tables, bases | The FK cascade deletes the rows, the trigger queues the objects, `files.RecordSweep` removes them within the hour, and `PurgeSweep` reconciles `attachment_bytes` in the same transaction |
+| Detach (`files.remove`) | Row deleted at once, object by the sweep, bytes released at once |
+
+### 18.2 Public forms
+
+**Table `tables.form_links`** (migration 1326): `id`, `workspace_id`, `base_id`, `table_id`, `name`, `token_hash` (unique),
+`config jsonb` (at most 16 KB), `enabled`, `submissions`, `last_submission_at`, `created_by`, `created_at`,
+`updated_at`; tenant RLS, composite FKs to bases and tables (cascade), DML grants to `cnote_app`. At most 5 forms per
+table, enabled or not. The token is 16 random bytes (128 bits) from `crypto/rand`, base64url without padding (22
+characters); only `hex(sha256(token))` is stored. The URL is `/tf/<token>`, returned once.
+
+**Config** (`FormConfig` in `forms.go`, schema `sFormCfg`):
+
+```json
+{"title": "", "intro": "", "thank_you": "", "uploads": false,
+ "fields": [{"field_id": "<uuid>", "label": "", "help": "", "required": false}]}
+```
+
+1 to 50 fields, in display order. Allowed field types are exactly those of section 7 (text, long text, number,
+currency, percent, date, checkbox, selects, phone, email, URL, attachment); link, user, autonumber and the
+created/modified types are refused on save. An attachment field is accepted only when `uploads` is true. A manager may
+put a locked field on a form (section 6). Lengths: title 120, intro and thank-you 2,000, label 100, help 300, plain
+text (the page never renders HTML). A field that is trashed later is dropped from the page and from what a POST
+accepts, the others keep working.
+
+**Commands** (all `GroupAdmin` except the two reads; base role is checked in the handler):
+
+| Command | Input | Output | Base role |
+|---|---|---|---|
+| `table_form.list` | `{table_id}` | `[form]` | write |
+| `table_form.get` | `{id}` | `form` | write |
+| `table_form.create` | `{table_id, name, config}` | `{form, url}` (`ReturnsSecret`) | manage |
+| `table_form.update` | `{id, name?, config?}` | `form`; the link is unchanged | manage |
+| `table_form.rotate` | `{id}` | `{form, url}` (`ReturnsSecret`); the old link dies at once, a disabled form is enabled | manage |
+| `table_form.disable` | `{id}` | `form`; the link answers 404; records stay | manage |
+
+There is no "enable": a disabled link is never revived, rotate gives a new one. A form is never returned with its token
+(the hash is all that exists), so a lost link means rotate. `table_form.list` is added to the brief's list because the
+builder needs it; the list has no secrets. A form also dies with its table or base (cascade, or the resolver's
+trash filters).
+
+**Resolver.** `tables.resolve_form(p_hash text)` is `SECURITY DEFINER`, `STABLE`, `SET search_path = tables, core,
+pg_temp`, `REVOKE ALL FROM PUBLIC`, `GRANT EXECUTE TO cnote_app`. It joins form, table, base and workspace and returns
+`(id, workspace_id, base_id, table_id, config, created_by, plan)` only for an enabled form whose table and base are
+not in the trash; every other case is zero rows. It is the only way the public path reads anything before a tenant is
+known; everything after runs under `db.BeginTenant` or `Registry.WithTx` with RLS.
+
+**HTTP: `GET` and `POST /api/public/table-form/<token>`** (`server/tablesform.go`; Next rewrites `/api/*`, so the page
+at `/tf/<token>` calls it same-origin). Order, for both methods, with every step before the body is read:
+
+1. Method other than GET or POST: 405 with `Allow` (no token information).
+2. Token not 22 characters of `[A-Za-z0-9_-]`: the 404.
+3. Client address: `sites.ClientIP(r, sites.TrustedProxies())` (**`PUBLIC_TRUSTED_PROXIES`**, rightmost untrusted `X-Forwarded-For` entry, only when the peer is trusted) and `sites.IPKey` (keyed hash, the address is never stored). Not `publiclinks.ClientIP`: that one follows the other switch `PUBLIC_TRUST_PROXY`. The Next rewrite is the proxy that must be in the list.
+4. Peek `tf:miss:<ip>` and refuse with 429 when it is 20 or more this hour. Then bump `tf:ip:<ip>` (120 per hour, all forms, GET and POST) and `tf:all` (6,000 per hour, the platform): over means 429.
+5. Resolve. No row: bump `tf:miss:<ip>`, answer the 404. A miss costs the prober, a valid token never touches `tf:miss`.
+6. POST only: bump `tf:tok:<form id>` (120 per hour), `tf:sub:<form id>:<ip>` (10 per hour per address per form), and `tf:day:<form id>` (day bucket; cap by plan, **[proposal]** Free 50, Team 500, Business 2,000, Enterprise 5,000, one table in `forms.go`). Over any of them: 429 `{"error":{"code":"rate_limited","message":"Too many responses right now. Please try again later."}}`.
+
+All counters use `db.Bump` and `db.Peek` on the pool, in their own autocommit statements, so a rolled-back submission
+still counts and a flood cannot be undone by failing. They are shared across API instances (Postgres), unlike the
+in-process map `server/inquiry.go` uses. A POST that is later refused or caught by the honeypot still counts.
+
+**`GET`** returns `PublicForm` (`lib/tables.ts`): `title` (config title, else the form name), `intro`, `thank_you`,
+`uploads`, `max_files` (3), `max_file_bytes` (5 MB) and `fields: [{id, label, help, type, required, options?,
+decimals?}]` for the fields on the form only (ids of fields not on the form, record data, member names, table and base
+names, the workspace name: none). `Cache-Control: no-store`.
+
+**`POST`** is `multipart/form-data`, read with `r.MultipartReader()` (no temp files) under `http.MaxBytesReader` of
+16 MB: first a part `payload` (JSON, at most 64 KB) `{"values": {"<field id>": ...}, "hp": ""}`, then at most 3 parts
+named `file.<attachment field id>` of at most 5 MB each (the sniffed type must pass the 18.1 allow-list; a part for a
+field not on the form, or any file when `uploads` is false, is invalid). Value forms: text, long text, number, currency
+(rupees as typed, `₹ 500`), percent, date, phone, email, URL as strings through `Coerce`; checkbox as `true|false`;
+selects as an option id or an array of ids through `Validate`. Unknown ids, a missing required field, a bad value:
+400 `invalid` with a message that names the field's label.
+
+Then, in this order:
+
+1. `hp` not empty: `200 {"ok":true}`, nothing stored, no file staged (the files are only in memory).
+2. Validate the payload against the config and the live fields (no database writes yet).
+3. For each file: `tables.StageFile` with owner `OwnerForm(form id)` and `maxFormFileBytes`, each in its own short transaction. This is the **atomic storage reservation**, checked against the plan cap exactly as for people. A refusal answers 409 "This form is not accepting uploads right now."
+4. One transaction (`Registry.WithTx`, system principal `KindSystem`, role Member, the form creator's workspace and space access re-checked inside): load table and fields; create the record with `insertRecords` (so the per-base record limit and the 100,000 per-table cap apply; a refusal answers 409 "This form is not accepting responses right now." without plan numbers); `applyFiles` with `OwnerForm`; `form_links.submissions + 1`, `last_submission_at`; emit `record.created` through `emitRecordEvents(..., {"via": "form", "form_id": id})`.
+5. If step 4 fails, `file.record_discard` for the staged handles in a compensating transaction (best effort; the sweep is the backup) and the reservation is released by the discard.
+6. `200 {"ok":true}`. The thank-you text is the page's, never an echo of input.
+
+**Who the record is "by".** The principal is a system principal acting for the form's creator, capped at Member: if the
+creator left the workspace, lost write access to the space, or the base moved out of their reach, the form answers the
+404. `records.created_by` and `updated_by` are null (the grid shows "Form"). Record creation writes no history row (as
+in 1a); the event is the audit trail. The event payload is value-free like every `record.*` event (17.3): `{base_id,
+table_id, record_id, field_ids, via: "form", form_id}`; no values, no file names, no submitter details.
+
+**The single 404.** Malformed token, unknown, disabled, rotated-away, trashed form, table or base, and a creator who lost
+access all answer the same status, the same headers and the same bytes:
+`{"error":{"code":"not_found","message":"This form is not available."}}` with `Content-Type: application/json`,
+`Cache-Control: no-store`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`. A test compares the
+responses byte for byte. Timing is not equalised beyond doing the same single lookup; 429 is only reachable after a
+valid resolve (except the address-level limits, which do not depend on the token).
+
+### 18.3 Web
+
+- **Attachment cell and editor** (`components/tables/attachments.tsx`, used by `cells.tsx`): the cell shows a paperclip, the count and the first file name; Enter or click opens the existing popover with the file list (name, size, type icon, a Download link `fileUrl(...)`, an inline "Remove? Yes / No"), "Add file" (`<input type=file multiple accept={FILE_ACCEPT}>`) and drag and drop. Client checks first (type by extension, 10 MB, 10 files per cell) for a quick message; the server is the judge. Each file: `stageFile`, then one `updateRecord(..., {files: {[field]: {add: [handles]}}})`; a failure shows the server message and keeps the cell unchanged. The cell is not part of copy and paste, filter, sort or group (unchanged). Locked fields and viewers see the list and the Download link only.
+- **Record panel section** (`record-panel.tsx`, `case 'attachment'`): the same component with a larger drop zone, image thumbnails (`<img src=fileUrl>`, lazy, 96 px, alt = file name) and the full list; works at 390 px. A new, unsaved record sends the handles in `createRecord`'s `files`.
+- **Form builder** (`components/tables/form-builder.tsx`, opened from a "Forms" button in the base page toolbar, shown to managers only): lists the table's forms with enabled state, submission count and last submission; "New form" asks a name; the editor has the field picker (only `FORM_FIELD_TYPES` of the table's live fields), up/down buttons to reorder (keyboard accessible, no drag-only control), per-field label, help and required, intro and thank-you text, an uploads switch (offered only when the form has an attachment field, and then at most 3 files of 5 MB are explained), and a live preview that renders the same `PublicTableForm` with a `preview` prop and no network call. After create or rotate the link is shown once with a Copy button and the line "This link is shown only once. If you lose it, make a new one." Rotate and Disable ask for confirmation ("The old link stops working"). Saving uses `updateForm`.
+- **Public page** (`app/tf/[token]/page.tsx` renders `components/tables/public-form.tsx`): outside the `w/[ws]` layout, so no sidebar, no app chrome, no session needed; a centred 480 px column on a plain background. States: loading, unavailable (the same sentence for a 404 and a network error: "This form is not available."; for 429: "Too many people are using this form right now. Please try again in a while."), the form, sending (button disabled), thank-you (`role="status"`, the config text, "Submit another response"). Labels tied to inputs, required marked in text and `aria-required`, errors in a `role="alert"` summary that takes focus, 16 px inputs so phones do not zoom. A honeypot input `hp` is moved off-screen (not `display:none`), `tabIndex=-1`, `autoComplete="off"`, `aria-hidden`. Currency shows a "₹" prefix, dates use the native date input. Files: one picker per attachment field, the 3-file and 5 MB limits checked client-side first. Submit sends `FormData` (`payload` and `file.<field id>`). `next.config.ts` adds `Referrer-Policy: no-referrer` and `X-Robots-Tag: noindex` for `/tf/:path*`.
+- **No JavaScript: not supported.** Like `/f/<token>` and `/t/<token>` the page is client-rendered. A basic no-JS submit needs the page rendered on the server (which would have to forward the visitor's address for the limits), a native multipart POST and a 303 redirect branch in the Go handler. That is not cheap, so 1b does not do it.
+
+### 18.4 Shared changes
+
+| Where | Change | Who is affected |
+|---|---|---|
+| `files.Sniff` / `files.SniffFile` (`files/files.go`, new `files/sniff.go`) | Allow-list widened by xlsx, docx and csv | **Every upload through `file.upload`**: page files, expense receipts, invoice, quotation, bill and receipt attachments, MCP `file.upload`. Site photos (`ProcessImage`, JPEG and PNG only) and importers are not affected. The web receipt picker keeps `accept` of images and PDF; no web change there |
+| Error text of `file.upload` | "only images (JPEG, PNG, GIF, WebP), PDF, Excel (.xlsx), Word (.docx) and CSV files are accepted". Keeps the words "only images" that `e2e/expense-receipts.spec.ts` matches | Tests |
+| `server/files.go` (`GET /api/w/{ws}/files/{id}`) | Images and PDF stay `inline`; xlsx, docx and csv are `attachment`. Nosniff and the CSP sandbox stay | Page files |
+| `modules/mcpmeta.go` `file.upload` | Description names the new types | MCP discover |
+| `core.attachments` | 1326 columns, the `attachments_owner` check, the `attachments_gc` trigger | Anyone selecting from the table; existing queries all filter by `note_id` or `site_id` and are unchanged |
+| `emitRecordEvents` | Optional `extra` payload keys (done in step 0) | Records |
+| `db.Peek` | Read a counter without counting (done in step 0) | Public limiters |
+
+### 18.5 Work packages (disjoint files)
+
+| # | Owns (creates or edits only these) | Content |
+|---|---|---|
+| 0 | Done: `migrations/1326_tables_forms_files.sql`; `tables/{tables,attach,forms,events}.go` (specs, types, signature stubs; `events.go` takes `extra`), `contract_test.go`; `files/record.go` (internal command schemas, stub handlers, `RecordSweep` stub); `files/files.go` (registers them); `worker/wire.go`; `server/{server,tables_files,tablesform}.go` (routes and 404 stubs); `db/bucket.go` (`Peek`); `web/src/lib/tables.ts`; `web/src/app/tf/[token]/page.tsx` placeholder | Compiles, migrates, passes the existing tests |
+| A. Attachments backend | `files/{files,record,sniff}.go`, `files/testdata/*`, tests; `server/{files,tables_files}.go`; `modules/mcpmeta.go` (one description); `tables/attach.go`, `tables/limits.go` (storage column), `tables/bases.go` (the two optional numbers in `base.get`), `tables/records.go` (only `recordCreate` and `recordUpdate`: decode `files`, call `applyFiles`, add to `field_ids` and history), `tables/fields.go` and `tables/coerce.go` (allow creating attachment fields; message of `settable`), `tables/purge.go` (call `ReconcileAttachmentBytes`), their tests | Sniff and allow-list, stage, attach, detach, download, accounting, sweep, purge reconcile |
+| B. Forms backend | `tables/forms.go`, `tables/forms_test.go`, `server/tablesform.go`, `server/tablesform_test.go` | Form commands, resolver call, public GET and POST, limits, submission transaction. Calls `StageFile` and `applyFiles` from A by their step-0 signatures; its upload tests run once A is merged |
+| C. Web | `web/src/components/tables/{attachments,form-builder,public-form}.tsx`, `cells.tsx`, `record-panel.tsx`, `field-dialog.tsx` and `fields-menu.tsx` (offer the attachment type), `base-page.tsx` (the Forms button), `web/src/app/tf/[token]/page.tsx`, `web/next.config.ts` (headers for `/tf`), `lib/tables.ts` (additions only) | Section 18.3 |
+| D. Lead, after A, B, C | `server/tables_forms_files_test.go`, `e2e/tables-forms.spec.ts`, `e2e/tables-files.spec.ts`, `e2e/fixtures/tables/*` (a real xlsx, docx, csv; a zip named .xlsx; an .xlsm; an HTML file named .csv; a 6 MB pdf), `docs/hooks.md` (`via: "form"`), `docs/deploy.md` (list the Next rewrite in `PUBLIC_TRUSTED_PROXIES`) | Integration and e2e |
+
+Waves: 0 (done), then A, B and C together, then D. Neither A nor B edits a file the other owns; the one place both
+touch a concept, form uploads, goes through `StageFile` and `applyFiles`, whose signatures are fixed in `attach.go`.
+
+### 18.6 Tests required
+
+- **Go, files:** sniff matrix (real xlsx, real docx; a zip renamed `.xlsx`; an `.xlsm`; a zip without `[Content_Types].xml`; an `.xls`; HTML, SVG and an exe named `.csv`; CSV with NUL; a PNG renamed `.pdf` is accepted as PNG); response headers; `ProcessImage` unchanged.
+- **Go, attachments:** ownership (another user's handle, another field, another base, expired, already attached, a file id of another record); 10-file cell; atomic storage cap under parallel stages; detach releases bytes; record delete, restore and purge (`core.file_gc` filled by the cascade, drained by the sweep with a fake object store, reconcile fixes the counter); pending sweep at 24 hours; a viewer cannot stage; tenant isolation of handles and of `core.file_gc`; the cell and `core.attachments` stay equal after a failed write.
+- **Go, forms:** the 404 is byte-identical for malformed, unknown, disabled, rotated, trashed form, table and base, and creator gone; limits run before the body is read (a body reader that fails the test when read); per-token, per-address, global, daily and miss limits, each; the honeypot stores nothing and stages nothing; oversize, more than 3 files, wrong type and uploads off are refused; link and user fields cannot be saved on a form and are never in `GET`; the per-base record limit; the event is value-free and has `via: "form"`; `created_by` is null; the token is never in any response after create or rotate; RLS and the composite-FK sweep tests include `form_links` and the new `core.attachments` keys.
+- **Playwright:** attach a PDF and an xlsx to a record from the grid and from the record panel, download, remove; a form built, published, submitted signed out with a file, the record and file visible; the old link 404s after rotate; the page at 390 px.
+
+### 18.7 Decisions for the owner
+
+1. Widening the allow-list changes `file.upload` for every module (18.4). Confirm that expense, invoice and bill attachments may take xlsx, docx and csv too, or restrict the widening to record files with a flag (cheap: one parameter).
+2. Storage is per base with placeholder numbers (18.1); per workspace needs a counter on `core.workspaces` instead.
+3. Form caps per plan (18.2) and the 10 per hour per address per form are placeholders.
+4. Up to 5 forms per table and a `table_form.list` command, beyond the brief's list.
+5. A lost form link can only be replaced, never shown again (the token is stored hashed, as the brief requires).
+6. No-JS submit is not built (18.3).
+7. CSV needs the `.csv` extension on top of the text check, which means a `.txt` of the same content is refused.
+8. Deployment: the Next server that rewrites `/api/*` must be in `PUBLIC_TRUSTED_PROXIES`, otherwise all visitors share one address and one hourly limit.
+9. Residual: an S3 object leaks if a stage transaction fails to commit after the write, and the sweep skips workspaces that no longer exist. No virus scan of uploads in 1b.
+
+### 18.8 Binding revisions (owner decisions and review, 2026-11-25)
+
+This subsection overrides the rest of section 18 wherever they disagree.
+
+**Owner decisions**
+1. **File types.** Attachments ship with images (png, jpeg, webp, gif) and PDF only. Excel, Word and CSV come in a follow-up that brings a hardened package validator, a CSV formula policy, a download warning, and a separate download origin. This overrides 17.1 item 4.
+2. **Scope of the allow-list.** The shared `file.upload` allow-list does **not** change. Record attachments use their own policy (`files.RecordPolicy`), and other modules keep today's images-only rule. Revert the step-0 change to `Sniff`, so that `SniffFile` and the new Office detection are used only by the record policy, or are removed until the follow-up.
+3. **Forms.** Public forms take no file uploads. Attachment fields are left out of forms. The anonymous staging owner `f:<form id>` is removed, along with every form upload limit.
+4. **Cut.** The base64 `record.file` path for MCP is cut; downloads go through HTTP only.
+
+**Review fixes**
+- **Ownership graph (review 2).** The migration enforces workspace → base → table → field and record with composite foreign keys, and each attachment row's `field_id` belongs to its `table_id`. Stage, attach, download, form create and the resolver each join the full chain and check it. Tests cover the same workspace across different bases and tables, and across workspaces.
+- **Internal commands (review 3).**
+  - The staging owner comes from the authenticated principal and is never taken from input.
+  - Maximum sizes and counts are fixed constants in the files layer.
+  - `record_get` checks record, field, base and the attached status inside the tenant transaction.
+- **Storage counter (review 5).** Every reservation, release and reconcile, and the SUM taken during reconcile, runs only after `SELECT … FROM tables.bases WHERE id=$1 FOR UPDATE`. Concurrency tests cover stage, detach, purge and reconcile.
+- **Object lifecycle (review 6, 7).**
+  - Before the S3 put, `core.file_objects(key PK, workspace_id, state 'intent'|'live', created_at)` is written and committed in its own transaction. Keys are random UUIDs and are never reused.
+  - Attaching sets the object `live` in the record transaction. Deleting a row enqueues the key in `core.file_gc` (unique on key).
+  - The sweep claims work with `FOR UPDATE SKIP LOCKED`. It deletes from S3 only when no live attachment row references the key, and an `intent` older than 24 h with no row counts as unreferenced.
+  - Failures stay queued with an attempt count and a logged error after 10; nothing is dropped. Workspaces that have been deleted are included.
+- **Downloads (review 10).**
+  - Every record file is served with `X-Content-Type-Options: nosniff` and `Content-Security-Policy: default-src 'none'; sandbox`, and its filename uses RFC 5987 encoding; names containing CR or LF are rejected at upload.
+  - PDFs always use `Content-Disposition: attachment`.
+  - Images may be served `inline` only when the sniffed type is one of the four image types; that is what thumbnails use.
+  - Existing page-file behaviour does not change.
+- **Form submit race (review 4).** The submit transaction does `SELECT … FROM tables.form_links WHERE id=$1 FOR SHARE`, re-checks the presented token hash, that the form is enabled and the form, table and base are live, validates the submission against the *current* config, and re-checks the creator's access. Rotate and disable take `FOR UPDATE`. A request that started before a rotate or disable fails with the one 404 body.
+- **Rate limits (review 11, 12).**
+  - The per-address limit is bumped atomically **before** the token lookup, for every request including malformed tokens.
+  - The address key needs a stable secret shared by all replicas. If it is missing, the public form endpoints answer 503 instead of falling back to a per-process key.
+  - Startup logs a warning when `PUBLIC_TRUSTED_PROXIES` is empty and the form endpoints are enabled.
+  - Tests cover spoofed and malformed `X-Forwarded-For` behind a trusted proxy and behind an untrusted one.
+  - docs/deploy.md states that the edge must replace forwarding headers.
+- **Residual oracle (review 13).** Identical 404 bodies do not hide timing differences. 128-bit tokens make blind guessing impractical, which is documented as the accepted risk. Tokens never appear in logs, errors or analytics, and the form page sends `Referrer-Policy: no-referrer`.
+- **Definer function (review 14).** It is declared `SET search_path = pg_catalog, pg_temp`, every object reference is fully qualified, the base and table join is enforced, and execute is granted to `cnote_app` only. A test runs it as `cnote_app` with no tenant set and confirms it returns only that one form.
+- **Caps under concurrency (review 15).**
+  - Form count per table: the table row is locked `FOR UPDATE` before counting.
+  - Files per cell: the record row is locked `FOR UPDATE`.
+  - Pending handles per user: the base row is locked; pending rows are locked when consumed.
+  - Lock order is always base, then table, then record.
+
+**Work packages after this revision:**
+- **A:** attachments backend: policy, stage, attach, download, lifecycle and GC.
+- **B:** forms backend: commands, public endpoint, limits, definer function.
+- **C:** web: attachment cell and record-panel section, form builder, public page.
+- **D:** lead: integration, e2e and docs/deploy.md.

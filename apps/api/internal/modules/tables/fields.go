@@ -179,9 +179,6 @@ func insertFieldOf(c *command.Ctx, tbl Table, f fieldNew, inverse bool, inverseO
 	if !known {
 		return Field{}, command.ErrInvalid("unknown field type " + string(f.Type))
 	}
-	if f.Type == Attachment {
-		return Field{}, command.ErrInvalid("attachment fields are not available yet")
-	}
 	cfg, err := normalizeConfig(c, tbl, f.Type, f.Config, nil)
 	if err != nil {
 		return Field{}, err

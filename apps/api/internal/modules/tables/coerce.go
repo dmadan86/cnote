@@ -44,7 +44,7 @@ func settable(f Field) error {
 	case f.Type.Computed():
 		return bad("%q is computed and cannot be set", f.Name)
 	case f.Type == Attachment:
-		return bad("%q holds attachments, which cannot be set yet", f.Name)
+		return bad("%q holds files, which are added in the record panel and cannot be pasted or imported", f.Name)
 	}
 	return nil
 }

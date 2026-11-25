@@ -45,6 +45,7 @@ type Server struct {
 }
 
 func New(pool *pgxpool.Pool, reg *command.Registry) *Server {
+	warnTablesForm()
 	a := &auth.Auth{Pool: pool}
 	return &Server{Pool: pool, Registry: reg, Auth: a, Public: publiclinks.NewHandler(pool, reg),
 		OAuth: &oauth.Handler{Pool: pool, Auth: a},
@@ -83,6 +84,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.sitesPublic(w, r)
 	case isDraftImage(r):
 		s.siteDraftImage(w, r)
+	case strings.HasPrefix(r.URL.Path, tablesFormPrefix):
+		s.tablesForm(w, r)
 	case strings.HasPrefix(r.URL.Path, "/api/public/"):
 		s.Public.ServeHTTP(w, r)
 	case r.Method == http.MethodGet && chatStreamRe.MatchString(r.URL.EscapedPath()):
@@ -94,6 +97,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.importUpload(w, r)
 	case isTablesImportRoute(r):
 		s.tablesImportUpload(w, r)
+	case isTablesFilesRoute(r):
+		s.tablesFiles(w, r)
 	case oauth.Handles(r):
 		s.OAuth.ServeHTTP(w, r)
 	case strings.HasPrefix(r.URL.EscapedPath(), "/api/w/"):

@@ -13,13 +13,15 @@ type planLimits struct {
 	BasesPerWorkspace int
 	TablesPerBase     int
 	RecordsPerBase    int
+	// AttachmentBytesPerBase is the storage of record files, pending uploads included (design 18.1, a proposal).
+	AttachmentBytesPerBase int64
 }
 
 var planTable = map[string]planLimits{
-	"free":       {3, 5, 1000},
-	"team":       {50, 20, 25000},
-	"business":   {200, 50, 100000},
-	"enterprise": {1000, 50, 250000},
+	"free":       {3, 5, 1000, 100 << 20},
+	"team":       {50, 20, 25000, 2 << 30},
+	"business":   {200, 50, 100000, 20 << 30},
+	"enterprise": {1000, 50, 250000, 100 << 30},
 }
 
 // Fixed on every plan.

@@ -127,9 +127,7 @@ func TestManagerFlow(t *testing.T) {
 		got := call(t, c, "table.get", map[string]any{"id": a})
 		_, err = callErr(c, "field.delete", map[string]any{"id": s(got, "primary_field_id")})
 		wantCode(t, err, command.Invalid, "primary")
-		// attachments are not in 1a; unknown types and bad config are refused
-		_, err = callErr(c, "field.create", map[string]any{"table_id": a, "name": "F", "type": "attachment"})
-		wantCode(t, err, command.Invalid, "not available")
+		// unknown types and bad config are refused
 		_, err = callErr(c, "field.create", map[string]any{"table_id": a, "name": "N", "type": "number", "config": map[string]any{"decimals": 9}})
 		wantCode(t, err, command.Invalid, "decimals")
 		_, err = callErr(c, "field.create", map[string]any{"table_id": a, "name": "L", "type": "link", "config": map[string]any{"table_id": newID()}})
