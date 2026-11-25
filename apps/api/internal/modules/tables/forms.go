@@ -2,7 +2,7 @@ package tables
 
 // Phase 1b public forms (design 18.2, revised by 18.8: forms take no file uploads). The token is 128 random bits, only
 // its sha256 is stored. Everything after the resolver runs under RLS as a system principal acting for the form's
-// creator, with the form row locked FOR SHARE so rotate and disable (FOR UPDATE) cannot interleave with a submission.
+// creator, with the form row locked FOR NO KEY UPDATE so rotate and disable (FOR UPDATE) cannot interleave with a submission.
 
 import (
 	"context"
@@ -12,7 +12,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"log/slog"
 	"regexp"
 	"strings"
 	"time"
@@ -22,7 +21,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/cnote/api/internal/command"
-	"github.com/cnote/api/internal/db"
 )
 
 const (
@@ -123,7 +121,7 @@ type formRow struct {
 }
 
 // withForm runs fn in one tenant transaction, as a system principal for the form's creator capped at Member. First it
-// locks the form row FOR SHARE and re-checks the presented token hash, enabled, and the current config; then the live
+// locks the form row FOR NO KEY UPDATE (so submits serialise and can count in-transaction) and re-checks the presented token hash, enabled, and the current config; then the live
 // table and base and the creator's access. Any failure of those is ErrNoForm (the one 404).
 func withForm(ctx context.Context, pool *pgxpool.Pool, reg *command.Registry, tokenHash string, f ResolvedForm, fn func(*command.Ctx, *openedTable, formRow) error) error {
 	creator := f.CreatorPtr()
@@ -133,7 +131,7 @@ func withForm(ctx context.Context, pool *pgxpool.Pool, reg *command.Registry, to
 		var cfg []byte
 		var tableID, createdBy string
 		err := c.Tx.QueryRow(ctx, `select name, config, table_id::text, created_by::text from tables.form_links
-			where workspace_id=$1::uuid and id=$2::uuid and token_hash=$3 and enabled for share`, f.WorkspaceID, f.ID, tokenHash).Scan(&fr.Name, &cfg, &tableID, &createdBy)
+			where workspace_id=$1::uuid and id=$2::uuid and token_hash=$3 and enabled for no key update`, f.WorkspaceID, f.ID, tokenHash).Scan(&fr.Name, &cfg, &tableID, &createdBy)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrNoForm
 		}
@@ -291,10 +289,10 @@ func SubmitForm(ctx context.Context, pool *pgxpool.Pool, reg *command.Registry, 
 	if json.Unmarshal(payload, &in) != nil {
 		return command.ErrInvalid("invalid request")
 	}
-	if in.Hp != "" {
-		return nil
-	}
-	err := withForm(ctx, pool, reg, tokenHash, f, func(c *command.Ctx, tc *openedTable, fr formRow) error {
+	return withForm(ctx, pool, reg, tokenHash, f, func(c *command.Ctx, tc *openedTable, fr formRow) error {
+		if in.Hp != "" {
+			return nil // honeypot: same lock and recheck as a real post, then store nothing
+		}
 		set, err := formValues(tc, fr.Config, in.Values)
 		if err != nil {
 			return err
@@ -310,23 +308,13 @@ func SubmitForm(ctx context.Context, pool *pgxpool.Pool, reg *command.Registry, 
 		if err != nil {
 			return err
 		}
-		_, err = emitRecordEvents(c, tc, "created", []evRec{{ID: ids[0], Fields: sortedKeys(set)}}, map[string]any{"via": "form", "form_id": f.ID})
+		if _, err = emitRecordEvents(c, tc, "created", []evRec{{ID: ids[0], Fields: sortedKeys(set)}}, map[string]any{"via": "form", "form_id": f.ID}); err != nil {
+			return err
+		}
+		// The form row is held FOR NO KEY UPDATE, so this increment is atomic with the submission.
+		_, err = c.Tx.Exec(ctx, `update tables.form_links set submissions = submissions + 1, last_submission_at = now() where workspace_id=$1::uuid and id=$2::uuid`, f.WorkspaceID, f.ID)
 		return err
 	})
-	if err == nil {
-		// Counted after the commit: two submissions both hold FOR SHARE, so updating the row inside would deadlock.
-		if tx, e := db.BeginTenant(ctx, pool, f.WorkspaceID); e == nil {
-			_, e = tx.Exec(ctx, `update tables.form_links set submissions = submissions + 1, last_submission_at = now() where workspace_id=$1::uuid and id=$2::uuid`, f.WorkspaceID, f.ID)
-			if e == nil {
-				e = tx.Commit(ctx)
-			}
-			if e != nil {
-				slog.Warn("form counter", "error", e)
-			}
-			_ = tx.Rollback(ctx)
-		}
-	}
-	return err
 }
 
 // ---- commands ----

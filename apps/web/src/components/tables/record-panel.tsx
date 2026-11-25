@@ -313,6 +313,15 @@ export function RecordPanel({
     p.finally(() => pending.current.delete(p))
     return p
   }
+  // One attachment upload or save at a time per record, so a slower response never overwrites a newer one.
+  const chain = useRef<Promise<unknown>>(Promise.resolve())
+  const runAttach = useCallback((job: () => Promise<boolean>) => {
+    const p = chain.current.then(job)
+    chain.current = p.catch(() => {})
+    pending.current.add(p)
+    p.finally(() => pending.current.delete(p))
+    return p
+  }, [])
   const close = useCallback(async () => {
     setErr(undefined)
     const results = await Promise.all([...[...flushers.current].map((f) => f()), ...pending.current])
@@ -385,6 +394,7 @@ export function RecordPanel({
                 recordId={recordId}
                 value={rec.data[f.id]}
                 readOnly={!write || locked}
+                run={runAttach}
                 onChange={(r) => {
                   setRec(r)
                   dirty.current = true

@@ -720,3 +720,32 @@ func TestRecordFilesRacingSweepsDeleteEachObjectOnce(t *testing.T) {
 	}
 	eq(t, b.dbStrings(s.ws, "select count(*)::text from core.file_gc"), []string{"0"})
 }
+
+// A stage that stalls across the 24 hour threshold holds its intent FOR UPDATE; the sweep must skip it.
+func TestRecordSweepSkipsIntentHeldByAStage(t *testing.T) {
+	useMemS3(t)
+	b := newBT(t, false)
+	s := newTFS(b)
+	ctx := context.Background()
+	key := s.ws + "/" + "11111111-1111-4111-8111-111111111111"
+	b.adminSQL(fmt.Sprintf("insert into core.file_objects (key, workspace_id, state) values ('%s', '%s', 'intent')", key, s.ws))
+	b.adminSQL("update core.file_objects set created_at = now() - interval '25 hours' where state='intent'")
+	tx, err := db.BeginTenant(ctx, b.pool, s.ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	var one int
+	if err := tx.QueryRow(ctx, `select 1 from core.file_objects where key=$1 and state='intent' for update`, key).Scan(&one); err != nil {
+		t.Fatal(err)
+	}
+	b.sweep()
+	b.sweep()
+	eq(t, b.dbStrings(s.ws, "select count(*)::text from core.file_objects where state='intent'"), []string{"1"})
+	eq(t, b.dbStrings(s.ws, "select count(*)::text from core.file_gc"), []string{"0"})
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	b.sweep() // the stage is done and attached nothing: now it is collected
+	eq(t, b.dbStrings(s.ws, "select count(*)::text from core.file_objects"), []string{"0"})
+}

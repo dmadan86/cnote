@@ -353,3 +353,51 @@ func TestResolveFormAsAppWithNoTenant(t *testing.T) {
 		t.Errorf("secdef %v config %v acl %s", secdef, cfg, acl)
 	}
 }
+
+func TestFormHoneypotRechecksRotateAndDisable(t *testing.T) {
+	x := newFormFx(t)
+	id, tok := x.create(x.cfg())
+	h := HashFormToken(tok)
+	f, err := ResolveForm(context.Background(), x.app, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := x.submit(tok, map[string]any{"hp": "bot"}); err != nil {
+		t.Fatalf("honeypot on a live form: %v", err)
+	}
+	x.admin.Exec(context.Background(), `update tables.form_links set enabled=false where id=$1`, id)
+	b, _ := json.Marshal(map[string]any{"hp": "bot"})
+	if err := SubmitForm(context.Background(), x.app, command.NewRegistry(), h, f, b); err != ErrNoForm {
+		t.Fatalf("honeypot on a disabled form: %v", err)
+	}
+	if x.count() != 0 {
+		t.Fatal("honeypot stored a record")
+	}
+}
+
+func TestFormSubmissionCountSurvivesConcurrentSubmits(t *testing.T) {
+	x := newFormFx(t)
+	id, tok := x.create(x.cfg())
+	const n = 8
+	var wg sync.WaitGroup
+	errs := make(chan error, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			errs <- x.submit(tok, map[string]any{"values": map[string]any{x.f["Name"]: fmt.Sprint("n", i)}})
+		}(i)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	var subs int
+	x.admin.QueryRow(context.Background(), `select submissions from tables.form_links where id=$1`, id).Scan(&subs)
+	if subs != n || x.count() != n {
+		t.Fatalf("submissions %d, records %d, want %d", subs, x.count(), n)
+	}
+}

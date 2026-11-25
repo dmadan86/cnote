@@ -330,7 +330,8 @@ func recordStage(c *command.Ctx, raw json.RawMessage) (any, error) {
 		key, stored = "s3", nil
 		var announced bool
 		if v.ObjectID != "" {
-			if err := c.Tx.QueryRow(c.Context, `select exists (select 1 from core.file_objects where key = $1::uuid::text || '/' || $2::uuid::text and workspace_id=$1::uuid and state='intent')`,
+			// FOR UPDATE: the sweep claims intents with SKIP LOCKED, so an intent held by a staging transaction is never swept.
+			if err := c.Tx.QueryRow(c.Context, `select exists (select 1 from (select 1 from core.file_objects where key = $1::uuid::text || '/' || $2::uuid::text and workspace_id=$1::uuid and state='intent' for update) l)`,
 				ws, v.ObjectID).Scan(&announced); err != nil {
 				return nil, command.DB(err)
 			}
@@ -644,9 +645,19 @@ func sweepWorkspace(ctx context.Context, pool *pgxpool.Pool, ws string) error {
 			return err
 		}
 	}
-	if _, err := tx.Exec(ctx, `with d as (delete from core.file_objects o where o.workspace_id=$1::uuid and o.state='intent' and o.created_at < now() - interval '24 hours'
+	// Claim old intents with SKIP LOCKED (a staging transaction holds its intent FOR UPDATE), then re-check in a fresh
+	// statement: a stage that committed in between has an attachment row now.
+	crows, err := tx.Query(ctx, `select key from core.file_objects where workspace_id=$1::uuid and state='intent' and created_at < now() - interval '24 hours' for update skip locked`, ws)
+	if err != nil {
+		return err
+	}
+	claimed, err := pgx.CollectRows(crows, pgx.RowTo[string])
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `with d as (delete from core.file_objects o where o.workspace_id=$1::uuid and o.key = any($2::text[]) and o.state='intent'
 		and not exists (select 1 from core.attachments a where a.workspace_id = o.workspace_id and a.id = split_part(o.key, '/', 2)::uuid) returning o.key, o.workspace_id)
-		insert into core.file_gc (workspace_id, object_key) select workspace_id, key from d on conflict (object_key) do nothing`, ws); err != nil {
+		insert into core.file_gc (workspace_id, object_key) select workspace_id, key from d on conflict (object_key) do nothing`, ws, claimed); err != nil {
 		return err
 	}
 	type item struct {

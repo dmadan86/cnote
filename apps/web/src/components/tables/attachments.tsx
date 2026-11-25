@@ -2,6 +2,7 @@
 import { FileText, Paperclip, Upload, X } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { btn } from '@/components/ui'
+import { CmdFailure } from '@/lib/api'
 import {
   discardFile,
   FILE_ACCEPT,
@@ -52,6 +53,7 @@ export function AttachmentEditor({
   readOnly,
   onChange,
   onFlush,
+  run,
 }: {
   ws: string
   tableId: string
@@ -62,15 +64,20 @@ export function AttachmentEditor({
   onChange: (r: TableRecordWithLinks) => void
   /** Registers a function that saves removals still waiting out their Undo; returns the unregister. */
   onFlush?: (flush: () => Promise<boolean>) => () => void
+  /** Runs one upload or save of this record: one at a time, and the panel waits for it before closing. */
+  run: (job: () => Promise<boolean>) => Promise<boolean>
 }) {
   const files = Array.isArray(value) ? (value as FileMeta[]) : []
   const [gone, setGone] = useState<FileMeta[]>([]) // removed, waiting out the Undo
   const [ups, setUps] = useState<Up[]>([])
   const [errs, setErrs] = useState<string[]>([])
   const [over, setOver] = useState(false)
+  const [kept, setKept] = useState<string[]>([]) // staged handles whose save failed for a reason that may pass
   const input = useRef<HTMLInputElement>(null)
   const abort = useRef<AbortController>(null)
   const timer = useRef<ReturnType<typeof setTimeout>>(null)
+  const keptRef = useRef(kept)
+  keptRef.current = kept
   const goneRef = useRef(gone)
   goneRef.current = gone
   const changeRef = useRef(onChange)
@@ -88,16 +95,38 @@ export function AttachmentEditor({
   const flush = useCallback(async () => {
     if (timer.current) clearTimeout(timer.current)
     const ids = goneRef.current.map((f) => f.id)
-    if (!ids.length) return true
+    if (!ids.length) return keptRef.current.length === 0 // staged files not yet saved keep the panel open
     setGone([])
-    try {
-      await save({ remove: ids })
-      return true
-    } catch (x) {
-      setErrs([(x as Error).message])
-      return false
-    }
-  }, [save])
+    return run(async () => {
+      try {
+        await save({ remove: ids })
+        return true
+      } catch (x) {
+        setErrs([(x as Error).message])
+        return false
+      }
+    })
+  }, [save, run])
+
+  /** Attaches staged handles. Only a definite rejection (4xx) discards them; on a network error or 5xx they are kept for Try again. */
+  const attach = useCallback(
+    async (handles: string[]) => {
+      try {
+        await save({ add: handles })
+        setKept([])
+        return true
+      } catch (x) {
+        const st = x instanceof CmdFailure ? x.status : 0
+        if (st >= 400 && st < 500 && ![408, 425, 429].includes(st)) {
+          setKept([])
+          await Promise.all(handles.map((h) => discardFile(ws, h)))
+        } else setKept(handles)
+        setErrs((e) => [...e, (x as Error).message])
+        return false
+      }
+    },
+    [save, ws],
+  )
 
   useEffect(() => onFlush?.(flush), [onFlush, flush])
   useEffect(
@@ -140,31 +169,35 @@ export function AttachmentEditor({
     if (!ok.length) return
     const ctl = new AbortController()
     abort.current = ctl
-    const handles: string[] = []
-    const failed: string[] = []
-    setUps(ok.map((f, i) => ({ key: i, name: f.name, pct: 0 })))
-    for (const [i, f] of ok.entries()) {
-      try {
-        const s = await stageFile(ws, tableId, field.id, f, {
-          signal: ctl.signal,
-          onProgress: (p) =>
-            setUps((u) => u.map((x) => (x.key === i ? { ...x, pct: Math.round(p * 100) } : x))),
-        })
-        handles.push(s.handle)
-      } catch (x) {
-        if ((x as Error).name === 'AbortError') break
-        failed.push(`"${f.name}" was not added. ${(x as Error).message}`)
+    await run(async () => {
+      const handles: string[] = []
+      const failed: string[] = []
+      setUps(ok.map((f, i) => ({ key: i, name: f.name, pct: 0 })))
+      for (const [i, f] of ok.entries()) {
+        try {
+          const s = await stageFile(ws, tableId, field.id, f, {
+            signal: ctl.signal,
+            onProgress: (p) =>
+              setUps((u) => u.map((x) => (x.key === i ? { ...x, pct: Math.round(p * 100) } : x))),
+          })
+          handles.push(s.handle)
+        } catch (x) {
+          if ((x as Error).name === 'AbortError') break
+          failed.push(`"${f.name}" was not added. ${(x as Error).message}`)
+        }
       }
-    }
-    try {
-      if (handles.length) await save({ add: handles })
-    } catch (x) {
-      failed.push((x as Error).message)
-      await Promise.all(handles.map((h) => discardFile(ws, h))) // staged, never attached
-    }
-    abort.current = null
-    setUps([])
-    if (failed.length) setErrs((e) => [...e, ...failed])
+      const saved = handles.length ? await attach(handles) : true
+      abort.current = null
+      setUps([])
+      if (failed.length) setErrs((e) => [...e, ...failed])
+      return saved
+    })
+  }
+
+  const retry = () => {
+    const handles = kept
+    setErrs([])
+    void run(() => attach(handles))
   }
 
   const pick = (list: FileList | null) => {
@@ -236,6 +269,11 @@ export function AttachmentEditor({
       {busy && (
         <button type="button" onClick={() => abort.current?.abort()} className={`${btn} min-h-11 sm:min-h-0`}>
           Cancel upload
+        </button>
+      )}
+      {kept.length > 0 && !busy && (
+        <button type="button" onClick={retry} className={`${btn} min-h-11 sm:min-h-0`}>
+          Try again
         </button>
       )}
       {errs.map((m) => (
