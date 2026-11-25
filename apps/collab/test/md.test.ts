@@ -217,6 +217,23 @@ describe('md', () => {
     expect(out.includes('<table')).toBe(false)
   })
 
+  it('image alt and title escape brackets, quotes and backslashes, and read them back as plain text', () => {
+    const doc = new Y.Doc()
+    seed(doc, '![chart \\[Q1\\] a\\\\b](https://x.y/c.png "say \\"hi\\" a\\\\b")')
+    const e = el(frag(doc).get(0))
+    expect(e.getAttribute('alt')).toBe('chart [Q1] a\\b')
+    expect(e.getAttribute('title')).toBe('say "hi" a\\b')
+    expect(toMarkdown(doc)).toBe('![chart \\[Q1\\] a\\\\b](https://x.y/c.png "say \\"hi\\" a\\\\b")')
+    // an image the editor made with those characters in its attributes is written escaped, so the next read keeps it
+    const made = new Y.Doc()
+    const img = new Y.XmlElement('image')
+    frag(made).insert(0, [img])
+    img.setAttribute('src', 'https://x.y/c.png')
+    img.setAttribute('alt', 'a]b[c')
+    img.setAttribute('title', 'q"t')
+    expect(toMarkdown(made)).toBe('![a\\]b\\[c](https://x.y/c.png "q\\"t")')
+  })
+
   it('images_with_and_without_title', () => {
     for (const md of [
       '![a cat](https://x.y/c.png)',
@@ -306,5 +323,37 @@ describe('md', () => {
     const b = new Y.Doc()
     Y.applyUpdate(b, Y.encodeStateAsUpdate(a))
     expect(toMarkdown(b)).toBe(DOC)
+  })
+})
+
+describe('A1 blocks', () => {
+  it('stores the status, date and panel forms as the editor writes them (Yjs names)', () => {
+    expect(marksOf('<span data-status="green">DONE</span>', 'DONE')).toContain('status')
+    expect(marksOf('<time datetime="2026-12-01">1 Dec 2026</time>', '1 Dec 2026')).toContain('date')
+    const doc = new Y.Doc()
+    seed(doc, '> [!WARNING]\n> careful')
+    expect(el(frag(doc).get(0)).nodeName).toBe('panel')
+    expect(el(frag(doc).get(0)).getAttribute('kind')).toBe('warning')
+  })
+  it('drops a status colour or date that is not on the list, keeping the text', () => {
+    expect(rt('<span data-status="pink">DONE</span> and <time datetime="soon">later</time>')).toBe(
+      'DONE and later',
+    )
+  })
+  it('reads an unclosed expand as plain text and an empty one as an empty block', () => {
+    expect(rt('<details><summary>t</summary>\n\nbody')).toContain('body')
+    expect(rt('<details><summary>t</summary>\n\n</details>')).toBe(
+      '<details><summary>t</summary>\n\n</details>',
+    )
+  })
+  it('does not end an expand at a </details> inside a code fence', () => {
+    const md = '<details><summary>t</summary>\n\n```\n</details>\n```\n\n</details>'
+    expect(rt(md)).toBe(md)
+  })
+  it('refuses lookalike image paths as blocks', () => {
+    expect(rt('![x](/api/files/0f0e0d0c-0b0a-4908-8706-050403020100)')).not.toContain('<img')
+    const doc = new Y.Doc()
+    seed(doc, '![x](/api/w/7b3f1c2e-5a4d-4e6f-8a9b-0c1d2e3f4a5b/files/0f0e0d0c-0b0a-4908-8706-050403020100)')
+    expect(el(frag(doc).get(0)).nodeName).toBe('image')
   })
 })

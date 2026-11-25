@@ -8,6 +8,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/cnote/api/internal/command"
+	"github.com/cnote/api/internal/modules/notes"
 )
 
 const (
@@ -70,7 +71,7 @@ func IndexJob(c *command.Ctx, payload json.RawMessage) error {
 		return err
 	}
 	if err == nil && freshness != "archived" {
-		chunks = ChunkText(title+"\n\n"+content, chunkChars, chunkOverlap)
+		chunks = ChunkText(title+"\n\n"+notes.PlainText(content), chunkChars, chunkOverlap)
 	}
 	if len(chunks) == 0 {
 		_, err := c.Tx.Exec(c.Context, "delete from ai.chunks where note_id = $1::uuid", p.NoteID)

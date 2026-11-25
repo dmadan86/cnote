@@ -192,7 +192,7 @@ func TestAIMeteringAndAudit(t *testing.T) {
 		t.Errorf("BYO calls must still be audited: %s", n)
 	}
 	// a failing provider leaves no audit row and no usage, and its body never reaches the caller
-	e.goCmd(o, "note.update", map[string]any{"id": note, "content_md": "FAIL500"})
+	e.goCmd(o, "note.update", map[string]any{"id": note, "schema": 2, "expected_epoch": 1, "content_md": "FAIL500"})
 	r := e.goCmd(o, "ai.summarize", map[string]any{"note_id": note})
 	if r.status != 500 || errMsg(r) != "AI provider error: model API returned 500 Internal Server Error" {
 		t.Errorf("provider failure: %d %s", r.status, r.body)

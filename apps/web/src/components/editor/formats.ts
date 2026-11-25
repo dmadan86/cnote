@@ -67,9 +67,20 @@ export const HtmlTable = Table.extend({
   },
 })
 
-/** Only http(s) images are stored (the dialog enforces it too; pasted images are dropped here). */
+/** Only http(s) images and the one uploaded-file path are stored; any other image keeps its alt text, not its URL. */
 export const SafeImage = Image.extend({
-  renderMarkdown(node, h, ctx) {
-    return safeSrc(String(node.attrs?.src ?? '')) ? (this.parent?.(node, h, ctx) ?? '') : ''
+  parseMarkdown(token, h) {
+    // the Markdown parser keeps the backslash before a backslash; the other escapes it removes itself
+    const un = (v: unknown) => (typeof v === 'string' ? v.replace(/\\([\\[\]"])/g, '$1') : v)
+    return h.createNode('image', { src: token.href, title: un(token.title), alt: un(token.text) })
+  },
+  renderMarkdown(node) {
+    const alt = String(node.attrs?.alt ?? '')
+    const src = String(node.attrs?.src ?? '')
+    if (!safeSrc(src)) return alt
+    const title = node.attrs?.title ? String(node.attrs.title) : ''
+    // `\`, `[` and `]` are escaped in the alt text and `\` and `"` in the title, so they survive a save (md.ts reads the same).
+    const a = alt.replace(/[\\[\]]/g, '\\$&')
+    return title ? `![${a}](${src} "${title.replace(/["\\]/g, '\\$&')}")` : `![${a}](${src})`
   },
 })

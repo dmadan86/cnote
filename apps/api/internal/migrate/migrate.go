@@ -1,6 +1,7 @@
 // Package migrate applies migrations/*.sql, byte-compatible with sqlx's _sqlx_migrations table
 // (version, description with spaces, sha384 checksum of the file bytes), so databases created by the
-// retired Rust binary keep working. Every file runs in its own transaction.
+// retired Rust binary keep working. Every file runs in its own transaction, except a file whose first line is
+// `-- no-transaction`: it must hold exactly one statement (for CREATE INDEX CONCURRENTLY) and runs outside one.
 package migrate
 
 import (
@@ -24,6 +25,7 @@ type file struct {
 	desc    string
 	sql     string
 	sum     []byte
+	noTx    bool
 }
 
 func load(dir string) ([]file, error) {
@@ -43,11 +45,8 @@ func load(dir string) ([]file, error) {
 		if err != nil {
 			return nil, err
 		}
-		if bytes.HasPrefix(b, []byte("-- no-transaction")) {
-			return nil, fmt.Errorf("migration %s: no-transaction migrations are not supported", p)
-		}
 		sum := sha512.Sum384(b)
-		out = append(out, file{v, strings.ReplaceAll(desc, "_", " "), string(b), sum[:]})
+		out = append(out, file{v, strings.ReplaceAll(desc, "_", " "), string(b), sum[:], bytes.HasPrefix(b, []byte("-- no-transaction"))})
 	}
 	if len(out) == 0 { // a wrong working directory must not look like "every applied migration is missing"
 		return nil, fmt.Errorf("no migrations found in %s (run from the repo root or pass the directory)", dir)
@@ -126,6 +125,20 @@ func Run(ctx context.Context, adminURL, dir string, reset bool, logf func(string
 			continue
 		}
 		start := time.Now()
+		if f.noTx {
+			// One statement over the simple protocol, so Postgres does not wrap it in an implicit transaction. A failure
+			// leaves nothing recorded; an invalid index it left behind must be dropped by hand before the retry.
+			if _, err := conn.Exec(ctx, f.sql); err != nil {
+				return fmt.Errorf("migration %d %s: %w", f.version, f.desc, err)
+			}
+			if _, err := conn.Exec(ctx, "insert into _sqlx_migrations(version, description, success, checksum, execution_time) values ($1,$2,true,$3,$4)",
+				f.version, f.desc, f.sum, time.Since(start).Nanoseconds()); err != nil {
+				return err
+			}
+			n++
+			logf("applied migration %d %s (no transaction)", f.version, f.desc)
+			continue
+		}
 		tx, err := conn.Begin(ctx)
 		if err != nil {
 			return err

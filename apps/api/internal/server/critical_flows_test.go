@@ -63,8 +63,8 @@ func TestCriticalFlows(t *testing.T) {
 	// notes, search, versions and restore (the live document is rendered by the collab service)
 	space := ok(owner, "space.create", map[string]any{"key": "DOC", "name": "Docs"})["id"].(string)
 	note := ok(owner, "note.create", map[string]any{"space_id": space, "title": "Plan", "content_md": "v0 ünï"})["id"].(string)
-	ok(owner, "note.update", map[string]any{"id": note, "content_md": "v1"})
-	ok(owner, "note.update", map[string]any{"id": note, "content_md": "v2"})
+	ok(owner, "note.update", map[string]any{"id": note, "schema": 2, "expected_epoch": 1, "content_md": "v1"})
+	ok(owner, "note.update", map[string]any{"id": note, "schema": 2, "expected_epoch": 1, "content_md": "v2"})
 	if r := call(owner, "search.notes", map[string]any{"q": "v2"}); r.status != 200 {
 		t.Fatalf("search: %d %s", r.status, r.body)
 	}

@@ -103,7 +103,7 @@ func TestMentionEmail(t *testing.T) {
 	sp := str(g.cmd("space.create", map[string]any{"key": "DOC", "name": "Docs", "visibility": "open"}), "id")
 	title := "Plan über\nalles"
 	note := str(g.cmd("note.create", map[string]any{"space_id": sp, "title": title, "content_md": "hi"}), "id")
-	g.cmd("note.update", map[string]any{"id": note, "content_md": "hi [@Mo](/w/" + w.ws + "/people/" + mo.userID + ")"})
+	g.cmd("note.update", map[string]any{"id": note, "schema": 2, "expected_epoch": 1, "content_md": "hi [@Mo](/w/" + w.ws + "/people/" + mo.userID + ")"})
 	g.drain(100)
 	smtp.mu.Lock()
 	defer smtp.mu.Unlock()
@@ -156,7 +156,7 @@ func TestMentionEmailSkippedAndFailureNeverRetried(t *testing.T) {
 			t.Setenv("SMTP_URL", smtpURL)
 		}
 		n := str(g.cmd("note.create", map[string]any{"space_id": sp, "title": "N", "content_md": "x"}), "id")
-		g.cmd("note.update", map[string]any{"id": n, "content_md": "[@Mo](/w/" + w.ws + "/people/" + mo.userID + ")"})
+		g.cmd("note.update", map[string]any{"id": n, "schema": 2, "expected_epoch": 1, "content_md": "[@Mo](/w/" + w.ws + "/people/" + mo.userID + ")"})
 		g.drain(100) // fails the test if any job (the dispatch) returns an error
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -150,7 +151,11 @@ func TestSharingIntoPrivateSpaceGrantsOnlyThatPageAndChildren(t *testing.T) {
 		eq(t, len(idsOf(w.ok(p, "note.list", map[string]any{"space_id": sp}))), 0)
 		eq(t, idsOf(w.ok(p, "note.shared_with_me", map[string]any{})), []string{shared})
 		eq(t, idsOf(w.ok(p, "note.list", map[string]any{"parent_id": shared})), []string{kid})
-		eq(t, idsOf(w.ok(p, "search.notes", map[string]any{"q": "quokka"})), []string{shared})
+		found := idsOf(w.ok(p, "search.notes", map[string]any{"q": "quokka"})) // the shared page and its child, not the sibling
+		slices.Sort(found)
+		want := []string{shared, kid}
+		slices.Sort(want)
+		eq(t, found, want)
 		for _, s := range idsOf(w.ok(p, "space.list", map[string]any{})) {
 			if s == sp {
 				t.Fatal("private space listed")
@@ -231,7 +236,7 @@ func TestSharingGuestSharedAsEditorCanSave(t *testing.T) {
 		w.ok(w.owner, "note.share", map[string]any{"note_id": page, "email": guest.email, "level": "edit"})
 		got := w.ok(guest, "note.get", map[string]any{"id": page}).(map[string]any)
 		eq(t, got["level"], "edit")
-		w.ok(guest, "note.update", map[string]any{"id": page, "title": "Brief v2", "content_md": "guest wrote this"})
+		w.ok(guest, "note.update", map[string]any{"id": page, "title": "Brief v2", "schema": 2, "expected_epoch": 1, "content_md": "guest wrote this"})
 		w.ok(guest, "comment.add", map[string]any{"note_id": page, "body": "looks good"})
 		other := w.page(sp, "Other", "", "x")
 		w.errStatus(guest, "note.update", map[string]any{"id": other, "title": "x"}, 404, "not_found")

@@ -15,6 +15,7 @@ import { mayWrite } from './access.ts'
 import { authenticate, type Principal } from './auth.ts'
 import { CmdError, tenant } from './db.ts'
 import { buildDoc, loadDoc } from './doc.ts'
+import { CLOSE_RELOAD } from './doc-schema.ts'
 import * as md from './md.ts'
 
 export const CLOSE_STALE_EPOCH = 4409
@@ -66,6 +67,9 @@ export interface Options {
   recheckMs?: number
   /** Shared secret of POST /internal/render (the Go API's note.restore). Unset: the endpoint answers 404. */
   internalSecret?: string
+  /** COLLAB_MIN_SCHEMA: sockets whose `schema` parameter (missing counts as 0) is lower are closed with
+   * CLOSE_RELOAD, on connect and whenever the minimum is raised. Default 0: no fence until operations raise it. */
+  minSchema?: number
 }
 
 function frame(write: (e: encoding.Encoder) => void) {
@@ -97,6 +101,13 @@ export function createServer(opts: Options) {
   const debounce = opts.debounceMs ?? 2000
   const recheckMs = opts.recheckMs ?? 10_000
   const rooms = new Map<string, Room>()
+  let minSchema = opts.minSchema ?? 0
+  /** What /collab/min-schema reports: the raised value only once every fenced peer has stopped applying updates. */
+  let reportedMin = minSchema
+  const schemaOf = new WeakMap<WebSocket, number>()
+  /** Sockets below the minimum: their document-update frames are dropped, queued ones included. Set synchronously when the minimum rises. */
+  const fencedWs = new WeakSet<WebSocket>()
+  const chains = new WeakMap<WebSocket, Promise<void>>()
   const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_FRAME })
 
   // Single-writer fence across service instances: the room owner holds a session advisory lock per note on one
@@ -453,11 +464,12 @@ export function createServer(opts: Options) {
 
     // Frames of one connection are handled strictly in order.
     let chain = Promise.resolve()
+    chains.set(socket, chain)
     socket.on('message', (data, isBinary) => {
-      if (!isBinary || done) return
+      if (!isBinary || done || fencedWs.has(socket)) return
       const buf = data as Buffer
       chain = chain.then(async () => {
-        if (done) return
+        if (done || fencedWs.has(socket)) return
         try {
           await onFrame(room, me, p, write, new Uint8Array(buf.buffer, buf.byteOffset, buf.length))
         } catch (e) {
@@ -468,6 +480,7 @@ export function createServer(opts: Options) {
           cleanup()
         }
       })
+      chains.set(socket, chain)
     })
     // Frames still queued when the socket closes (a page leaving mid-typing) are applied before the final snapshot.
     socket.on('close', () => void chain.then(cleanup))
@@ -482,6 +495,52 @@ export function createServer(opts: Options) {
   }
 
   const sha = (v: string) => createHash('sha256').update(v).digest()
+  function authorised(req: http.IncomingMessage) {
+    const given = req.headers['x-collab-secret']
+    return (
+      !!opts.internalSecret &&
+      typeof given === 'string' &&
+      timingSafeEqual(sha(given), sha(opts.internalSecret))
+    )
+  }
+
+  /** Raise the minimum editor schema and close every open socket now below it, so an old tab cannot keep
+   * editing through the change. A lower value is ignored: the minimum only goes up until the process restarts. */
+  async function setMinSchema(n: number) {
+    if (!Number.isInteger(n) || n <= minSchema) return
+    minSchema = n
+    // Fence first, synchronously: no frame of an old tab is applied from here on. Then close, then wait for the one
+    // frame that may be mid-write, so a caller that sees the new minimum knows no old tab can still change a page.
+    const old = [...wss.clients].filter((w) => (schemaOf.get(w) ?? 0) < n)
+    for (const w of old) fencedWs.add(w)
+    for (const w of old) w.close(CLOSE_RELOAD, 'reload')
+    await Promise.allSettled(old.map((w) => chains.get(w)))
+    reportedMin = Math.max(reportedMin, n)
+  }
+
+  function setMin(req: http.IncomingMessage, res: http.ServerResponse) {
+    const send = (status: number, body: string) => {
+      res.statusCode = status
+      res.setHeader('content-type', 'application/json')
+      res.end(body)
+    }
+    if (!authorised(req)) return send(opts.internalSecret ? 401 : 404, '{"error":"unauthorized"}')
+    let raw = ''
+    req.on('data', (c: Buffer) => {
+      if (raw.length < 1024) raw += c
+    })
+    req.on('end', async () => {
+      try {
+        const n = JSON.parse(raw).min
+        if (!Number.isInteger(n) || n < 0) throw new Error('bad')
+        await setMinSchema(n)
+        send(200, JSON.stringify({ min: reportedMin }))
+      } catch {
+        send(400, '{"error":"bad request"}')
+      }
+    })
+  }
+
   /** Stateless: renders the Markdown of a note's live document from the rows the caller read (snapshot + log). */
   function render(req: http.IncomingMessage, res: http.ServerResponse) {
     const send = (status: number, body: string) => {
@@ -489,13 +548,7 @@ export function createServer(opts: Options) {
       res.setHeader('content-type', 'application/json')
       res.end(body)
     }
-    const given = req.headers['x-collab-secret']
-    if (
-      !opts.internalSecret ||
-      typeof given !== 'string' ||
-      !timingSafeEqual(sha(given), sha(opts.internalSecret))
-    )
-      return send(opts.internalSecret ? 401 : 404, '{"error":"unauthorized"}')
+    if (!authorised(req)) return send(opts.internalSecret ? 401 : 404, '{"error":"unauthorized"}')
     const chunks: Buffer[] = []
     let size = 0
     req.on('data', (c: Buffer) => {
@@ -525,7 +578,14 @@ export function createServer(opts: Options) {
 
   const server = http.createServer((req, res) => {
     if (req.url === '/healthz') return void res.end('ok')
+    if (req.method === 'GET' && req.url === '/collab/min-schema') {
+      // Under /collab/ because the API front forwards only that prefix. Public and harmless: the web client asks before it offers blocks an older tab would delete.
+      res.setHeader('Access-Control-Allow-Origin', '*')
+      res.setHeader('Content-Type', 'application/json')
+      return void res.end(JSON.stringify({ min: reportedMin }))
+    }
     if (req.method === 'POST' && req.url === '/internal/render') return render(req, res)
+    if (req.method === 'POST' && req.url === '/internal/min-schema') return setMin(req, res)
     res.statusCode = 426
     res.end('WebSocket upgrade required')
   })
@@ -538,11 +598,19 @@ export function createServer(opts: Options) {
       if (!m) return reject(socket, 404, 'not found')
       const [ws, note] = [m[1].toLowerCase(), m[2].toLowerCase()]
       const epochQ = url.searchParams.get('epoch')
+      const schemaQ = url.searchParams.get('schema')
       if (!UUID.test(ws) || !UUID.test(note) || (epochQ !== null && !/^-?\d+$/.test(epochQ)))
         return reject(socket, 400, 'bad request')
+      const schema = schemaQ !== null && /^\d{1,6}$/.test(schemaQ) ? Number(schemaQ) : 0 // missing or junk: oldest
+      if (schema < minSchema) {
+        // Accept the upgrade just to close with the reload code: a browser cannot read an HTTP refusal.
+        return wss.handleUpgrade(req, socket, head, (s) => s.close(CLOSE_RELOAD, 'reload'))
+      }
       const p = await authenticate(pool, req.headers, url.searchParams.get('token'), ws)
       const { room, write } = await prepare(p, ws, note)
       wss.handleUpgrade(req, socket, head, (s) => {
+        schemaOf.set(s, schema)
+        if (schema < minSchema) return s.close(CLOSE_RELOAD, 'reload') // raised while this upgrade was in flight
         if (epochQ !== null && Number(epochQ) !== room.epoch) s.close(CLOSE_STALE_EPOCH, 'page restored')
         else serve(s, room, p, write)
       })
@@ -556,6 +624,7 @@ export function createServer(opts: Options) {
   return {
     server,
     rooms,
+    setMinSchema,
     /** Flush every dirty room, then close. */
     async close() {
       for (const w of wss.clients) w.terminate()

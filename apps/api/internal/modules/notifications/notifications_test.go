@@ -194,7 +194,7 @@ func TestNotificationListAndUnreadCount(t *testing.T) {
 	link := fmt.Sprintf("[@Bob](/w/%s/people/%s)", wsID, bob.userID)
 	save := func(body string) {
 		t.Helper()
-		e.must(owner, "note.update", map[string]any{"id": page, "content_md": body})
+		e.must(owner, "note.update", map[string]any{"id": page, "schema": 2, "expected_epoch": 1, "content_md": body})
 	}
 
 	// First mention: Bob gets 1 notification.
@@ -242,7 +242,7 @@ func TestNotificationRead(t *testing.T) {
 	page := e.must(owner, "note.create", map[string]any{"space_id": sp, "title": "ReadTest"})["id"].(string)
 
 	link := fmt.Sprintf("[@Bob](/w/%s/people/%s)", owner.ws, bob.userID)
-	e.must(owner, "note.update", map[string]any{"id": page, "content_md": "hi " + link})
+	e.must(owner, "note.update", map[string]any{"id": page, "schema": 2, "expected_epoch": 1, "content_md": "hi " + link})
 
 	// Confirm there is 1 unread on Go.
 	r := e.go_(bob, "notification.unread_count", map[string]any{})
@@ -278,7 +278,7 @@ func TestNotificationReadById(t *testing.T) {
 	sp := e.space(owner)
 	page := e.must(owner, "note.create", map[string]any{"space_id": sp, "title": "ByID"})["id"].(string)
 	link := fmt.Sprintf("[@Bob](/w/%s/people/%s)", owner.ws, bob.userID)
-	e.must(owner, "note.update", map[string]any{"id": page, "content_md": "hi " + link})
+	e.must(owner, "note.update", map[string]any{"id": page, "schema": 2, "expected_epoch": 1, "content_md": "hi " + link})
 
 	// Get the notification id.
 	r := e.go_(bob, "notification.list", map[string]any{})
@@ -315,7 +315,7 @@ func TestNotificationTenantIsolation(t *testing.T) {
 	// Invite carol so she can be mentioned.
 	carol := e.addMember(alice, e.signup("Carol", false), "member")
 	link := fmt.Sprintf("[@Carol](/w/%s/people/%s)", alice.ws, carol.userID)
-	e.must(alice, "note.update", map[string]any{"id": pageA, "content_md": "hi " + link})
+	e.must(alice, "note.update", map[string]any{"id": pageA, "schema": 2, "expected_epoch": 1, "content_md": "hi " + link})
 
 	// Carol has 1 notification in Alice's workspace.
 	r := e.do(e.gosv.URL, "POST", "/api/w/"+alice.ws+"/commands/notification.unread_count", carol, map[string]any{})

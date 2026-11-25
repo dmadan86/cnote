@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/cnote/api/internal/command"
+	"github.com/cnote/api/internal/notify"
 )
 
 func Commands() []command.Command {
@@ -40,6 +41,7 @@ type NotificationOut struct {
 	ID        string      `json:"id"`
 	Kind      string      `json:"kind"`
 	NoteID    *string     `json:"note_id"`
+	ThreadID  *string     `json:"thread_id,omitempty"`  // top-level comment a comment notification points at
 	ChannelID *string     `json:"channel_id,omitempty"` // only chat mentions carry one; absent keeps page notifications identical to Rust
 	NoteTitle string      `json:"note_title"`
 	ActorName *string     `json:"actor_name"`
@@ -57,12 +59,21 @@ func list(c *command.Ctx, input json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Access is checked again here (docs-parity 7.6): a page the reader can no longer see drops out before the limit.
+	// Watches on pages they can no longer see are removed now (lazily); trashed pages keep theirs.
+	if _, err := c.Tx.Exec(c.Context,
+		`delete from core.note_watches w where w.user_id = $1::uuid
+		    and exists(select 1 from core.notes n where n.id = w.note_id and n.deleted_at is null)
+		    and not `+notify.ReadableExpr("w.user_id", "w.note_id"), uid); err != nil {
+		return nil, err
+	}
 	rows, err := c.Tx.Query(c.Context,
-		`select n.id::text, n.kind, n.note_id::text, n.channel_id::text, n.title as note_title,
+		`select n.id::text, n.kind, n.note_id::text, n.thread_id::text, n.channel_id::text, n.title as note_title,
 		        u.name as actor_name, n.created_at, n.read_at
 		   from core.notifications n
 		   left join core.users u on u.id = n.actor_user_id
 		  where n.user_id = $1::uuid
+		    and (n.note_id is null or `+notify.ReadableExpr("n.user_id", "n.note_id")+`)
 		  order by n.created_at desc limit 50`, uid)
 	if err != nil {
 		return nil, err
@@ -73,7 +84,7 @@ func list(c *command.Ctx, input json.RawMessage) (any, error) {
 		var n NotificationOut
 		var createdAt time.Time
 		var readAt *time.Time
-		if err := rows.Scan(&n.ID, &n.Kind, &n.NoteID, &n.ChannelID, &n.NoteTitle,
+		if err := rows.Scan(&n.ID, &n.Kind, &n.NoteID, &n.ThreadID, &n.ChannelID, &n.NoteTitle,
 			&n.ActorName, &createdAt, &readAt); err != nil {
 			return nil, err
 		}
@@ -128,7 +139,8 @@ func unreadCount(c *command.Ctx, input json.RawMessage) (any, error) {
 	}
 	var n int64
 	if err := c.Tx.QueryRow(c.Context,
-		`select count(*) from core.notifications where user_id = $1::uuid and read_at is null`,
+		`select count(*) from core.notifications n where n.user_id = $1::uuid and n.read_at is null
+		   and (n.note_id is null or `+notify.ReadableExpr("n.user_id", "n.note_id")+`)`,
 		uid).Scan(&n); err != nil {
 		return nil, err
 	}

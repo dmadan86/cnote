@@ -10,6 +10,7 @@ type Item = {
   id: string
   kind: string
   note_id: string | null
+  thread_id?: string
   channel_id?: string
   note_title: string
   actor_name: string | null
@@ -27,6 +28,8 @@ const text = (n: Item) => {
     n.kind === 'lead'
   )
     return n.note_title // the server wrote the sentence
+  if (n.kind === 'comment') return `${who} commented on ${n.note_title || 'Untitled'}`
+  if (n.kind === 'page_updated') return `${who} updated ${n.note_title || 'Untitled'}`
   if (n.kind === 'chat_mention') return `${who} mentioned you in ${n.note_title}`
   return `${who} mentioned you in ${n.note_title || 'Untitled'}`
 }
@@ -37,7 +40,7 @@ const link = (ws: string, n: Item) =>
       ? `/w/${ws}`
       : n.kind.startsWith('approval')
         ? `/w/${ws}/approvals`
-        : `/w/${ws}/n/${n.note_id}`
+        : `/w/${ws}/n/${n.note_id}${n.thread_id ? `?thread=${n.thread_id}` : ''}` // the page focuses that comment thread
 
 /** Bell with an unread badge (polled every 30s and on focus) and a panel of the latest notifications. */
 export function NotificationBell({ ws }: { ws: string }) {
@@ -120,7 +123,7 @@ export function NotificationBell({ ws }: { ws: string }) {
             {items.length === 0 && (
               <li>
                 <EmptyState compact icon={Bell} title="Nothing yet">
-                  Mentions and approvals will show up here.
+                  Mentions, comments and approvals will show up here.
                 </EmptyState>
               </li>
             )}

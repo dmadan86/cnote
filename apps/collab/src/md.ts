@@ -14,6 +14,8 @@ interface Marks {
   code: boolean
   link: string | null
   color: string | null
+  status: string | null
+  date: string | null
 }
 type Node = { t: 'text'; s: string; m: Marks } | { t: 'br' }
 type Inl = Node[]
@@ -37,6 +39,14 @@ type Block =
   | { k: 'table'; rows: Cell[][] }
   | { k: 'tasks'; items: [boolean, Inl][] }
   | { k: 'image'; src: string; alt: string; title: string | null }
+  | { k: 'panel'; kind: string; blocks: Block[] }
+  | { k: 'expand'; title: string; blocks: Block[] }
+  | { k: 'toc' }
+
+// docs-parity 5.1: the fixed lists every converter validates against.
+const STATUS_COLORS = ['grey', 'blue', 'green', 'yellow', 'red', 'purple']
+const PANEL_KINDS = ['info', 'note', 'success', 'warning', 'error']
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 
 const defMarks = (): Marks => ({
   bold: false,
@@ -45,6 +55,8 @@ const defMarks = (): Marks => ({
   code: false,
   link: null,
   color: null,
+  status: null,
+  date: null,
 })
 const marksEq = (a: Marks, b: Marks) =>
   a.bold === b.bold &&
@@ -52,7 +64,9 @@ const marksEq = (a: Marks, b: Marks) =>
   a.strike === b.strike &&
   a.code === b.code &&
   a.link === b.link &&
-  a.color === b.color
+  a.color === b.color &&
+  a.status === b.status &&
+  a.date === b.date
 
 // ---------- Rust string semantics ----------
 
@@ -219,9 +233,13 @@ function safeHref(h0: string): boolean {
   if (m >= 0 && h[m] === ':') return ['http', 'https', 'mailto'].includes(h.slice(0, m))
   return true
 }
+const U = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
+const FILE_SRC = new RegExp(`^/api/w/${U}/files/${U}$`)
+/** http(s), plus the one relative form an uploaded image is stored as (docs-parity 7.4). */
 const safeSrc = (s0: string) => {
-  const s = lower(trim(s0))
-  return s.startsWith('http://') || s.startsWith('https://')
+  const t = trim(s0)
+  const s = lower(t)
+  return s.startsWith('http://') || s.startsWith('https://') || FILE_SRC.test(t)
 }
 
 function pushText(out: Inl, s: string, m: Marks) {
@@ -276,8 +294,19 @@ function htmlInline(s: string): Inl | null {
             m.code = true
             break
           case 'span': {
+            const ds = attrOf(t, 'data-status')
+            if (ds !== null) {
+              m.status = STATUS_COLORS.includes(ds) ? ds : m.status
+              break
+            }
             const st = attrOf(t, 'style')
             m.color = st === null ? null : styleColor(st)
+            break
+          }
+          case 'time': {
+            const dt = attrOf(t, 'datetime')
+            if (dt === null) return null
+            m.date = DATE_RE.test(dt) ? dt : m.date
             break
           }
           default:
@@ -333,6 +362,18 @@ function closer(rest: string, c: string, n: number): number | null {
   return null
 }
 
+/** Index of the </name> that closes an element whose open tag ends at `from`, counting nested ones; -1 if none. */
+function closeTag(s: string, name: string, from: number): number {
+  const l = lower(s)
+  let depth = 1
+  for (let i = from; i < l.length; i++) {
+    if (l[i] !== '<') continue
+    if (l.startsWith(`</${name}>`, i) && --depth === 0) return i
+    if (l.startsWith(`<${name}`, i) && /[\s>]/.test(l[i + name.length + 1] ?? '')) depth++
+  }
+  return -1
+}
+
 function construct(rest: string, prev: string | undefined, m: Marks, br: boolean): [number, Inl] | null {
   const c = rest[0]
   switch (c) {
@@ -376,7 +417,17 @@ function construct(rest: string, prev: string | undefined, m: Marks, br: boolean
       const t = tagAt(rest)
       if (!t) return null
       if (t.name === 'br' && br && !t.closing) return [t.len, [{ t: 'br' }]]
-      if (t.name === 'span' && !t.closing) {
+      if ((t.name === 'span' || t.name === 'time') && !t.closing) {
+        const ds = t.name === 'span' ? attrOf(t, 'data-status') : attrOf(t, 'datetime')
+        if (ds !== null) {
+          const e = closeTag(rest, t.name, t.len)
+          if (e < 0) return null
+          const mm = { ...m }
+          if (t.name === 'span' && STATUS_COLORS.includes(ds)) mm.status = ds
+          if (t.name === 'time' && DATE_RE.test(ds)) mm.date = ds
+          return [e + t.name.length + 3, mdInline(rest.slice(t.len, e), mm, br)]
+        }
+        if (t.name === 'time') return null
         const st = attrOf(t, 'style')
         const color = st === null ? null : styleColor(st)
         const f = lower(rest.slice(t.len)).indexOf('</span>')
@@ -513,27 +564,14 @@ function parseList(lines: string[], cur: { i: number }, base: number): Block {
   return { k: 'list', ordered, items }
 }
 
+// ![alt](src "title"): a backslash, `[` and `]` are escaped in the alt text, a backslash and `"` in the title, as the editor writes them.
+const IMAGE_LINE = /^!\[((?:\\.|[^\]\\])*)\]\(([^\s)]+)(?:\s+"((?:\\.|[^"\\])*)")?\)$/
+const unescapeMd = (s: string) => s.replace(/\\([\\[\]"])/g, '$1')
+
 function image(line: string): Block | null {
-  const t0 = trim(line)
-  if (!t0.startsWith('![')) return null
-  const t = t0.slice(2)
-  const altEnd = t.indexOf('](')
-  if (altEnd < 0) return null
-  const tail = t.slice(altEnd + 2)
-  if (!tail.endsWith(')')) return null
-  const inner = tail.slice(0, -1)
-  let src = inner
-  let title: string | null = null
-  const sp = inner.indexOf(' ')
-  if (sp >= 0) {
-    src = inner.slice(0, sp)
-    let r = trim(inner.slice(sp + 1))
-    if (!r.startsWith('"')) return null
-    r = r.slice(1)
-    if (!r.endsWith('"')) return null
-    title = r.slice(0, -1)
-  }
-  return safeSrc(src) ? { k: 'image', src, alt: t.slice(0, altEnd), title } : null
+  const m = IMAGE_LINE.exec(trim(line))
+  if (!m || !safeSrc(m[2])) return null
+  return { k: 'image', src: m[2], alt: unescapeMd(m[1]), title: m[3] === undefined ? null : unescapeMd(m[3]) }
 }
 
 function parseCell(t: Tag, body: string): Cell | null {
@@ -647,6 +685,45 @@ function htmlAt(lines: string[], i: number): [Block, number] | null {
   return [level === 0 ? { k: 'para', inl, align } : { k: 'heading', level, inl, align }, used]
 }
 
+const fenceRun = (t: string) => {
+  let n = 0
+  while (t[n] === '`') n++
+  return n
+}
+const SUMMARY = /^<details>\s*<summary>(.*)<\/summary>$/i
+const panelKind = (l: string) => {
+  const m = /^\[!(info|note|success|warning|error)\]$/i.exec(trim(l))
+  return m ? lower(m[1]) : null
+}
+
+/** `<details><summary>T</summary>` ... `</details>` (nested ones and code fences counted); null when unclosed. */
+function expandAt(lines: string[], i: number): [Block, number] | null {
+  const m = SUMMARY.exec(trim(lines[i]))
+  if (!m) return null
+  let depth = 1
+  let fence = 0
+  for (let j = i + 1; j < lines.length; j++) {
+    const t = trim(lines[j])
+    const f = fenceRun(t)
+    if (fence) {
+      if (f >= fence && f === t.length) fence = 0
+    } else if (f >= 3) fence = f
+    else if (SUMMARY.test(t)) depth++
+    else if (lower(t) === '</details>' && --depth === 0)
+      return [{ k: 'expand', title: unesc(m[1]), blocks: parse(lines.slice(i + 1, j).join('\n')) }, j - i + 1]
+  }
+  return null
+}
+
+/** A quote whose first line is `[!KIND]`: the rest is parsed as blocks again. */
+function panelAt(lines: string[], i: number): [Block, number] | null {
+  let j = i
+  while (j < lines.length && lines[j].startsWith('>')) j++
+  const inner = lines.slice(i, j).map((l) => l.slice(1).replace(/^ /, ''))
+  const kind = panelKind(inner[0])
+  return kind === null ? null : [{ k: 'panel', kind, blocks: parse(inner.slice(1).join('\n')) }, j - i]
+}
+
 function parse(text: string): Block[] {
   const lines = rlines(text)
   const blocks: Block[] = []
@@ -656,17 +733,29 @@ function parse(text: string): Block[] {
     let h: ReturnType<typeof heading>
     let hb: ReturnType<typeof htmlAt>
     let ib: Block | null
+    let eb: ReturnType<typeof expandAt>
     if (trim(line) === '') i++
-    else if (trimStart(line).startsWith('```')) {
-      const l = trim(trimStart(line).slice(3))
+    else if (fenceRun(trimStart(line)) >= 3) {
+      const n = fenceRun(trimStart(line))
+      const l = trim(trimStart(line).slice(n))
       const code: string[] = []
       i++
-      while (i < lines.length && !trimStart(lines[i]).startsWith('```')) code.push(lines[i++])
+      while (i < lines.length) {
+        const u = trim(lines[i])
+        if (fenceRun(u) >= n && fenceRun(u) === u.length) break
+        code.push(lines[i++])
+      }
       i++
       blocks.push({ k: 'code', lang: l === '' ? null : l, code: code.join('\n') })
     } else if ((h = heading(line))) {
       blocks.push({ k: 'heading', level: h[0], inl: md(h[1]), align: null })
       i++
+    } else if (trim(line) === '[[toc]]') {
+      blocks.push({ k: 'toc' })
+      i++
+    } else if ((eb = expandAt(lines, i)) || (line.startsWith('>') && (eb = panelAt(lines, i)))) {
+      blocks.push(eb[0])
+      i += eb[1]
     } else if ((hb = htmlAt(lines, i))) {
       blocks.push(hb[0])
       i += hb[1]
@@ -750,6 +839,8 @@ function markAttrs(m: Marks): Record<string, unknown> {
   if (m.code) a.code = {}
   if (m.link !== null) a.link = { href: m.link }
   if (m.color !== null) a.textStyle = { color: m.color }
+  if (m.status !== null) a.status = { color: m.status }
+  if (m.date !== null) a.date = { datetime: m.date }
   return a
 }
 
@@ -796,6 +887,19 @@ function writeBlock(parent: Parent, b: Block) {
       parent.push([el])
       if (b.code !== '') el.push([new Y.XmlText(b.code)])
       if (b.lang !== null) el.setAttribute('language', b.lang)
+      break
+    }
+    case 'toc':
+      parent.push([new Y.XmlElement('toc')])
+      break
+    case 'panel':
+    case 'expand': {
+      const el = new Y.XmlElement(b.k)
+      parent.push([el])
+      if (b.k === 'panel') el.setAttribute('kind', b.kind)
+      else el.setAttribute('title', b.title)
+      for (const n of b.blocks) writeBlock(el, n)
+      if (b.blocks.length === 0) textEl(el, 'paragraph', []) // content is block+
       break
     }
     case 'quote': {
@@ -889,10 +993,32 @@ function mdUnescape(s: string): string {
 }
 const span = (c: string, inner: string) => `<span style="color: ${c}">${inner}</span>`
 
-function mark(text: string, a: Attrs | undefined, mode: Mode): string {
-  if (!a) return mode === 'md' ? text : esc(text)
+function statusOf(a: Attrs): string | null {
+  const v = a.status
+  return isObj(v) && typeof v.color === 'string' && STATUS_COLORS.includes(v.color) ? v.color : null
+}
+function dateOf(a: Attrs): string | null {
+  const v = a.date
+  return isObj(v) && typeof v.datetime === 'string' && DATE_RE.test(v.datetime) ? v.datetime : null
+}
+/** Status and date wrap outside every other mark (docs-parity 5.1). */
+function wrapChips(s: string, a: Attrs): string {
+  const st = statusOf(a)
+  const dt = dateOf(a)
+  if (dt !== null) s = `<time datetime="${dt}">${s}</time>`
+  if (st !== null) s = `<span data-status="${st}">${s}</span>`
+  return s
+}
+
+/** A literal `[[toc]]` in text is escaped so it cannot be read back as a table of contents (the browser escapes
+ * every `[` anyway, which the md.test contract keeps unescaped here). */
+const tocEscape = (s: string) => s.replaceAll('[[toc]]', '\\[\\[toc\\]\\]')
+
+function mark(text: string, a: Attrs | undefined, mode: Mode, literal = false): string {
+  if (!a) return mode === 'md' ? (literal ? text : tocEscape(text)) : esc(text)
   const has = (k: string) => Object.hasOwn(a, k)
   const code = has('code')
+  if (mode === 'md' && !code && !literal) text = tocEscape(text)
   let col = color(a)
   if (code) col = null
   if (mode === 'plain') return esc(text)
@@ -907,7 +1033,7 @@ function mark(text: string, a: Attrs | undefined, mode: Mode): string {
     ] as [boolean, string][])
       if (on) s = `<${tag}>${s}</${tag}>`
     const h = linkHref(a)
-    return h !== null ? `<a href="${esc(h)}">${s}</a>` : s
+    return wrapChips(h !== null ? `<a href="${esc(h)}">${s}</a>` : s, a)
   }
   const inner = trim(text)
   if (inner === '') return text
@@ -921,18 +1047,18 @@ function mark(text: string, a: Attrs | undefined, mode: Mode): string {
   if (has('strike')) s = `~~${s}~~`
   const h = linkHref(a)
   if (h !== null) s = `[${s}](${h})`
-  return lead + s + trail
+  return lead + wrapChips(s, a) + trail
 }
 
-function inline(el: Parent, mode: Mode): string {
+function inline(el: Parent, mode: Mode, literal = false): string {
   let out = ''
   for (const c of el.toArray()) {
     if (c instanceof Y.XmlText) {
       for (const d of c.toDelta() as { insert: unknown; attributes?: Attrs }[])
-        if (typeof d.insert === 'string') out += mark(d.insert, d.attributes, mode)
+        if (typeof d.insert === 'string') out += mark(d.insert, d.attributes, mode, literal)
     } else if (c instanceof Y.XmlElement) {
       if (c.nodeName === 'hardBreak') out += mode === 'md' ? '  \n' : mode === 'html' ? '<br>' : ' '
-      else out += inline(c, mode)
+      else out += inline(c, mode, literal)
     }
   }
   return out
@@ -973,10 +1099,25 @@ function render(node: unknown, top: boolean): string | null {
     const alt = strOf(el.getAttribute('alt')) ?? ''
     if (!safeSrc(src)) return null
     const t = strOf(el.getAttribute('title'))
-    return t ? `![${alt}](${src} "${t}")` : `![${alt}](${src})`
+    const a = alt.replace(/[\\[\]]/g, '\\$&')
+    return t ? `![${a}](${src} "${t.replace(/["\\]/g, '\\$&')}")` : `![${a}](${src})`
   }
-  if (tag === 'codeBlock')
-    return `\`\`\`${strOf(el.getAttribute('language')) ?? ''}\n${inline(el, 'md')}\n\`\`\``
+  if (tag === 'codeBlock') {
+    const code = inline(el, 'md', true)
+    const fence = '`'.repeat(Math.max(3, ...(code.match(/`+/g) ?? []).map((r) => r.length + 1)))
+    return `${fence}${strOf(el.getAttribute('language')) ?? ''}\n${code}\n${fence}`
+  }
+  if (tag === 'toc') return '[[toc]]'
+  if (tag === 'panel') {
+    const k = strOf(el.getAttribute('kind'))
+    const head = `[!${(k !== null && PANEL_KINDS.includes(k) ? k : 'info').toUpperCase()}]`
+    return [head, ...rlines(blocks(el, false))].map((l) => (l === '' ? '>' : `> ${l}`)).join('\n')
+  }
+  if (tag === 'expand') {
+    const title = esc((strOf(el.getAttribute('title')) ?? '').replace(/\s+/g, ' ').trim())
+    const body = blocks(el, false)
+    return `<details><summary>${title}</summary>\n\n${body === '' ? '' : `${body}\n\n`}</details>`
+  }
   if (tag === 'blockquote')
     return rlines(blocks(el, false))
       .map((l) => (l === '' ? '>' : `> ${l}`))

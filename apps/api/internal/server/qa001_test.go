@@ -98,12 +98,12 @@ func TestQA001_CM007_CM009_TemplateCopyIsIndependent(t *testing.T) {
 	if doc["id"] == src["id"] {
 		t.Fatal("CM-007: render must create a new note")
 	}
-	d.ok(p, "note.update", map[string]any{"id": doc["id"], "content_md": "edited copy"})
+	d.ok(p, "note.update", map[string]any{"id": doc["id"], "schema": 2, "expected_epoch": 1, "content_md": "edited copy"})
 	if n := d.ok(p, "note.get", map[string]any{"id": src["id"]}); n["content_md"] != "Hello {{contact.name}}" {
 		t.Fatalf("CM-007: source changed: %v", n["content_md"])
 	}
 	// CM-009: updating the template source does not rewrite documents already created from it.
-	d.ok(p, "note.update", map[string]any{"id": src["id"], "content_md": "Goodbye {{contact.name}}"})
+	d.ok(p, "note.update", map[string]any{"id": src["id"], "schema": 2, "expected_epoch": 1, "content_md": "Goodbye {{contact.name}}"})
 	d.ok(p, "template.save", map[string]any{"note_id": src["id"], "name": "Hi", "source_kind": "contact"})
 	if n := d.ok(p, "note.get", map[string]any{"id": doc["id"]}); n["content_md"] != "edited copy" {
 		t.Fatalf("CM-009: %v", n["content_md"])
@@ -121,7 +121,7 @@ func TestQA001_RV001_RV006_RevisionsImmutableAndRestoreNeedsEdit(t *testing.T) {
 	v := e.addMember(o, e.signup("Vic", false), "member")
 	sp := g.space(o, "RV", "open")
 	page := g.page(o, sp, "Page", nil, "")
-	g.ok(o, "note.update", map[string]any{"id": page, "content_md": "v1", "expected_epoch": 1})
+	g.ok(o, "note.update", map[string]any{"id": page, "schema": 2, "content_md": "v1", "expected_epoch": 1})
 	revs := g.list(o, "note.revisions", map[string]any{"note_id": page})
 	if len(revs) == 0 {
 		t.Fatal("expected a revision")

@@ -19,6 +19,7 @@ const (
 	Conflict        Code = "conflict"
 	RateLimited     Code = "rate_limited"
 	PlanLimit       Code = "plan_limit"
+	UpgradeRequired Code = "upgrade_required"
 	Internal        Code = "internal"
 )
 
@@ -38,6 +39,8 @@ func (c Code) Status() int {
 		return 429
 	case PlanLimit:
 		return 402
+	case UpgradeRequired:
+		return 426
 	}
 	return 500
 }

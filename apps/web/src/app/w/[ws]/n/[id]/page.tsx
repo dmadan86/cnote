@@ -2,9 +2,18 @@
 import type { Editor } from '@tiptap/react'
 import { PanelRight, Plus } from 'lucide-react'
 import Link from 'next/link'
-import { use, useEffect, useMemo, useRef, useState } from 'react'
+import { useSearchParams } from 'next/navigation'
+import { Suspense, use, useEffect, useMemo, useRef, useState } from 'react'
 import { type Anchor, type Comment, CommentsTab, openThreads } from '@/components/comments-panel'
+import { LabelChips } from '@/components/docs/labels'
 import { DocActions, Proposals } from '@/components/docs/note-tools'
+import {
+  EmojiPicker,
+  StarButton,
+  StatusMenu,
+  useRecordViewed,
+  WideToggle,
+} from '@/components/docs/page-header'
 import { locate } from '@/components/editor/inline-comments'
 import { NoteEditor } from '@/components/note-editor'
 import { personProps } from '@/components/person'
@@ -14,8 +23,10 @@ import { InsertField } from '@/components/templates/fields'
 import { SaveAsTemplate } from '@/components/templates/save-template'
 import { btn, FreshnessPill } from '@/components/ui'
 import { VersionsTab } from '@/components/versions-panel'
+import { WatchButton } from '@/components/watch-button'
 import { activity, activityRest, type Evt } from '@/lib/activity'
 import { cmd, type NoteDetail } from '@/lib/api'
+import type { NoteChrome } from '@/lib/docs'
 import { ago, useCmd } from '@/lib/hooks'
 
 type Tab = 'relations' | 'history' | 'versions' | 'comments'
@@ -96,14 +107,28 @@ function Panel({
   )
 }
 
-export default function NotePage({ params }: { params: Promise<{ id: string }> }) {
+function NotePageInner({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params)
   const { ws, members, reload, newPage } = useShell()
-  const { data: note, error, reload: reloadNote } = useCmd<NoteDetail>(ws, 'note.get', { id })
+  const {
+    data: note,
+    error,
+    reload: reloadNote,
+  } = useCmd<NoteDetail & NoteChrome & { labels: string[] }>(ws, 'note.get', { id })
+  useRecordViewed(ws, id)
   const [panel, setPanel] = useState(true)
   const [tab, setTab] = useState<Tab>('comments')
   const comments = useCmd<Comment[]>(ws, 'comment.list', { note_id: id })
   const [focus, setFocus] = useState<string>()
+  // A notification links here with ?thread=<comment id>: open the comments and focus that thread.
+  const thread = useSearchParams().get('thread')
+  // biome-ignore lint/correctness/useExhaustiveDependencies: showComments only sets state
+  useEffect(() => {
+    if (!thread) return
+    setPanel(true)
+    setTab('comments')
+    setFocus(thread)
+  }, [thread, id])
   const [draft, setDraft] = useState<Anchor>()
   const threads = useMemo(() => openThreads(comments.data), [comments.data])
   const showComments = () => {
@@ -137,6 +162,16 @@ export default function NotePage({ params }: { params: Promise<{ id: string }> }
     <div className="flex min-h-full">
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2 border-b border-line px-6 py-2">
+          <StatusMenu
+            ws={ws}
+            id={id}
+            status={note.status}
+            canEdit={canEdit}
+            onChange={() => {
+              reloadNote()
+              reload()
+            }}
+          />
           <FreshnessPill freshness={note.freshness} verifyBy={note.verify_by} />
           <span className="text-[12px] text-muted">Updated {ago(note.updated_at)}</span>
           {/* Wraps instead of clipping on narrow screens. */}
@@ -169,6 +204,9 @@ export default function NotePage({ params }: { params: Promise<{ id: string }> }
                 reload()
               }}
             />
+            <StarButton ws={ws} id={id} />
+            <WatchButton ws={ws} noteId={id} />
+            {canEdit && <WideToggle ws={ws} id={id} wide={note.wide} onChange={reloadNote} />}
             <button
               type="button"
               onClick={() => newPage({ spaceId: note.space_id, parentId: note.id })}
@@ -206,16 +244,35 @@ export default function NotePage({ params }: { params: Promise<{ id: string }> }
             You can view this page but not edit it.
           </p>
         )}
-        <article className="mx-auto max-w-[720px] px-6 py-10">
-          <input
-            aria-label="Page title"
-            value={title}
-            placeholder="Untitled"
-            onChange={(e) => setTitle(e.target.value)}
-            readOnly={!canEdit}
-            onBlur={saveTitle}
-            onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
-            className="mb-6 w-full bg-transparent text-3xl font-bold placeholder:text-muted"
+        <article className={`mx-auto px-6 py-10 ${note.wide ? 'max-w-[1120px]' : 'max-w-[720px]'}`}>
+          <div className="mb-6 flex items-center">
+            <EmojiPicker
+              ws={ws}
+              id={id}
+              icon={note.icon}
+              canEdit={canEdit}
+              onChange={() => {
+                reloadNote()
+                reload()
+              }}
+            />
+            <input
+              aria-label="Page title"
+              value={title}
+              placeholder="Untitled"
+              onChange={(e) => setTitle(e.target.value)}
+              readOnly={!canEdit}
+              onBlur={saveTitle}
+              onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+              className="min-w-0 flex-1 bg-transparent text-3xl font-bold placeholder:text-muted"
+            />
+          </div>
+          <LabelChips
+            ws={ws}
+            noteId={id}
+            labels={note.labels ?? []}
+            canEdit={canEdit}
+            onChange={reloadNote}
           />
           <NoteEditor
             key={`${id}-${rev}-${note.collab_epoch}`}
@@ -271,5 +328,14 @@ export default function NotePage({ params }: { params: Promise<{ id: string }> }
         />
       )}
     </div>
+  )
+}
+
+// useSearchParams needs a Suspense boundary for the production build.
+export default function NotePage(props: { params: Promise<{ id: string }> }) {
+  return (
+    <Suspense>
+      <NotePageInner {...props} />
+    </Suspense>
   )
 }

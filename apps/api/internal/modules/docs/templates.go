@@ -365,11 +365,15 @@ func isViewRestricted(c *command.Ctx, id string) (bool, error) {
 }
 
 type template struct {
-	ID         string     `json:"id"`
-	Name       string     `json:"name"`
-	Kind       string     `json:"kind"`
-	SourceKind string     `json:"source_kind"`
-	UpdatedAt  command.Ts `json:"updated_at"`
+	ID          string     `json:"id"`
+	Name        string     `json:"name"`
+	Kind        string     `json:"kind"`
+	SourceKind  string     `json:"source_kind"`
+	UpdatedAt   command.Ts `json:"updated_at"`
+	Builtin     bool       `json:"builtin,omitempty"`
+	Category    string     `json:"category,omitempty"`
+	Description string     `json:"description,omitempty"`
+	ContentMD   *string    `json:"content_md,omitempty"` // only when the caller asks for include_content (gallery preview)
 }
 
 func templateSave(c *command.Ctx, input json.RawMessage) (any, error) {
@@ -480,12 +484,18 @@ func templateList(c *command.Ctx, input json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	withBody := false
+	if o.Has("include_content") {
+		if withBody, err = o.ReqBool("include_content"); err != nil {
+			return nil, err
+		}
+	}
 	readable, err := access.ReadableSpaceIDs(c)
 	if err != nil {
 		return nil, err
 	}
 	rows, err := c.Tx.Query(c.Context,
-		`select id::text, name, kind, source_kind, updated_at from docs.templates
+		`select id::text, name, kind, source_kind, updated_at, content_md from docs.templates
 		 where ($1::text is null or source_kind in ('none', $1)) and ($2::text is null or kind = $2)
 		   and (space_id is null or space_id = any($3::text[]::uuid[])) order by name`, sk, kind, readable)
 	if err != nil {
@@ -493,13 +503,27 @@ func templateList(c *command.Ctx, input json.RawMessage) (any, error) {
 	}
 	defer rows.Close()
 	out := []template{}
+	// Built-ins first: pages with no source record, so a board or record filter excludes them.
+	if (kind == nil || *kind == "page") && (sk == nil || *sk == "none") {
+		for _, b := range builtins {
+			t := template{ID: builtinPrefix + b.Key, Name: b.Name, Kind: "page", SourceKind: "none", Builtin: true, Category: b.Category, Description: b.Description}
+			if withBody {
+				t.ContentMD = &b.Body
+			}
+			out = append(out, t)
+		}
+	}
 	for rows.Next() {
 		var t template
 		var at time.Time
-		if err := rows.Scan(&t.ID, &t.Name, &t.Kind, &t.SourceKind, &at); err != nil {
+		var body string
+		if err := rows.Scan(&t.ID, &t.Name, &t.Kind, &t.SourceKind, &at, &body); err != nil {
 			return nil, err
 		}
 		t.UpdatedAt = command.Ts(at)
+		if withBody {
+			t.ContentMD = &body
+		}
 		out = append(out, t)
 	}
 	return out, rows.Err()
@@ -559,6 +583,13 @@ type tpl struct {
 }
 
 func loadTemplate(c *command.Ctx, id string) (tpl, error) {
+	if key, ok := builtinKey(id); ok {
+		b, found := findBuiltin(key)
+		if !found {
+			return tpl{}, command.ErrNotFound("template")
+		}
+		return tpl{name: b.Name, kind: "page", sourceKind: "none", title: b.Title, content: b.Body, types: []string{}}, nil
+	}
 	readable, err := access.ReadableSpaceIDs(c)
 	if err != nil {
 		return tpl{}, err
@@ -609,15 +640,25 @@ func templateRender(c *command.Ctx, input json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	tid, err := o.ReqUUID("template_id")
+	// A built-in id is checked before UUID parsing (7.6).
+	tid, err := o.ReqStr("template_id")
 	if err != nil {
 		return nil, err
+	}
+	if _, isBuiltin := builtinKey(tid); !isBuiltin {
+		if tid, err = o.ReqUUID("template_id"); err != nil {
+			return nil, err
+		}
 	}
 	source, err := o.OptUUID("source_id")
 	if err != nil {
 		return nil, err
 	}
 	spaceIn, err := o.OptUUID("space_id")
+	if err != nil {
+		return nil, err
+	}
+	parent, err := o.OptUUID("parent_id")
 	if err != nil {
 		return nil, err
 	}
@@ -637,6 +678,10 @@ func templateRender(c *command.Ctx, input json.RawMessage) (any, error) {
 	switch {
 	case spaceIn != nil:
 		space = *spaceIn
+	case parent != nil: // the new page goes under this page, in its space (InsertNote checks edit on the parent)
+		if space, err = access.AssertNoteAccess(c, *parent, true); err != nil {
+			return nil, err
+		}
 	case source != nil:
 		if err := c.Tx.QueryRow(c.Context, "select space_id::text from core.notes where id = $1::uuid", *source).Scan(&space); err != nil {
 			return nil, err
@@ -650,14 +695,17 @@ func templateRender(c *command.Ctx, input json.RawMessage) (any, error) {
 	if strings.TrimSpace(title) == "" {
 		title = t.name
 	}
-	note, err := notes.InsertNote(c, space, title, nil, &body, t.types)
+	note, err := notes.InsertNote(c, space, title, parent, &body, t.types)
 	if err != nil {
 		return nil, err
 	}
-	if _, err := c.Tx.Exec(c.Context,
-		"insert into docs.template_bindings (note_id, workspace_id, template_id, source_kind, source_id) values ($1::uuid,$2::uuid,$3::uuid,$4,$5::uuid)",
-		note.ID, c.WorkspaceID(), tid, t.sourceKind, source); err != nil {
-		return nil, err
+	// A built-in has no row to bind to and no record to refresh from.
+	if _, isBuiltin := builtinKey(tid); !isBuiltin {
+		if _, err := c.Tx.Exec(c.Context,
+			"insert into docs.template_bindings (note_id, workspace_id, template_id, source_kind, source_id) values ($1::uuid,$2::uuid,$3::uuid,$4,$5::uuid)",
+			note.ID, c.WorkspaceID(), tid, t.sourceKind, source); err != nil {
+			return nil, err
+		}
 	}
 	if _, err := c.Emit("template.rendered", &note.ID, map[string]any{"template_id": tid, "source_id": source, "unresolved": unresolved}); err != nil {
 		return nil, err

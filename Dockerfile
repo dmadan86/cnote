@@ -23,6 +23,8 @@ ARG API_URL=http://localhost:4000
 ARG NEXT_PUBLIC_COLLAB_URL=ws://localhost:4000
 ENV API_URL=$API_URL NEXT_PUBLIC_COLLAB_URL=$NEXT_PUBLIC_COLLAB_URL
 COPY apps/web apps/web
+# the one file web shares with the gateway (the editor schema number), imported by relative path
+COPY apps/collab/src/doc-schema.ts apps/collab/src/doc-schema.ts
 RUN pnpm --filter @cnote/web build
 
 FROM node:24-bookworm-slim AS web

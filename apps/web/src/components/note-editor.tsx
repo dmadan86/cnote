@@ -13,6 +13,8 @@ import { useEffect, useRef, useState } from 'react'
 import { WebsocketProvider } from 'y-websocket'
 import * as Y from 'yjs'
 import { cmd } from '@/lib/api'
+import { CLOSE_RELOAD, DOC_SCHEMA } from '@/lib/doc-schema'
+import { blockExtensions, ImageUpload, setGatewayMinSchema } from './editor/blocks'
 import { AlignHeading, AlignParagraph, ColorText, HtmlTable, SafeImage } from './editor/formats'
 import { InlineComments, setThreads, type Thread } from './editor/inline-comments'
 import { MentionPicker } from './editor/mention'
@@ -27,7 +29,7 @@ const SYNC_TIMEOUT_MS = 2000
 /** Server close code: the page was restored, this document's epoch is over. */
 const STALE_EPOCH = 4409
 
-type Mode = 'connecting' | 'collab' | 'solo'
+type Mode = 'connecting' | 'collab' | 'solo' | 'reload'
 
 /**
  * Tries the Yjs gateway first; if it does not sync within a short window we fall back to a plain editor.
@@ -65,8 +67,9 @@ export function NoteEditor({
 
   useEffect(() => {
     const d = new Y.Doc()
+    let decided = false
     const p = new WebsocketProvider(`${COLLAB_URL}/collab`, `${ws}/${id}`, d, {
-      params: epoch === undefined ? {} : { epoch: String(epoch) },
+      params: { schema: String(DOC_SCHEMA), ...(epoch === undefined ? {} : { epoch: String(epoch) }) },
       // No tab-to-tab BroadcastChannel: it is keyed by room name only, so a tab still holding a restored-away
       // document would hand it to a fresh one past the server's epoch fence. The gateway relays everything.
       disableBc: true,
@@ -77,10 +80,20 @@ export function NoteEditor({
         p.destroy()
         onStaleRef.current?.()
       }
+      if (e?.code === CLOSE_RELOAD) {
+        // The gateway needs a newer editor than this tab runs: stop rather than save over newer content.
+        p.destroy()
+        decided = true
+        setMode('reload')
+      }
     })
     doc.current = d
     provider.current = p
-    let decided = false
+    // Blocks stay off until the gateway says no connected tab can predate them (docs-parity 7.3).
+    fetch(`${COLLAB_URL.replace(/^ws/, 'http')}/collab/min-schema`)
+      .then((r) => r.json())
+      .then((j: { min?: number }) => setGatewayMinSchema(Number(j.min) || 0))
+      .catch(() => {})
     const decide = (m: Mode) => {
       if (decided) return
       decided = true
@@ -97,6 +110,15 @@ export function NoteEditor({
   }, [ws, id, epoch])
 
   if (mode === 'connecting') return <p className="text-muted">Loading editor...</p>
+  if (mode === 'reload')
+    return (
+      <p role="alert" className="text-[14px]">
+        C Note was updated. Reload to keep editing.{' '}
+        <button type="button" className="underline" onClick={() => window.location.reload()}>
+          Reload
+        </button>
+      </p>
+    )
   return (
     <Surface
       ws={ws}
@@ -140,7 +162,9 @@ function Surface({
   // Extensions are created once; read the latest callbacks through a ref.
   const commentsRef = useRef(comments)
   commentsRef.current = comments
-  const [status, setStatus] = useState<'saved' | 'saving' | 'error' | 'denied' | 'offline'>('saved')
+  const [status, setStatus] = useState<'saved' | 'saving' | 'error' | 'denied' | 'offline' | 'upgrade'>(
+    'saved',
+  )
   const last = useRef(initialMd)
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined)
   const pending = useRef<(() => string) | null>(null) // set until the latest edit is saved
@@ -149,7 +173,12 @@ function Surface({
     immediatelyRender: false,
     editable,
     extensions: [
-      StarterKit.configure({ paragraph: false, heading: false, ...(ydoc ? { undoRedo: false } : {}) }),
+      StarterKit.configure({
+        paragraph: false,
+        heading: false,
+        codeBlock: false,
+        ...(ydoc ? { undoRedo: false } : {}),
+      }),
       AlignParagraph,
       AlignHeading,
       TextAlign.configure({ types: ['heading', 'paragraph'] }),
@@ -163,6 +192,8 @@ function Surface({
       TableCell,
       TaskList,
       TaskItem.configure({ nested: true }),
+      ...blockExtensions,
+      ImageUpload.configure({ ws, noteId: id }),
       Placeholder.configure({ placeholder: "Type '/' for commands" }),
       SlashCommand,
       MentionPicker.configure({ ws }),
@@ -198,7 +229,7 @@ function Surface({
         setStatus('saving')
         try {
           // expected_epoch: after a restore the server refuses this tab's stale copy.
-          await cmd(ws, 'note.update', { id, content_md: md, expected_epoch: epoch })
+          await cmd(ws, 'note.update', { id, content_md: md, expected_epoch: epoch, schema: DOC_SCHEMA })
           // Keep an edit typed while this save was in flight: navigating away must still flush it.
           if (pending.current === mine) pending.current = null
           last.current = md
@@ -206,7 +237,8 @@ function Surface({
           onSaved()
         } catch (e) {
           // 403: access changed while editing; stop retrying and say why.
-          setStatus((e as { status?: number }).status === 403 ? 'denied' : 'error')
+          const code = (e as { status?: number }).status
+          setStatus(code === 403 ? 'denied' : code === 426 ? 'upgrade' : 'error')
         }
       }, 700)
       setStatus('saving')
@@ -230,7 +262,7 @@ function Surface({
           keepalive: true,
           credentials: 'same-origin',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ id, content_md: md, expected_epoch: epoch }),
+          body: JSON.stringify({ id, content_md: md, expected_epoch: epoch, schema: DOC_SCHEMA }),
         }).catch(() => {})
       } catch {} // editor already destroyed: nothing left to read
     }
@@ -276,7 +308,9 @@ function Surface({
               ? 'Offline: your edits are kept here and sync when the connection returns'
               : status === 'denied'
                 ? 'You no longer have permission to edit this page; your last changes were not saved'
-                : 'Could not save, retrying on next edit'}
+                : status === 'upgrade'
+                  ? 'C Note was updated. Reload to keep editing.'
+                  : 'Could not save, retrying on next edit'}
         {ydoc ? ' · live' : ''}
       </p>
     </div>

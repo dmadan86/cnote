@@ -36,6 +36,18 @@ Project root `apps/web` (vercel.json installs from the monorepo root). Environme
 Serve web and API under one site (e.g. `app.example.com` and `api.example.com`) so the session cookie is shared, or
 route `/api`, `/mcp`, `/collab` to the backend through the same domain.
 
+## Editor schema rollout (docs blocks)
+The editor has a schema number (`DOC_SCHEMA`, now 2). A tab that does not know a block would delete it from the shared
+document, so the gateway fences old tabs with `COLLAB_MIN_SCHEMA` (collab env, default 0). The web client asks the
+gateway (`GET /collab/min-schema`, public) and offers the new blocks only when the minimum is at least its own `DOC_SCHEMA`.
+Roll out in one window:
+1. Deploy web and collab (new blocks stay hidden: the minimum is still below 2).
+2. Raise `COLLAB_MIN_SCHEMA` to 2 in the same window: restart collab with the variable, or
+   `POST /internal/min-schema` `{"min":2}` with `COLLAB_INTERNAL_SECRET`. Open sockets below 2 are closed at once.
+3. Old tabs and old mobile apps (no `schema` parameter counts as 0) are refused or closed, and the tab shows
+   "C Note was updated. Reload to keep editing." Between steps 1 and 2 an old tab still connected can delete new
+   blocks, so keep the gap short. Never set the minimum without deploying web first.
+
 ## Tables public forms
 A table form is a link, `/tf/<token>`, that anyone can open and submit without signing in (`GET` and `POST`
 `/api/public/table-form/<token>` on the API). Forms take no file uploads. Settings, API:

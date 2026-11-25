@@ -28,7 +28,7 @@ test('slash menu inserts a table and to-do, bubble toolbar bolds, all survive re
   await page.keyboard.press('Enter')
   await page.keyboard.type('/tab')
   const menu = page.getByRole('listbox', { name: 'Insert block' })
-  await expect(menu.getByRole('option', { name: /Table/ })).toBeVisible()
+  await expect(menu.getByRole('option', { name: /^Table(?! of)/ })).toBeVisible()
   await page.keyboard.press('Enter')
   await expect(menu).toHaveCount(0)
   await expect(page.getByRole('dialog', { name: 'Table size' })).toBeFocused()

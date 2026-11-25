@@ -1,3 +1,5 @@
+import type { PageStatus } from './docs'
+
 export type ApiError = { code: string; message: string }
 
 export class CmdFailure extends Error {
@@ -94,6 +96,10 @@ export type Note = {
   restriction: 'none' | 'edit' | 'view'
   /** Live-editing generation; a restore bumps it and open editors reload. */
   collab_epoch: number
+  /** Docs parity A1 (lib/docs.ts). Absent until the API returns them. */
+  status?: PageStatus | null
+  icon?: string | null
+  wide?: boolean
 }
 
 export type SharedNote = Note & { level: 'view' | 'edit' }

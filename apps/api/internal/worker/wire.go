@@ -37,6 +37,11 @@ func New(pool *pgxpool.Pool, reg *command.Registry) *Worker {
 	w.OnEvent("", automationOnEvent)
 	w.OnEvent("note.created", aiIndexOnNoteEvent)
 	w.OnEvent("note.updated", aiIndexOnNoteEvent)
+	w.OnEvent("note.created", pageNotifyOnEvent)
+	w.OnEvent("note.updated", pageNotifyOnEvent)
+	w.OnEvent("comment.added", pageNotifyOnEvent)
+	w.OnEvent("comment.resolved", pageNotifyOnEvent)
+	w.OnEvent("comment.reopened", pageNotifyOnEvent)
 	w.OnEvent("", hooks.OnEvent)
 	w.OnEvent("", agents.OnEvent)
 	w.OnEvent("payment.", reminders.OnEvent)
@@ -57,6 +62,7 @@ func New(pool *pgxpool.Pool, reg *command.Registry) *Worker {
 	w.OnLong(sites.OGJobKind, 1, sites.RunOGJob(pool, reg))
 	day := 24 * time.Hour
 	w.AddSweep(Sweep{"docs.freshness_sweep", day, FreshnessSweep})
+	w.AddSweep(Sweep{"docs.search_plain_backfill", time.Minute, SearchPlainBackfill})
 	w.AddSweep(Sweep{"finance.irn_window", day, func(ctx context.Context, w *Worker) error {
 		_, err := IRNWindowSweep(ctx, w, todayIST())
 		return err

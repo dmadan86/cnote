@@ -125,6 +125,27 @@ test.skip('ED-011 ED-012 upload an image or attachment and download it with perm
   // No binary upload / attachment storage exists (images are inserted by URL only); see CN-QA-001 coverage audit.
 })
 
-test.skip('RV-002 compare two revisions', () => {
-  // The versions panel shows one version's content at a time; there is no diff view or API.
+test('RV-002 compare two revisions', async ({ page }) => {
+  // The full flow (current page, two versions, restricted reader) is in docs-compare.spec.ts.
+  await signup(page)
+  await createSpace(page)
+  await page.getByRole('button', { name: 'New page' }).last().click()
+  await expect(page.getByText(/· live/)).toBeVisible()
+  const editor = page.locator('.ProseMirror')
+  await editor.click()
+  await page.keyboard.type('First draft')
+  await page.getByRole('tab', { name: 'versions' }).click()
+  await expect(async () => {
+    await page.getByRole('tab', { name: 'comments' }).click()
+    await page.getByRole('tab', { name: 'versions' }).click()
+    await expect(page.getByRole('list', { name: 'Versions' })).toContainText('Version 1', { timeout: 1000 })
+  }).toPass({ timeout: 15_000 })
+  await editor.click()
+  await page.keyboard.press('End')
+  await page.keyboard.type(' and more')
+  await page.getByRole('checkbox', { name: 'Select version 1 to compare' }).check()
+  await expect(async () => {
+    await page.getByRole('button', { name: 'Compare with current page' }).click() // again until the save has landed
+    await expect(page.locator('ins')).toContainText('and more', { timeout: 1000 })
+  }).toPass({ timeout: 15_000 })
 })

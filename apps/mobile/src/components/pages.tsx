@@ -113,6 +113,8 @@ export function PageEditor({ id, onSaved }: { id: string; onSaved?: () => void }
         title,
         content_md: body,
         expected_version: saved?.version,
+        expected_epoch: saved?.collab_epoch,
+        schema: 2, // editor schema (apps/collab/src/doc-schema.ts); older apps are refused with 426
       })
       setSaved(n)
       onSaved?.()
@@ -122,7 +124,9 @@ export function PageEditor({ id, onSaved }: { id: string; onSaved?: () => void }
           ? 'Someone else changed this page. Pull to reload it, then re-apply your edit.'
           : e?.code === 'forbidden'
             ? 'You can view this page but not edit it. Ask its owner for edit access.'
-            : errMsg(e),
+            : e?.code === 'upgrade_required'
+              ? 'Update the app to edit; you can still read.'
+              : errMsg(e),
       )
     } finally {
       setSaving(false)

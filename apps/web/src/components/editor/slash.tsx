@@ -3,26 +3,37 @@ import { computePosition, flip, offset, shift } from '@floating-ui/dom'
 import { type Editor, Extension, ReactRenderer } from '@tiptap/react'
 import Suggestion, { type SuggestionProps } from '@tiptap/suggestion'
 import {
+  AlertTriangle,
   Bold,
+  CalendarDays,
+  CheckCircle2,
+  ChevronRight,
   Code,
   Heading1,
   Heading2,
   Heading3,
   ImageIcon,
+  Info,
   Italic,
   List,
   ListChecks,
   ListOrdered,
+  ListTree,
   type LucideIcon,
   Minus,
   Pilcrow,
   Quote,
   Smile,
   SquareCode,
+  StickyNote,
   Strikethrough,
   Table,
+  Tag,
+  Upload,
+  XCircle,
 } from 'lucide-react'
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
+import { blocksEnabled, formatDate, PANEL_LABEL, type PanelKind, pickImages, todayIso } from './blocks'
 
 export type SlashItem = {
   title: string
@@ -30,6 +41,8 @@ export type SlashItem = {
   keywords: string
   icon: LucideIcon
   run: (e: Editor) => void
+  /** A block older tabs cannot read: offered only once the gateway's minimum schema allows it (docs-parity 7.3). */
+  needsSchema?: boolean
 }
 
 const c = (e: Editor) => e.chain().focus()
@@ -156,9 +169,81 @@ export const SLASH_ITEMS: SlashItem[] = [
   },
 ]
 
+const PANEL_ICON: Record<PanelKind, LucideIcon> = {
+  info: Info,
+  note: StickyNote,
+  success: CheckCircle2,
+  warning: AlertTriangle,
+  error: XCircle,
+}
+const panelItem = (kind: PanelKind): SlashItem => ({
+  title: `${PANEL_LABEL[kind]} panel`,
+  hint: 'Highlighted callout',
+  keywords: `callout panel ${kind}`,
+  icon: PANEL_ICON[kind],
+  needsSchema: true,
+  run: (e) => c(e).wrapIn('panel', { kind }).run(),
+})
+
+/** Inserts `text` carrying a mark at the caret, then selects it so the mark's bubble opens (or marks the selection). */
+const insertMarked = (e: Editor, mark: string, attrs: Record<string, string>, text: string) => {
+  if (!e.state.selection.empty) return void c(e).setMark(mark, attrs).run()
+  const from = e.state.selection.from
+  c(e)
+    .insertContent({ type: 'text', text, marks: [{ type: mark, attrs }] })
+    .setTextSelection({ from, to: from + text.length })
+    .run()
+}
+
+export const NEW_BLOCK_ITEMS: SlashItem[] = [
+  ...(['info', 'note', 'warning', 'success', 'error'] as const).map(panelItem),
+  {
+    title: 'Expand',
+    hint: 'Collapsible section with a title',
+    keywords: 'details collapse toggle accordion',
+    icon: ChevronRight,
+    needsSchema: true,
+    run: (e) => c(e).wrapIn('expand', { title: '' }).run(),
+  },
+  {
+    title: 'Status',
+    hint: 'Coloured status label',
+    keywords: 'lozenge badge tag state',
+    icon: Tag,
+    needsSchema: true,
+    run: (e) => insertMarked(e, 'status', { color: 'grey' }, 'TO DO'),
+  },
+  {
+    title: 'Date',
+    hint: 'Insert a date',
+    keywords: 'today calendar',
+    icon: CalendarDays,
+    needsSchema: true,
+    run: (e) => insertMarked(e, 'date', { datetime: todayIso() }, formatDate(todayIso())),
+  },
+  {
+    title: 'Table of contents',
+    hint: 'Lists the headings of this page',
+    keywords: 'toc contents headings outline',
+    icon: ListTree,
+    needsSchema: true,
+    run: (e) => c(e).insertContent({ type: 'toc' }).run(),
+  },
+  {
+    title: 'Upload image',
+    hint: 'Pick an image from your device',
+    keywords: 'picture photo upload file',
+    icon: Upload,
+    run: (e) => pickImages(e),
+  },
+]
+
 export const filterSlash = (q: string) => {
   const s = q.toLowerCase().trim()
-  return SLASH_ITEMS.filter((i) => `${i.title} ${i.keywords}`.toLowerCase().includes(s))
+  const on = blocksEnabled()
+  return [...SLASH_ITEMS, ...NEW_BLOCK_ITEMS]
+    .filter((i) => on || !i.needsSchema)
+    .filter((i) => `${i.title} ${i.keywords}`.toLowerCase().includes(s))
 }
 
 type ListHandle = { onKeyDown: (e: KeyboardEvent) => boolean }
