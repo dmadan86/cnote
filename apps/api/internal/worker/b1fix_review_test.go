@@ -41,7 +41,7 @@ func b1fixSetup(t *testing.T) b1fix {
 	sp := str(e.apiCmd(tess, "space.create", map[string]any{"key": "DOC", "name": "Docs", "visibility": "open"}), "id")
 	note := str(e.apiCmd(tess, "note.create", map[string]any{"space_id": sp, "title": "Plan", "content_md": "hi"}), "id")
 	e.settle(tess.ws)
-	t.Cleanup(func() { mailHook = nil; smtpTimeout = 20 * time.Second })
+	t.Cleanup(func() { mailHook = nil; smtpTimeoutNS.Store(int64(20 * time.Second)) })
 	return b1fix{e, smtp, tess, mo, note}
 }
 
@@ -214,8 +214,8 @@ func TestMailNotSentWhenAccessRemovedJustBeforeTheFinalCheck(t *testing.T) {
 
 func TestSMTPIsBoundedByATimeout(t *testing.T) {
 	f := b1fixSetup(t)
-	f.smtp.stall = true
-	smtpTimeout = 300 * time.Millisecond
+	f.smtp.stall.Store(true)
+	smtpTimeoutNS.Store(int64(300 * time.Millisecond))
 	_, payload := f.queued(t)
 	start := time.Now()
 	if err := f.run(t, payload); err == nil {

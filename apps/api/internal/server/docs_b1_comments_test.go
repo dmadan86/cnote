@@ -42,12 +42,16 @@ func TestCommentEditIsAuthorOnlyAndMarked(t *testing.T) {
 
 	// Editing tells only people newly mentioned, and only once.
 	inb := func() int { return len(inbox(d.gw, b, "mention")) }
+	// the owner watches the page they created, so comment.add may already have told them; edits must add nothing
+	settle(t, d.e, owner.ws)
+	ownerComments := len(inbox(d.gw, owner, "comment"))
 	d.ok(a, "comment.edit", map[string]any{"id": id, "body": "hi " + mention(owner.ws, b.userID, "B")})
 	if inb() != 1 {
 		t.Fatalf("new mention: %d", inb())
 	}
 	d.ok(a, "comment.edit", map[string]any{"id": id, "body": "again " + mention(owner.ws, b.userID, "B")})
-	if inb() != 1 || len(inbox(d.gw, owner, "comment")) != 0 {
+	settle(t, d.e, owner.ws)
+	if inb() != 1 || len(inbox(d.gw, owner, "comment")) != ownerComments {
 		t.Fatalf("an edit re-notified: %d", inb())
 	}
 	if n := d.scalar("select count(*)::text from core.events where kind = 'comment.edited' and payload::text like '%again%'"); n != "0" {

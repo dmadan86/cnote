@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -86,7 +87,11 @@ type mailItem struct {
 
 // smtpTimeout bounds the whole SMTP dialogue, so the row locks the job holds across it are never held long. A `sending` marker
 // older than this belongs to a send that is over, one way or the other.
-var smtpTimeout = 20 * time.Second
+var smtpTimeoutNS atomic.Int64 // tests shorten it while worker goroutines read it
+
+func init() { smtpTimeoutNS.Store(int64(20 * time.Second)) }
+
+func smtpTimeout() time.Duration { return time.Duration(smtpTimeoutNS.Load()) }
 
 // mailHook lets tests stop the job at a named point: "final" (before the final eligibility check), "send" (right before SMTP) and
 // "sent" (right after SMTP, before the job commits; an error it returns plays a crash or failed commit). Nil in production.
@@ -217,7 +222,7 @@ func notifyMailJob(c *command.Ctx, payload json.RawMessage) error {
 	switch err := c.Tx.QueryRow(c.Context, "select state, extract(epoch from now() - started_at) from core.mail_sends where message_id = $1", ref.MessageID).Scan(&prior, &age); {
 	case err == nil && prior == "sent":
 		return mark("mailed", ref.Notifications)
-	case err == nil && age < smtpTimeout.Seconds():
+	case err == nil && age < smtpTimeout().Seconds():
 		return errors.New("notify mail: another run is sending this message") // the queue retries after the SMTP timeout
 	case err == nil:
 		slog.Warn("notification mail may or may not have been sent; not sending again", "message_id", ref.MessageID, "user", ref.UserID)
@@ -330,7 +335,7 @@ func notifyMailJob(c *command.Ctx, payload json.RawMessage) error {
 		clearMarker()
 		return err
 	}
-	sctx, cancel := context.WithTimeout(c.Context, smtpTimeout)
+	sctx, cancel := context.WithTimeout(c.Context, smtpTimeout())
 	_, err = mailer.Send(sctx, m)
 	cancel()
 	if err != nil {

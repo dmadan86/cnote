@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -22,7 +23,7 @@ type fakeSMTP struct {
 	msgs []smtpMsg
 	ln   net.Listener
 	// stall makes the server accept and then say nothing (a hung SMTP server).
-	stall bool
+	stall atomic.Bool
 }
 
 type smtpMsg struct{ from, to, data string }
@@ -50,7 +51,7 @@ func (f *fakeSMTP) serve(c net.Conn) {
 	defer c.Close()
 	r := bufio.NewReader(c)
 	say := func(s string) { _, _ = io.WriteString(c, s+"\r\n") }
-	if f.stall {
+	if f.stall.Load() {
 		time.Sleep(30 * time.Second)
 		return
 	}
