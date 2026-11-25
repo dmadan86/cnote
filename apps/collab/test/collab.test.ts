@@ -250,6 +250,7 @@ describe('collab gateway', () => {
     const staleSave = await cmd(f.ws, f.owner, 'note.update', {
       id: f.note,
       content_md: 'stale',
+      schema: 2,
       expected_epoch: 1,
     })
     expect(staleSave.status).not.toBe(200)
@@ -312,7 +313,12 @@ describe('collab gateway', () => {
     await ca.sync(a)
     ca.send(2, append(a, ', typ'))
     await sleep(300) // logged in the room, not snapshotted
-    await cmdOk(f.ws, f.owner, 'note.update', { id: f.note, content_md: 'api text' })
+    await cmdOk(f.ws, f.owner, 'note.update', {
+      id: f.note,
+      content_md: 'api text',
+      schema: 2,
+      expected_epoch: 1,
+    })
     ca.close() // the room's final snapshot must not overwrite the API write
     await sleep(800)
     expect((await noteRow(f)).md).toBe('api text')
@@ -330,7 +336,12 @@ describe('collab gateway', () => {
     const ca = await open(g.port, f, { cookie: f.owner.cookie })
     await ca.sync(a)
     ca.send(2, append(a, ', team'))
-    await cmdOk(f.ws, f.owner, 'note.update', { id: f.note, content_md: 'hello world, team' })
+    await cmdOk(f.ws, f.owner, 'note.update', {
+      id: f.note,
+      content_md: 'hello world, team',
+      schema: 2,
+      expected_epoch: 1,
+    })
     await sleep(1000) // the room's own snapshot runs after the API write
     ca.send(2, append(a, ' more'))
     await sleep(1000)

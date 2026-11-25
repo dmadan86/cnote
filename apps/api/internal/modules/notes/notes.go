@@ -21,7 +21,7 @@ func Commands() []command.Command {
 		command.NewCommand("space.list", command.GroupRead, spaceList),
 		command.NewCommand("note.get", command.GroupRead, noteGet),
 		command.NewCommand("note.history", command.GroupRead, noteHistory),
-	}, writeCommands()...)
+	}, append(writeCommands(), a1Commands()...)...)
 }
 
 var uuidRe = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)

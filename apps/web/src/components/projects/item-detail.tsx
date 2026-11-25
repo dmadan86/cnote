@@ -210,6 +210,7 @@ export function ItemDetailView({ itemKey }: { itemKey: string }) {
               key={it.id}
               ws={ws}
               id={it.id}
+              epoch={note.data.collab_epoch}
               initialMd={note.data.content_md}
               onSaved={history.reload}
             />

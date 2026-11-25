@@ -157,7 +157,7 @@ func TestQAGuestShareRevocationIsImmediate(t *testing.T) {
 			t.Fatalf("edit guest cannot comment: %d %s", r.status, r.body)
 		}
 		e.must(owner, "note.share", map[string]any{"note_id": note, "email": guest.email, "level": "view"})
-		r := e.cmd(e.gosv.URL, guest, owner.ws, "note.update", map[string]any{"id": note, "content_md": "x"}, nil)
+		r := e.cmd(e.gosv.URL, guest, owner.ws, "note.update", map[string]any{"id": note, "schema": 2, "expected_epoch": 1, "content_md": "x"}, nil)
 		if r.status != 403 && r.status != 404 {
 			t.Fatalf("view-level guest wrote: %d %s", r.status, r.body)
 		}

@@ -36,7 +36,7 @@ func TestQARevisionsAreImmutableAndNumbersUnique(t *testing.T) {
 	ctx := context.Background()
 	o := e.signup("Rev", true)
 	note := e.note(o, "rev page")
-	e.must(o, "note.update", map[string]any{"id": note, "content_md": "v1"})
+	e.must(o, "note.update", map[string]any{"id": note, "schema": 2, "expected_epoch": 1, "content_md": "v1"})
 	if got := e.revisions(t, o.ws, note); len(got) != 1 || got[0] != 1 {
 		t.Fatalf("expected revision 1 after the first edit, got %v", got)
 	}
@@ -95,7 +95,7 @@ func TestQAConcurrentCheckpointsAndRestoresKeepNumbersConsistent(t *testing.T) {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				codes <- e.cmd(e.gosv.URL, o, o.ws, "note.update", map[string]any{"id": note, "content_md": fmt.Sprintf("body %d", i)}, nil).status
+				codes <- e.cmd(e.gosv.URL, o, o.ws, "note.update", map[string]any{"id": note, "schema": 2, "expected_epoch": 1, "content_md": fmt.Sprintf("body %d", i)}, nil).status
 			}()
 		}
 		wg.Wait()
@@ -112,7 +112,7 @@ func TestQAConcurrentCheckpointsAndRestoresKeepNumbersConsistent(t *testing.T) {
 
 	t.Run("concurrent restores and edits", func(t *testing.T) {
 		note := e.note(o, "race restore")
-		e.must(o, "note.update", map[string]any{"id": note, "content_md": "first"})
+		e.must(o, "note.update", map[string]any{"id": note, "schema": 2, "expected_epoch": 1, "content_md": "first"})
 		r := e.cmd(e.gosv.URL, o, o.ws, "note.revisions", map[string]any{"note_id": note}, nil)
 		var list []map[string]any
 		if err := jsonUnmarshal(r.body, &list); err != nil || len(list) != 1 {
@@ -136,13 +136,16 @@ func TestQAConcurrentCheckpointsAndRestoresKeepNumbersConsistent(t *testing.T) {
 			}()
 			go func() {
 				defer wg.Done()
-				x := e.cmd(e.gosv.URL, o, o.ws, "note.update", map[string]any{"id": note, "content_md": fmt.Sprintf("edit %d", i)}, nil)
+				x := e.cmd(e.gosv.URL, o, o.ws, "note.update", map[string]any{"id": note, "schema": 2, "expected_epoch": 1, "content_md": fmt.Sprintf("edit %d", i)}, nil)
 				codes <- result{"update", x.status, x.body}
 			}()
 		}
 		wg.Wait()
 		close(codes)
 		for c := range codes {
+			if c.what == "update" && c.status == 409 { // a restore bumped collab_epoch: a body save made at epoch 1 is refused
+				continue
+			}
 			if c.status != 200 {
 				t.Errorf("%s failed: %d %.200s", c.what, c.status, c.body)
 			}
@@ -167,7 +170,7 @@ func TestQARestoreNeedsEditAccess(t *testing.T) {
 	viewer := e.addMember(o, e.signup("Viewer", false), "member")
 	guest := e.addMember(o, e.signup("Guest", false), "guest")
 	note := e.note(o, "guarded")
-	e.must(o, "note.update", map[string]any{"id": note, "content_md": "original"})
+	e.must(o, "note.update", map[string]any{"id": note, "schema": 2, "expected_epoch": 1, "content_md": "original"})
 	e.must(o, "note.restrict", map[string]any{"note_id": note, "restriction": "edit"})
 	e.must(o, "note.share", map[string]any{"note_id": note, "email": guest.email, "level": "view"})
 	var list []map[string]any

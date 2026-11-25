@@ -354,7 +354,7 @@ with ft as (
   select id, sum(1.0 / (60 + rnk)) as score from (select id, rnk from ft union all select id, rnk from vec) u group by id
 )
 select n.id::text, n.space_id::text, n.title, n.types, n.freshness,
-       ts_headline('english', n.content_md, websearch_to_tsquery('english', $1), 'MaxWords=30,MinWords=10') as snippet,
+       n.content_md as snippet, -- replaced by notes.Snippets
        f.score::real as score
 from fused f join core.notes n on n.id = f.id
 order by f.score desc, n.title
@@ -420,7 +420,22 @@ func searchHybrid(c *command.Ctx, input json.RawMessage) (any, error) {
 		}
 		out = append(out, h)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+	bodies := make([]string, len(out))
+	for i, h := range out {
+		bodies[i] = h.Snippet
+	}
+	snips, err := notes.Snippets(c, q, bodies)
+	if err != nil {
+		return nil, err
+	}
+	for i := range out {
+		out[i].Snippet = snips[i]
+	}
+	return out, nil
 }
 
 // ---------- summarize / extract_tasks / draft ----------
@@ -432,6 +447,7 @@ func noteText(c *command.Ctx, id string) (title, content string, err error) {
 	if err = c.Tx.QueryRow(c.Context, "select title, content_md from core.notes where id = $1::uuid", id).Scan(&title, &content); err != nil {
 		return
 	}
+	content = notes.PlainText(content)
 	if r := []rune(content); len(r) > maxNoteChars {
 		content = string(r[:maxNoteChars])
 	}

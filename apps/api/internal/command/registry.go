@@ -39,7 +39,11 @@ type Ctx struct {
 	Pool      *pgxpool.Pool
 	Principal Principal
 	reg       *Registry
+	depth     int // > 0 while running inside Ctx.Call
 }
+
+// Nested reports that the running command was called by another command, not by a client.
+func (c *Ctx) Nested() bool { return c.depth > 0 }
 
 func (c *Ctx) WorkspaceID() string { return c.Principal.WorkspaceID }
 

@@ -355,7 +355,9 @@ func TestMentionsNotifyOnceAndOnlyReaders(t *testing.T) {
 	page := g.page(owner, sp, "Plan", nil, "")
 	link := func(p who) string { return fmt.Sprintf("[@x](/w/%s/people/%s)", owner.ws, p.userID) }
 	count := func(p who) float64 { return g.ok(p, "notification.unread_count", map[string]any{})["count"].(float64) }
-	save := func(body string) { g.ok(owner, "note.update", map[string]any{"id": page, "content_md": body}) }
+	save := func(body string) {
+		g.ok(owner, "note.update", map[string]any{"id": page, "schema": 2, "expected_epoch": 1, "content_md": body})
+	}
 
 	body := fmt.Sprintf("hi %s and %s", link(bob), link(owner))
 	save(body)
@@ -450,7 +452,7 @@ func TestGuestSharedAsEditorCanSave(t *testing.T) {
 		if got := g.ok(guest, "note.get", map[string]any{"id": page}); got["level"] != "edit" {
 			t.Fatalf("%s: %v", vis, got["level"])
 		}
-		g.ok(guest, "note.update", map[string]any{"id": page, "title": "Brief v2", "content_md": "guest wrote this"})
+		g.ok(guest, "note.update", map[string]any{"id": page, "title": "Brief v2", "schema": 2, "expected_epoch": 1, "content_md": "guest wrote this"})
 		g.ok(guest, "comment.add", map[string]any{"note_id": page, "body": "looks good"})
 		other := g.page(owner, sp, "Other", nil, "x")
 		g.code("not_found", guest, "note.update", map[string]any{"id": other, "title": "x"})
@@ -483,10 +485,10 @@ func TestNoteUpdateEpochCheckpointAndDelete(t *testing.T) {
 	owner := e.signup("Olive", true)
 	sp := g.space(owner, "EP", "open")
 	page := g.page(owner, sp, "Page", nil, "")
-	g.code("conflict", owner, "note.update", map[string]any{"id": page, "content_md": "x", "expected_epoch": 7})
+	g.code("conflict", owner, "note.update", map[string]any{"id": page, "schema": 2, "content_md": "x", "expected_epoch": 7})
 	g.ok(owner, "note.update", map[string]any{"id": page, "title": "t", "expected_epoch": 7}) // epoch only guards content
-	g.ok(owner, "note.update", map[string]any{"id": page, "content_md": "v1", "expected_epoch": 1})
-	g.ok(owner, "note.update", map[string]any{"id": page, "content_md": "v2"}) // within the checkpoint gap: no second revision
+	g.ok(owner, "note.update", map[string]any{"id": page, "schema": 2, "content_md": "v1", "expected_epoch": 1})
+	g.ok(owner, "note.update", map[string]any{"id": page, "schema": 2, "expected_epoch": 1, "content_md": "v2"}) // within the checkpoint gap: no second revision
 	tx, _ := dbTenant(e, owner.ws)
 	defer tx.Rollback(context.Background())
 	var revs int
@@ -499,5 +501,45 @@ func TestNoteUpdateEpochCheckpointAndDelete(t *testing.T) {
 	g.code("not_found", owner, "note.delete", map[string]any{"id": page})
 	if l := g.list(owner, "note.list", map[string]any{"space_id": sp}); len(l) != 0 {
 		t.Fatalf("%v", l)
+	}
+}
+
+// docs-parity 7.3: body saves from a person's editor need the schema number and expected_epoch; an old client gets 426
+// on a body save only; API keys and nested calls are not editors and are not fenced.
+func TestNoteUpdateSchemaFence(t *testing.T) {
+	e := newEnv(t)
+	g := gw{t, e}
+	owner := e.signup("Fence", true)
+	sp := g.space(owner, "FN", "open")
+	page := g.page(owner, sp, "Page", nil, "orig")
+	body := func(extra map[string]any) map[string]any {
+		in := map[string]any{"id": page, "content_md": "new"}
+		for k, v := range extra {
+			in[k] = v
+		}
+		return in
+	}
+	for name, in := range map[string]map[string]any{
+		"no schema":    body(map[string]any{"expected_epoch": 1}),
+		"schema 1":     body(map[string]any{"expected_epoch": 1, "schema": 1}),
+		"schema 0":     body(map[string]any{"expected_epoch": 1, "schema": 0}),
+		"no schema/ep": body(nil),
+	} {
+		r := g.run(owner, "note.update", in)
+		if r.status != 426 || !strings.Contains(string(r.body), "upgrade_required") {
+			t.Fatalf("%s: want 426 upgrade_required, got %d %s", name, r.status, r.body)
+		}
+	}
+	if got := g.ok(owner, "note.get", map[string]any{"id": page})["content_md"]; got != "orig" {
+		t.Fatalf("a refused save changed the body: %v", got)
+	}
+	g.code("invalid", owner, "note.update", body(map[string]any{"schema": 2}))                       // current editor, no epoch
+	g.code("conflict", owner, "note.update", body(map[string]any{"schema": 2, "expected_epoch": 9})) // stale epoch
+	g.ok(owner, "note.update", map[string]any{"id": page, "title": "Retitled"})                      // not a body save: never fenced
+	g.ok(owner, "note.update", map[string]any{"id": page, "schema": 7, "expected_epoch": 1, "content_md": "newer editor"})
+
+	key, _ := g.ok(owner, "apikey.create", map[string]any{"name": "fence"})["api_key"].(string)
+	if r := e.cmd(e.gosv.URL, who{bearer: key}, owner.ws, "note.update", map[string]any{"id": page, "content_md": "from a script"}, nil); r.status != 200 {
+		t.Fatalf("API key body save is not an editor and must pass: %d %s", r.status, r.body)
 	}
 }

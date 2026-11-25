@@ -16,6 +16,7 @@ export default function BoardPage({ params }: { params: Promise<{ id: string }> 
     <Board
       key={id}
       id={id}
+      epoch={note.collab_epoch}
       title={note.title}
       contentMd={note.content_md}
       design={note.types.includes('design')}

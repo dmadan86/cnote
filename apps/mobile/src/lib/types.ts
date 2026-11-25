@@ -9,6 +9,7 @@ export type Note = {
   freshness: string
   updated_at: string
   version: number
+  collab_epoch: number
 }
 
 export type Item = {

@@ -231,7 +231,7 @@ func TestSharingGuestSharedAsEditorCanSave(t *testing.T) {
 		w.ok(w.owner, "note.share", map[string]any{"note_id": page, "email": guest.email, "level": "edit"})
 		got := w.ok(guest, "note.get", map[string]any{"id": page}).(map[string]any)
 		eq(t, got["level"], "edit")
-		w.ok(guest, "note.update", map[string]any{"id": page, "title": "Brief v2", "content_md": "guest wrote this"})
+		w.ok(guest, "note.update", map[string]any{"id": page, "title": "Brief v2", "schema": 2, "expected_epoch": 1, "content_md": "guest wrote this"})
 		w.ok(guest, "comment.add", map[string]any{"note_id": page, "body": "looks good"})
 		other := w.page(sp, "Other", "", "x")
 		w.errStatus(guest, "note.update", map[string]any{"id": other, "title": "x"}, 404, "not_found")

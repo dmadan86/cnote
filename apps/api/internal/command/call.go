@@ -24,6 +24,8 @@ func (c *Ctx) Call(name string, input any) (json.RawMessage, error) {
 			return nil, ErrInvalid(err.Error())
 		}
 	}
+	c.depth++
+	defer func() { c.depth-- }()
 	out, err := c.reg.run(c, name, b, ExecOptions{internal: true})
 	return out, err
 }

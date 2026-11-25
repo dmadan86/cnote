@@ -8,7 +8,7 @@ import * as encoding from 'lib0/encoding'
 import { WebSocket } from 'ws'
 import * as Y from 'yjs'
 import { connect, tenant } from '../src/db.ts'
-import { createServer } from '../src/server.ts'
+import { createServer, type Options } from '../src/server.ts'
 
 try {
   process.loadEnvFile(new URL('../../../.env', import.meta.url))
@@ -17,8 +17,8 @@ try {
 export const API = (process.env.API_URL ?? 'http://localhost:4000').replace(/\/$/, '')
 export const pool = connect(process.env.DATABASE_URL!, 5)
 
-export async function gateway(debounceMs: number, recheckMs = 10_000) {
-  const g = createServer({ pool, debounceMs, recheckMs })
+export async function gateway(debounceMs: number, recheckMs = 10_000, extra: Partial<Options> = {}) {
+  const g = createServer({ pool, debounceMs, recheckMs, ...extra })
   await new Promise<void>((r) => g.server.listen(0, '127.0.0.1', r))
   return { ...g, port: (g.server.address() as AddressInfo).port }
 }

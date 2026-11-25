@@ -22,6 +22,7 @@ import { InsertField } from '@/components/templates/fields'
 import { SaveAsTemplate } from '@/components/templates/save-template'
 import { btn, ErrorText, inputCls } from '@/components/ui'
 import { cmd } from '@/lib/api'
+import { DOC_SCHEMA } from '@/lib/doc-schema'
 import { useCmd } from '@/lib/hooks'
 import { type BrandKit, BrandPanel } from './brand'
 import { ItemEmbedUtil } from './item-embed'
@@ -115,11 +116,13 @@ function bindYjs(editor: Editor, doc: Y.Doc, provider: WebsocketProvider, userNa
 
 export function Board({
   id,
+  epoch,
   title,
   contentMd,
   design,
 }: {
   id: string
+  epoch: number
   title: string
   contentMd: string
   design: boolean
@@ -134,7 +137,9 @@ export function Board({
 
   useEffect(() => {
     const d = new Y.Doc()
-    const p = new WebsocketProvider(`${COLLAB_URL}/collab`, `${ws}/${id}`, d)
+    const p = new WebsocketProvider(`${COLLAB_URL}/collab`, `${ws}/${id}`, d, {
+      params: { schema: String(DOC_SCHEMA) },
+    })
     doc.current = d
     provider.current = p
     let decided = false
@@ -164,7 +169,9 @@ export function Board({
         clearTimeout(t)
         t = setTimeout(() => {
           const md = `\`\`\`tldraw\n${JSON.stringify(getSnapshot(editor.store).document)}\n\`\`\``
-          cmd(ws, 'note.update', { id, content_md: md }).catch((e) => setErr((e as Error).message))
+          cmd(ws, 'note.update', { id, content_md: md, expected_epoch: epoch, schema: DOC_SCHEMA }).catch(
+            (e) => setErr((e as Error).message),
+          )
         }, 800)
       },
       { source: 'user', scope: 'document' },
@@ -173,7 +180,7 @@ export function Board({
       clearTimeout(t)
       stop()
     }
-  }, [editor, mode, ws, id, me.user.name])
+  }, [editor, mode, ws, id, me.user.name, epoch])
 
   const mount = useCallback(
     (e: Editor) => {

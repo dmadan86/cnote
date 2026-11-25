@@ -140,6 +140,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm lint
       - run: pnpm --filter @cnote/web typecheck
+      - run: pnpm --filter @cnote/web test
       - run: pnpm build:web
 
   mobile:

@@ -7,6 +7,7 @@ const port = Number(process.env.COLLAB_PORT ?? 4300)
 const app = createServer({
   internalSecret: process.env.COLLAB_INTERNAL_SECRET || undefined,
   pool: connect(url, Number(process.env.DB_POOL_MAX ?? 10)),
+  minSchema: process.env.COLLAB_MIN_SCHEMA ? Number(process.env.COLLAB_MIN_SCHEMA) : undefined,
   debounceMs: process.env.COLLAB_DEBOUNCE_MS ? Number(process.env.COLLAB_DEBOUNCE_MS) : undefined,
 })
 app.server.listen(port, () => console.log(`collab listening on :${port}`))

@@ -572,7 +572,7 @@ func TestCnQaAI007AI011MCP006StaleProposalIsRefusedAfterThePageChanged(t *testin
 	d, owner := newDG(t)
 	page := d.page(owner, d.space(owner, "ENG", "open"), "Deploy guide", nil, "Releases are tracked in ENG-12")
 	_, pid := d.stale(page, "Releases are tracked in ENG-12\nREVISED")
-	d.ok(owner, "note.update", map[string]any{"id": page, "content_md": "Edited by a human while the AI drafted"})
+	d.ok(owner, "note.update", map[string]any{"id": page, "schema": 2, "expected_epoch": 1, "content_md": "Edited by a human while the AI drafted"})
 	d.code("conflict", owner, "doc.proposal_decide", map[string]any{"proposal_id": pid, "approve": true})
 	if got := d.ok(owner, "note.get", map[string]any{"id": page})["content_md"]; got != "Edited by a human while the AI drafted" {
 		t.Fatalf("human edit lost: %v", got)
