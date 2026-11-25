@@ -318,6 +318,11 @@ func tableDelete(c *command.Ctx, raw json.RawMessage) (any, error) {
 	if _, err := c.Tx.Exec(c.Context, `update tables.tables set deleted_at=now() where id=$1::uuid`, t.ID); err != nil {
 		return nil, command.DB(err)
 	}
+	// bases.record_count is the live records of live tables: a trashed table gives its records back (restore takes
+	// them again; the purge then has nothing left to count)
+	if err := bumpTableRecords(c, t.BaseID, t.ID, -1); err != nil {
+		return nil, err
+	}
 	return map[string]any{}, emitStruct(c, "table.deleted", t.BaseID, t.ID, "")
 }
 
@@ -341,5 +346,21 @@ func tableRestore(c *command.Ctx, raw json.RawMessage) (any, error) {
 	if _, err := c.Tx.Exec(c.Context, `update tables.tables set deleted_at=null where id=$1::uuid`, in.ID); err != nil {
 		return nil, command.DB(err)
 	}
+	if err := bumpTableRecords(c, baseID, in.ID, 1); err != nil { // refused when the base is at its cap
+		return nil, err
+	}
 	return map[string]any{}, emitStruct(c, "table.restored", baseID, in.ID, "")
+}
+
+// bumpTableRecords adds (sign 1) or removes (sign -1) the live records of one table to the base's record_count.
+func bumpTableRecords(c *command.Ctx, baseID, tableID string, sign int) error {
+	var n int
+	if err := c.Tx.QueryRow(c.Context, `select count(*) from tables.records where workspace_id=$1::uuid and table_id=$2::uuid and deleted_at is null`,
+		c.WorkspaceID(), tableID).Scan(&n); err != nil {
+		return command.DB(err)
+	}
+	if n == 0 {
+		return nil
+	}
+	return bumpRecordCount(c, baseID, sign*n)
 }

@@ -226,6 +226,9 @@ func resolveTargets(tc *openedTable, t *dataimport.Table, m *importMapping) ([]t
 			}
 			used[x.field.ID] = true
 		}
+		if x.field.Locked && !tc.Role.AtLeast(RoleManage) {
+			return nil, command.ErrForbidden(fmt.Sprintf("field %q is locked: ask a manager", x.field.Name))
+		}
 		out[i] = x
 	}
 	return out, nil
@@ -487,6 +490,9 @@ func ImportJob(c *command.Ctx, payload json.RawMessage) error {
 			f, ok := tc.byID[cm.FieldID]
 			if !ok {
 				return fail("a mapped field was deleted")
+			}
+			if f.Locked && !tc.Role.AtLeast(RoleManage) { // locked after the run started
+				return fail(fmt.Sprintf("field %q is locked: ask a manager", f.Name))
 			}
 			x.field = f
 		}

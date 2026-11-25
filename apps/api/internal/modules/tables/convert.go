@@ -2,6 +2,7 @@ package tables
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"reflect"
@@ -15,7 +16,7 @@ import (
 // Field type changes (17.4): only the lossless ones, run inside the command's transaction.
 //
 //	anything scalar -> text, long_text   the displayed text (long_text -> text only if every value fits)
-//	number <-> percent <-> currency      currency is paise: x100 / x100 (a number with more than 2 decimals rounds to a paise)
+//	number <-> percent <-> currency      currency is paise: x100 / x100 (a number with more than 2 decimals is refused, never rounded)
 //	single_select -> multi_select        wrapped in a list
 //	text -> single_select, multi_select  new options from the distinct values (multi splits on commas), 200 at most
 //	text -> phone, email, url            every value must already be valid
@@ -64,6 +65,17 @@ var palette = []string{"gray", "blue", "green", "amber", "red", "purple"}
 
 // convertField previews (confirm false) or applies a type change. It returns the preview when nothing was applied.
 func convertField(c *command.Ctx, f Field, tbl Table, to FieldType, cfgRaw json.RawMessage, confirm bool) (*convPreview, error) {
+	if confirm {
+		// Exclusive lock on the field row (record writers hold it FOR SHARE, see openTable): no record is written
+		// while we convert, and we re-read the field in case a concurrent conversion changed it while we waited.
+		var err error
+		if _, err = c.Tx.Exec(c.Context, `select 1 from tables.fields where id=$1::uuid for update`, f.ID); err != nil {
+			return nil, command.DB(err)
+		}
+		if f, _, err = loadField(c, f.ID, false); err != nil {
+			return nil, err
+		}
+	}
 	if !convAllowed(f.Type, to) {
 		return nil, command.ErrInvalid(refusal)
 	}
@@ -140,11 +152,15 @@ func convertField(c *command.Ctx, f Field, tbl Table, to FieldType, cfgRaw json.
 
 	prev := &convPreview{Samples: []convSample{}}
 	ids, vals := []string{}, []string{}
+	decimals := 0
 	for _, r := range data {
 		nv, err := convertValue(f, nf, r.old)
 		switch {
 		case err != nil || nv == nil:
 			prev.Cleared++
+			if errors.Is(err, errDecimals) {
+				decimals++
+			}
 		case reflect.DeepEqual(jsonRound(nv), r.old):
 			prev.Kept++
 		default:
@@ -158,6 +174,9 @@ func convertField(c *command.Ctx, f Field, tbl Table, to FieldType, cfgRaw json.
 	}
 	if !confirm {
 		return prev, nil
+	}
+	if decimals > 0 { // 17.4: lossless only, a paise is the finest a currency value goes
+		return nil, command.ErrConflict(fmt.Sprintf("%d values have more than 2 decimals. Round them first, or create a new field and copy the values", decimals))
 	}
 	if prev.Cleared > 0 {
 		return nil, command.ErrConflict(fmt.Sprintf("%d values cannot become %s. Fix them first, or create a new field and copy the values", prev.Cleared, strings.ReplaceAll(string(to), "_", " ")))
@@ -202,6 +221,8 @@ func newConfig(c *command.Ctx, tbl Table, f Field, to FieldType, raw json.RawMes
 	return normalizeConfig(c, tbl, to, raw, nil)
 }
 
+var errDecimals = errors.New("more than 2 decimals")
+
 func convertValue(from, to Field, v any) (any, error) {
 	switch {
 	case to.Type == Text || to.Type == LongText:
@@ -220,6 +241,9 @@ func convertValue(from, to Field, v any) (any, error) {
 		case from.Type == Currency && to.Type != Currency:
 			return n / 100, nil
 		case from.Type != Currency && to.Type == Currency:
+			if p := n * 100; math.Abs(p-math.Round(p)) > 1e-6 {
+				return nil, errDecimals
+			}
 			return int64(math.Round(n * 100)), nil
 		case to.Type == Currency:
 			return int64(n), nil

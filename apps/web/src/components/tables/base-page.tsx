@@ -110,7 +110,7 @@ export function BasePage({ baseId }: { baseId: string }) {
   const [gridKey, setGridKey] = useState(0)
   const [err, setErr] = useState<string>()
   const [local, setLocal] = useState<Record<string, ViewConfig>>({}) // optimistic shared-view edits, by view id
-  const timer = useRef<ReturnType<typeof setTimeout>>(undefined)
+  const timers = useRef(new Map<string, { t: ReturnType<typeof setTimeout>; config: ViewConfig }>()) // pending saves, one per view id
   const wantImport = sp.get('import') === '1'
 
   const setParams = useCallback(
@@ -138,22 +138,46 @@ export function BasePage({ baseId }: { baseId: string }) {
     if (!view) return
     const config = { ...view.config, ...patch }
     setLocal((l) => ({ ...l, [view.id]: config }))
-    clearTimeout(timer.current)
-    timer.current = setTimeout(async () => {
-      try {
-        await updateView(ws, view.id, { config })
-        setErr(undefined)
-        detail.reload()
-      } catch (x) {
-        setErr((x as Error).message)
-        setLocal((l) => {
-          const { [view.id]: _drop, ...rest } = l
-          return rest
-        })
-      }
-    }, 400)
+    const id = view.id
+    clearTimeout(timers.current.get(id)?.t)
+    timers.current.set(id, { t: setTimeout(() => flush(id), 400), config })
   }
-  useEffect(() => () => clearTimeout(timer.current), [])
+  const saveView = async (id: string, config: ViewConfig) => {
+    try {
+      await updateView(ws, id, { config })
+      setErr(undefined)
+      detail.reload()
+    } catch (x) {
+      setErr((x as Error).message)
+      setLocal((l) => {
+        const { [id]: _drop, ...rest } = l
+        return rest
+      })
+    }
+  }
+  // A view's pending save runs at once when the view is left or the page goes away, never dropped or sent to another view.
+  const saveRef = useRef(saveView)
+  saveRef.current = saveView
+  const flush = useCallback((id: string) => {
+    const p = timers.current.get(id)
+    if (!p) return
+    clearTimeout(p.t)
+    timers.current.delete(id)
+    void saveRef.current(id, p.config)
+  }, [])
+  const viewId = view?.id
+  useEffect(
+    () => () => {
+      if (viewId) flush(viewId)
+    },
+    [viewId, flush],
+  )
+  useEffect(() => {
+    const all = timers.current
+    return () => {
+      for (const id of [...all.keys()]) flush(id)
+    }
+  }, [flush])
 
   // ?import=1 (New base > Import a CSV) opens the wizard once the table exists.
   useEffect(() => {

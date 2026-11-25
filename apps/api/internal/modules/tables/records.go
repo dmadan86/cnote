@@ -82,6 +82,16 @@ func openTable(c *command.Ctx, tableID string, min Role) (*openedTable, error) {
 	if !role.AtLeast(min) {
 		return nil, command.ErrForbidden("you do not have permission for this change in this base")
 	}
+	if min.AtLeast(RoleWrite) {
+		// Locking: a type conversion takes its field row FOR UPDATE (convertField); every writer takes the table's
+		// field rows FOR SHARE here, before it reads the field types. Writers do not block each other, but a
+		// writer and a conversion exclude one another, so a write validates against the type that will be committed
+		// and the conversion sees every record that write left behind. Rows locked by a waiting conversion are
+		// re-read after it commits (read committed), so loadFields below returns the new type.
+		if _, err := c.Tx.Exec(c.Context, `select 1 from tables.fields where workspace_id=$1::uuid and table_id=$2::uuid and deleted_at is null for share`, c.WorkspaceID(), t.ID); err != nil {
+			return nil, command.DB(err)
+		}
+	}
 	fields, err := loadFields(c, t.ID)
 	if err != nil {
 		return nil, err
@@ -138,8 +148,8 @@ type prepared struct {
 
 // prepareWrite validates values and clear against the table's fields. A nil value or a value Validate maps to
 // "empty" clears the field; a locked field needs manage.
-func prepareWrite(tc *openedTable, values map[string]any, clear []string) (prepared, error) {
-	p := prepared{set: map[string]any{}}
+func prepareWrite(tc *openedTable, values map[string]any, clear []string, links map[string][]string) (prepared, error) {
+	p := prepared{set: map[string]any{}, links: links}
 	check := func(id string) (Field, error) {
 		f, ok := tc.byID[id]
 		if !ok {
@@ -172,6 +182,15 @@ func prepareWrite(tc *openedTable, values map[string]any, clear []string) (prepa
 			p.unset = append(p.unset, k)
 		} else {
 			p.set[k] = v
+		}
+	}
+	for id := range links {
+		f, err := check(id)
+		if err != nil {
+			return p, err
+		}
+		if f.Type != Link {
+			return p, command.ErrInvalid(fmt.Sprintf("field %q is not a link field", f.Name))
 		}
 	}
 	for _, id := range clear {
@@ -444,11 +463,11 @@ func recordCreate(c *command.Ctx, in json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	p, err := prepareWrite(tc, a.Values, nil)
+	p, err := prepareWrite(tc, a.Values, nil, a.Links)
 	if err != nil {
 		return nil, err
 	}
-	ids, err := insertRecords(c, tc, []newRec{{set: p.set, links: a.Links}})
+	ids, err := insertRecords(c, tc, []newRec{{set: p.set, links: p.links}})
 	if err != nil {
 		return nil, err
 	}
@@ -475,11 +494,11 @@ func recordCreateMany(c *command.Ctx, in json.RawMessage) (any, error) {
 	}
 	news := make([]newRec, len(a.Records))
 	for i, r := range a.Records {
-		p, err := prepareWrite(tc, r.Values, nil)
+		p, err := prepareWrite(tc, r.Values, nil, r.Links)
 		if err != nil {
 			return nil, command.ErrInvalid(fmt.Sprintf("record %d: %s", i+1, err.Error()))
 		}
-		news[i] = newRec{set: p.set, links: r.Links}
+		news[i] = newRec{set: p.set, links: p.links}
 	}
 	ids, err := insertRecords(c, tc, news)
 	if err != nil {
@@ -509,11 +528,10 @@ func recordUpdate(c *command.Ctx, in json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	p, err := prepareWrite(tc, a.Values, a.Clear)
+	p, err := prepareWrite(tc, a.Values, a.Clear, a.Links)
 	if err != nil {
 		return nil, err
 	}
-	p.links = a.Links
 	changed, err := applyUpdates(c, tc, []upd{{ID: a.ID, prepared: p}})
 	if err != nil {
 		return nil, err
@@ -545,7 +563,7 @@ func recordBulkUpdate(c *command.Ctx, in json.RawMessage) (any, error) {
 	}
 	ups := make([]upd, len(a.Updates))
 	for i, u := range a.Updates {
-		p, err := prepareWrite(tc, u.Value, u.Clear)
+		p, err := prepareWrite(tc, u.Value, u.Clear, nil)
 		if err != nil {
 			return nil, command.ErrInvalid(fmt.Sprintf("update %d: %s", i+1, err.Error()))
 		}

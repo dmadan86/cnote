@@ -302,12 +302,27 @@ export function RecordPanel({
     head.current?.focus()
     return () => prev?.focus?.()
   }, [])
-  const close = useCallback(() => {
+  // Saves in flight, so closing can wait for them: the edit is not lost and the grid refreshes after the last one.
+  const pending = useRef(new Set<Promise<boolean>>())
+  const track = (p: Promise<boolean>) => {
+    pending.current.add(p)
+    p.finally(() => pending.current.delete(p))
+    return p
+  }
+  const close = useCallback(async () => {
+    setErr(undefined)
+    const results = await Promise.all([...pending.current])
+    if (results.includes(false)) {
+      setErr('A change could not be saved. Fix it or reload before closing')
+      return // stay open: the field shows the reason
+    }
     if (dirty.current) onChanged()
     onClose()
   }, [onChanged, onClose])
 
-  async function save(f: Field, v: unknown) {
+  const save = (f: Field, v: unknown) => track(saveValue(f, v))
+  const saveLinks = (f: Field, chips: LinkChip[]) => track(saveChips(f, chips))
+  async function saveValue(f: Field, v: unknown) {
     setErrs((e) => ({ ...e, [f.id]: '' }))
     try {
       const r = await updateRecord(
@@ -317,17 +332,21 @@ export function RecordPanel({
       )
       setRec(r)
       dirty.current = true
+      return true
     } catch (x) {
       setErrs((e) => ({ ...e, [f.id]: (x as Error).message }))
+      return false
     }
   }
-  async function saveLinks(f: Field, chips: LinkChip[]) {
+  async function saveChips(f: Field, chips: LinkChip[]) {
     try {
       const r = await updateRecord(ws, recordId, { links: { [f.id]: chips.map((c) => c.id) } })
       setRec(r)
       dirty.current = true
+      return true
     } catch (x) {
       setErrs((e) => ({ ...e, [f.id]: (x as Error).message }))
+      return false
     }
   }
 

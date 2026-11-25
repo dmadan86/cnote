@@ -393,9 +393,14 @@ func checkConfigChange(c *command.Ctx, f Field, cfg json.RawMessage, role Role) 
 		return command.DB(err)
 	case Link:
 		if cfgOf[LinkConfig](f).Multiple && !cfgOf[LinkConfig](Field{Config: cfg}).Multiple {
+			// links are stored under the forward field: an inverse field reads them the other way round
+			fid, col := f.ID, "from_record"
+			if inv := cfgOf[LinkConfig](f).InverseOf; inv != "" {
+				fid, col = inv, "to_record"
+			}
 			var n int
-			if err := c.Tx.QueryRow(c.Context, `select count(*) from (select 1 from tables.links where workspace_id=$1::uuid and field_id=$2::uuid group by from_record having count(*)>1) x`,
-				c.WorkspaceID(), f.ID).Scan(&n); err != nil {
+			if err := c.Tx.QueryRow(c.Context, `select count(*) from (select 1 from tables.links where workspace_id=$1::uuid and field_id=$2::uuid group by `+col+` having count(*)>1) x`,
+				c.WorkspaceID(), fid).Scan(&n); err != nil {
 				return command.DB(err)
 			}
 			if n > 0 {
