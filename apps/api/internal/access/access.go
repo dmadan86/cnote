@@ -133,10 +133,29 @@ func assertNoteAccess(c *command.Ctx, noteID string, write, pageArchivedOK bool)
 	if write && level != "edit" {
 		return "", command.ErrForbidden("you can only view this page")
 	}
-	if write && pageArchived && !pageArchivedOK {
-		return "", command.ErrForbidden(ArchivedPageMessage)
+	if write && !pageArchivedOK {
+		if err := AssertPageNotArchived(pageArchived); err != nil {
+			return "", err
+		}
 	}
 	return space, nil
+}
+
+// AssertPageNotArchived applies the page archive rule after access has been established.
+func AssertPageNotArchived(archived bool) error {
+	if archived {
+		return command.ErrForbidden(ArchivedPageMessage)
+	}
+	return nil
+}
+
+// AssertNoteNotArchived applies the same rule to writes permitted at read access, such as comments.
+func AssertNoteNotArchived(c *command.Ctx, noteID string) error {
+	var archived bool
+	if err := c.Tx.QueryRow(c.Context, "select freshness = 'archived' from core.notes where id = $1::uuid", noteID).Scan(&archived); err != nil {
+		return command.DB(err)
+	}
+	return AssertPageNotArchived(archived)
 }
 
 // AssertSpaceWritable refuses with ArchivedMessage when the space is archived. For code that writes into a space without

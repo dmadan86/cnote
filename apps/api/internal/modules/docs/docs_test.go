@@ -106,3 +106,22 @@ func TestCatalogueHasCommonAndKindFields(t *testing.T) {
 		t.Fatal("catalogue")
 	}
 }
+
+func TestPromptLinkDestinations(t *testing.T) {
+	for _, tc := range []struct{ answer, want string }{
+		{"javascript:alert", "label"},
+		{"data:text/html,x", "label"},
+		{"https://example.com", `[label](https\://example.com)`},
+		{"/w/page", `[label](/w/page)`},
+		{"mailto:a@example.com", `[label](mailto:a@example.com)`},
+	} {
+		raw := vals{"ask.url": tc.answer}
+		escaped := vals{"ask.url": mdLiteral(tc.answer)}
+		if got := renderMarkdownAnswers(`[label]({{ask.url}})`, raw, escaped, map[string]bool{}); got != tc.want {
+			t.Errorf("%q: got %q, want %q", tc.answer, got, tc.want)
+		}
+		if got := renderMarkdownAnswers(`![label]({{ask.url}})`, raw, escaped, map[string]bool{}); strings.HasPrefix(tc.answer, "javascript:") && got != "label" {
+			t.Errorf("unsafe image: %q", got)
+		}
+	}
+}

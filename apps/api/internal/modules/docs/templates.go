@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"math"
+	"net/url"
 	"regexp"
 	"sort"
 	"strconv"
@@ -175,6 +177,88 @@ func substitute(text string, v vals, missing map[string]bool) string {
 	}
 	b.WriteString(text[last:])
 	return b.String()
+}
+
+// renderMarkdownAnswers removes links whose substituted destination is not an allowed URL.
+// Work on the template before escaping answers, so validation sees the actual destination.
+func renderMarkdownAnswers(text string, raw, escaped vals, missing map[string]bool) string {
+	var out strings.Builder
+	for i := 0; i < len(text); {
+		start := i
+		if text[i] == '!' && i+1 < len(text) && text[i+1] == '[' {
+			i++
+		}
+		if text[i] != '[' {
+			out.WriteByte(text[start])
+			i = start + 1
+			continue
+		}
+		labelStart := i + 1
+		depth := 1
+		i++
+		for i < len(text) && depth > 0 {
+			if text[i] == '\\' && i+1 < len(text) {
+				i += 2
+				continue
+			}
+			if text[i] == '[' {
+				depth++
+			}
+			if text[i] == ']' {
+				depth--
+			}
+			i++
+		}
+		if depth != 0 || i >= len(text) || text[i] != '(' {
+			out.WriteByte(text[start])
+			i = start + 1
+			continue
+		}
+		labelEnd := i - 1
+		destStart := i + 1
+		i++
+		depth = 1
+		for i < len(text) && depth > 0 {
+			if text[i] == '\\' && i+1 < len(text) {
+				i += 2
+				continue
+			}
+			if text[i] == '(' {
+				depth++
+			}
+			if text[i] == ')' {
+				depth--
+			}
+			i++
+		}
+		if depth != 0 {
+			out.WriteByte(text[start])
+			i = start + 1
+			continue
+		}
+		dest := text[destStart : i-1]
+		hasAnswer := false
+		for _, p := range placeholderRe.FindAllStringSubmatch(dest, -1) {
+			if strings.HasPrefix(pathOf(p[1]), askPrefix) {
+				hasAnswer = true
+			}
+		}
+		if !hasAnswer {
+			out.WriteString(text[start:i])
+			continue
+		}
+		resolved := html.UnescapeString(substitute(dest, raw, map[string]bool{}))
+		resolved = strings.TrimSpace(resolved)
+		u, err := url.Parse(resolved)
+		safe := err == nil && !strings.ContainsAny(resolved, "\\\r\n\t ") &&
+			((u.Scheme == "http" || u.Scheme == "https") && u.Host != "" || u.Scheme == "mailto" && u.Opaque != "" || u.Scheme == "" && u.Host == "" && strings.HasPrefix(resolved, "/w/"))
+		if !safe {
+			out.WriteString(text[labelStart:labelEnd])
+		} else {
+			out.WriteString(text[start:i])
+		}
+	}
+	return substitute(out.String(), escaped, missing)
 }
 
 // serdeValue rewrites decoded JSON the way serde_json::Value would print it (floats as notes.F64 prints them); a number
@@ -729,7 +813,7 @@ func render(c *command.Ctx, t tpl, source *string, answers map[string]string) (s
 			return "", "", nil, err
 		}
 	} else {
-		body = substitute(t.content, bv, missing)
+		body = renderMarkdownAnswers(t.content, v, bv, missing)
 	}
 	un := []string{}
 	for k := range missing {

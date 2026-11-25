@@ -376,3 +376,39 @@ func TestArchivedPageBehindAPublicLinkIs404(t *testing.T) {
 		t.Fatalf("after restore: %d %s", s, b)
 	}
 }
+
+func TestArchivedPageRejectsCommentWrites(t *testing.T) {
+	d, owner := newDG(t)
+	sp := d.space(owner, "CMT", "open")
+	page := d.page(owner, sp, "Page", nil, "x")
+	id := d.ok(owner, "comment.add", map[string]any{"note_id": page, "body": "hello"})["id"].(string)
+	d.ok(owner, "doc.archive", map[string]any{"id": page})
+	for _, tc := range []struct {
+		cmd   string
+		input map[string]any
+	}{
+		{"comment.add", map[string]any{"note_id": page, "body": "new"}},
+		{"comment.resolve", map[string]any{"id": id, "resolved": true}},
+		{"comment.resolve", map[string]any{"id": id, "resolved": false}},
+		{"comment.edit", map[string]any{"id": id, "body": "edited"}},
+		{"comment.delete", map[string]any{"id": id}},
+		{"comment.react", map[string]any{"id": id, "emoji": "👍"}},
+	} {
+		if code, msg := d.errOf(owner, tc.cmd, tc.input); code != "forbidden" || msg != "This page is archived" {
+			t.Errorf("%s: %s %s", tc.cmd, code, msg)
+		}
+	}
+}
+
+func TestViewersSpaceViewerGetsCountOnly(t *testing.T) {
+	d, owner := newDG(t)
+	viewer := d.member(owner)
+	sp := d.space(owner, "VWR", "open")
+	page := d.page(owner, sp, "Page", nil, "x")
+	d.ok(owner, "note.viewed", map[string]any{"note_id": page})
+	d.sql("insert into core.space_members (workspace_id, space_id, user_id, role) values ($1::uuid,$2::uuid,$3::uuid,'viewer')", owner.ws, sp, viewer.userID)
+	got := d.ok(viewer, "note.viewers", map[string]any{"note_id": page})
+	if _, has := got["viewers"]; has || got["count"] != float64(1) {
+		t.Fatalf("space viewer saw names: %v", got)
+	}
+}

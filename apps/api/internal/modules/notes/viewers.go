@@ -2,6 +2,7 @@ package notes
 
 import (
 	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/cnote/api/internal/access"
@@ -32,12 +33,12 @@ func noteViewers(c *command.Ctx, input json.RawMessage) (any, error) {
 	if c.Principal.Role < command.Member { // a guest gets the number only, even with edit access to the page
 		return out, nil
 	}
-	spaces, err := access.ReadableSpaceIDs(c)
-	if err != nil {
+	if _, err := access.AssertNoteAccess(c, id, true); err != nil {
+		var ce *command.Error
+		if errors.As(err, &ce) && (ce.Code == command.Forbidden || ce.Code == command.NotFound) {
+			return out, nil
+		}
 		return nil, err
-	}
-	if level, err := access.NoteLevel(c, id, spaces); err != nil || level != "edit" {
-		return out, err
 	}
 	rows, err := c.Tx.Query(c.Context,
 		`select u.id::text, u.name, v.last_viewed_at from core.note_views v
