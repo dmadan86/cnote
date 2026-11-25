@@ -1,5 +1,5 @@
 'use client'
-import Collaboration, { isChangeOrigin } from '@tiptap/extension-collaboration'
+import Collaboration from '@tiptap/extension-collaboration'
 import CollaborationCaret from '@tiptap/extension-collaboration-caret'
 import { TaskItem, TaskList } from '@tiptap/extension-list'
 import { TableCell, TableHeader, TableRow } from '@tiptap/extension-table'
@@ -34,16 +34,6 @@ import { useShell } from './shell'
 
 const COLLAB_URL = process.env.NEXT_PUBLIC_COLLAB_URL ?? 'ws://localhost:4000'
 const SYNC_TIMEOUT_MS = 2000
-/** Browsers cap keepalive requests at 64 KiB; a bigger close update is not sent (the live socket normally has it). */
-const MAX_CLOSE_UPDATE = 48 * 1024
-/** An edit older than this reached the gateway long ago; the close beacon is for the last few seconds only. */
-const IN_FLIGHT_MS = 5000
-
-const toBase64 = (b: Uint8Array) => {
-  let s = ''
-  for (let i = 0; i < b.length; i += 8192) s += String.fromCharCode(...b.subarray(i, i + 8192))
-  return btoa(s)
-}
 /** Server close code: the page was restored, this document's epoch is over. */
 const STALE_EPOCH = 4409
 
@@ -212,15 +202,6 @@ function Surface({
   const last = useRef(initialMd)
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined)
   const pending = useRef<(() => string) | null>(null) // set until the latest edit is saved
-  // True while the gateway connection is up: its log already holds every edit.
-  const live = useRef(!!provider?.wsconnected)
-  // What the gateway had when this editor opened: the close beacon sends only what came after.
-  const base = useRef<Uint8Array | null>(null)
-  if (ydoc && !base.current) base.current = Y.encodeStateVector(ydoc)
-  // When the person last typed (focused, not a remote change or the editor normalising loaded content): only a recent edit can be in flight.
-  const lastEdit = useRef(0)
-  const ydocRef = useRef(ydoc)
-  ydocRef.current = ydoc
 
   const editor = useEditor({
     immediatelyRender: false,
@@ -271,9 +252,7 @@ function Surface({
       if (editorRef) editorRef.current = editor
       // Never seed here: the gateway seeds a room from content_md once, so seeding again would duplicate it.
     },
-    onUpdate: ({ editor, transaction }) => {
-      // A person typing has focus; the editor normalising loaded content (also a local change) does not.
-      if (!isChangeOrigin(transaction) && editor.isFocused) lastEdit.current = Date.now()
+    onUpdate: ({ editor }) => {
       clearTimeout(timer.current)
       const mine = () => editor.getMarkdown()
       pending.current = mine
@@ -309,29 +288,6 @@ function Surface({
       clearTimeout(timer.current)
       const get = pending.current
       pending.current = null
-      // Connected: never write content_md here (the gateway's snapshot does, and a second write makes a reload before
-      // that snapshot apply the edit twice). The socket may not have delivered the last edit yet, so send the Yjs
-      // update the gateway may lack; updates are idempotent, a resend changes nothing. Solo or offline: this save
-      // is the only copy.
-      const doc = ydocRef.current
-      if (live.current && doc) {
-        if (Date.now() - lastEdit.current > IN_FLIGHT_MS) return
-        try {
-          const u = Y.encodeStateAsUpdate(doc, base.current ?? undefined)
-          if (u.length <= 2) return // nothing new
-          if (u.length > MAX_CLOSE_UPDATE) return console.warn('Close update too large to send:', u.length)
-          const q = new URLSearchParams({ schema: String(DOC_SCHEMA) })
-          if (epoch !== undefined) q.set('epoch', String(epoch))
-          fetch(`${COLLAB_URL.replace(/^ws/, 'http')}/collab/${ws}/${id}/update?${q}`, {
-            method: 'POST',
-            keepalive: true,
-            credentials: 'include',
-            headers: { 'content-type': 'text/plain' },
-            body: toBase64(u),
-          }).catch(() => {})
-        } catch {} // doc already destroyed
-        return
-      }
       if (!get) return
       try {
         const md = get()
@@ -358,10 +314,7 @@ function Surface({
   // Live: an edit is saved once the gateway has it; while disconnected, edits wait in this tab.
   useEffect(() => {
     if (!provider) return
-    const on = ({ status }: { status: string }) => {
-      live.current = status === 'connected'
-      setStatus(status === 'connected' ? 'saved' : 'offline')
-    }
+    const on = ({ status }: { status: string }) => setStatus(status === 'connected' ? 'saved' : 'offline')
     provider.on('status', on)
     return () => provider.off('status', on)
   }, [provider])

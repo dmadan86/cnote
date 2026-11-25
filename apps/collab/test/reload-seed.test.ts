@@ -115,4 +115,39 @@ describe('seed pinned before the first logged update', () => {
     ca2.close()
     cb2.close()
   })
+
+  it("another peer's edits made after this tab's last save: kept while anyone stays connected, dropped once the API text wins over an unfolded log", async () => {
+    const f = await fixture()
+    const g = await gateway(60_000)
+    gateways.push(g)
+    const a = new Y.Doc()
+    const b = new Y.Doc()
+    const ca = await open(g.port, f, { cookie: f.owner.cookie })
+    const cb = await open(g.port, f, { cookie: f.owner.cookie })
+    await ca.sync(a)
+    await cb.sync(b)
+    ca.send(2, append(a, ' a'))
+    await sleep(200)
+    cb.send(2, append(b, ' b')) // peer B edits after A's last sync of its own text
+    await sleep(300)
+    // A's close save writes what A saw ("hello world a"); B is still connected, so the live room keeps both.
+    await cmdOk(f.ws, f.owner, 'note.update', {
+      id: f.note,
+      content_md: 'hello world a',
+      schema: 2,
+      expected_epoch: 1,
+    })
+    ca.close()
+    await sleep(300)
+    const c = new Y.Doc()
+    const cc = await open(g.port, f, { cookie: f.owner.cookie })
+    await cc.sync(c)
+    expect(text(c)).toMatch(/^<paragraph>hello world (a b|b a)<\/paragraph>$/) // concurrent appends: either order
+    cc.close()
+    // B leaves too: nobody is connected, the log is unfolded and the API text differs from the snapshot, so the API
+    // text wins and B's unfolded edit is dropped. This is the existing buildDoc rule, unchanged.
+    cb.close()
+    await sleep(300)
+    expect(await reload(g, f)).toBe('<paragraph>hello world a</paragraph>')
+  })
 })
