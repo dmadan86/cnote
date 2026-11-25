@@ -14,6 +14,9 @@ type Mail struct {
 	HTML     string `json:"html,omitempty"` // optional; when empty the mail is text/plain only
 	// MessageID is optional ("<id@host>"); empty means a random one at the sender's domain.
 	MessageID string `json:"message_id,omitempty"`
+	// Headers are extra message headers (List-Unsubscribe, List-Unsubscribe-Post). Names are letters, digits and hyphens;
+	// a value is put on one line. Set by code, never by a customer.
+	Headers map[string]string `json:"headers,omitempty"`
 	// Notify ("kind:ref") names a worker hook that runs right before the outbox send (may cancel it) and after it. Ignored by Send.
 	Notify string `json:"notify,omitempty"`
 }

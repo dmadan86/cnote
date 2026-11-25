@@ -67,6 +67,26 @@ Migrations 1334 to 1338 are staged so no step rewrites or scans `core.notes`, an
    `ADD CONSTRAINT notes_deletion_strict CHECK ((deleted_at IS NULL) = (deletion_id IS NULL)) NOT VALID`, `VALIDATE` it, and drop
    `notes_deletion_consistent`. Never validate before step 3 is complete.
 
+## Docs teams and sharing (Phase B1): migrations, mail and the follow-up release
+Migrations 1340 to 1342 (1339 is the A2 fence; 1327 stays reserved for invites). 1340 adds nullable columns, new tables and `NOT VALID`
+CHECKs and starts with `SET LOCAL lock_timeout = '5s'` (it fails fast and can be re-run). `core.spaces.public_links` is nullable with no
+default: NULL means on, so no backfill is needed. 1341 and 1342 build one index each `CONCURRENTLY` in their own `-- no-transaction`
+file; if one fails it leaves an invalid index: `DROP INDEX CONCURRENTLY core.public_links_one_active_page` (or `core.notifications_unmailed`)
+and run `api migrate` again.
+1. **Mail needs two settings.** Notification mail is on by default and every mail carries a signed unsubscribe link, so the worker sends
+   nothing (and marks the notifications suppressed) unless `SMTP_URL`, `EMAIL_FROM` **and** `CNOTE_MASTER_KEY` are set. The link is
+   `PUBLIC_WEB_URL/api/public/unsubscribe/<token>`, which the web app rewrites to the API; it needs no login. Replacing the key
+   invalidates links already mailed.
+2. **Mentions in co-edited pages.** The worker sweep `docs.mention_seed` records the mentions every older page already has (500 per batch
+   per workspace, once a minute) so the first co-edit of an old page notifies only what was typed after the deploy. Check it is done:
+   `select count(*) from core.notes n where n.deleted_at is null and n.content_md like '%/people/%' and not exists (select 1 from core.note_mention_state s where s.note_id = n.id);` reaches 0.
+3. **Follow-up release (not in this one):**
+   `ALTER TABLE core.spaces VALIDATE CONSTRAINT spaces_description_len;`, `ALTER TABLE core.public_links VALIDATE CONSTRAINT public_links_purpose_check;`,
+   `ALTER TABLE core.notifications VALIDATE CONSTRAINT notifications_kind_check;` and `... VALIDATE CONSTRAINT notifications_email_state_check;`
+   (each takes a `SHARE UPDATE EXCLUSIVE` lock and does not block writes).
+4. **Order:** API and worker first, then web. The gateway needs the `access.ts` change (an archived space is read-only for editors,
+   dropped at the next 10 second recheck); no schema raise, no mobile release.
+
 ## Tables public forms
 A table form is a link, `/tf/<token>`, that anyone can open and submit without signing in (`GET` and `POST`
 `/api/public/table-form/<token>` on the API). Forms take no file uploads. Settings, API:

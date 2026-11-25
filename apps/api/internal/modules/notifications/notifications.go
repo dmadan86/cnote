@@ -16,11 +16,11 @@ import (
 )
 
 func Commands() []command.Command {
-	return []command.Command{
+	return append([]command.Command{
 		command.NewCommand("notification.list", command.GroupRead, list),
 		command.NewCommand("notification.read", command.GroupRead, read),
 		command.NewCommand("notification.unread_count", command.GroupRead, unreadCount),
-	}
+	}, b1Commands()...)
 }
 
 var uuidRe = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)

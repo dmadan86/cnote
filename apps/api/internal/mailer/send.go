@@ -15,6 +15,8 @@ import (
 	"net/smtp"
 	"net/url"
 	"os"
+	"regexp"
+	"sort"
 	"strings"
 	"time"
 )
@@ -26,6 +28,8 @@ var ErrNotConfigured = errors.New("email is not configured (SMTP_URL, EMAIL_FROM
 func Configured() bool {
 	return strings.TrimSpace(os.Getenv("SMTP_URL")) != "" && strings.TrimSpace(os.Getenv("EMAIL_FROM")) != ""
 }
+
+var headerName = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9-]{0,63}$`)
 
 var oneLine = strings.NewReplacer("\r", " ", "\n", " ")
 
@@ -65,6 +69,18 @@ func send(ctx context.Context, m Mail) (string, error) {
 		}
 		mid = "<" + hex.EncodeToString(b[:]) + "@" + fa.Address[strings.LastIndex(fa.Address, "@")+1:] + ">"
 	}
+	var extra strings.Builder
+	keys := make([]string, 0, len(m.Headers))
+	for k := range m.Headers {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		if !headerName.MatchString(k) {
+			return "", errors.New("bad header name")
+		}
+		extra.WriteString(k + ": " + strings.TrimSpace(oneLine.Replace(m.Headers[k])) + "\r\n")
+	}
 	subject := mime.QEncoding.Encode("utf-8", strings.TrimSpace(oneLine.Replace(m.Subject)))
 	build := func(eightBit bool) []byte {
 		var b bytes.Buffer
@@ -72,7 +88,7 @@ func send(ctx context.Context, m Mail) (string, error) {
 		if reply != nil {
 			b.WriteString("Reply-To: " + reply.String() + "\r\n")
 		}
-		b.WriteString("Subject: " + subject + "\r\nDate: " + time.Now().Format(time.RFC1123Z) + "\r\nMessage-ID: " + mid + "\r\nMIME-Version: 1.0\r\n")
+		b.WriteString("Subject: " + subject + "\r\nDate: " + time.Now().Format(time.RFC1123Z) + "\r\nMessage-ID: " + mid + "\r\n" + extra.String() + "MIME-Version: 1.0\r\n")
 		if m.HTML == "" {
 			b.WriteString("Content-Type: text/plain; charset=utf-8\r\n")
 			writeText(&b, m.Text, eightBit)

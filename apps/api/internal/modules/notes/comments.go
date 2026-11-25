@@ -74,7 +74,11 @@ func commentAdd(c *command.Ctx, input json.RawMessage) (any, error) {
 		return nil, err
 	}
 
-	if _, err := access.AssertNoteAccess(c, noteID, false); err != nil {
+	space, err := access.AssertNoteAccess(c, noteID, false)
+	if err != nil {
+		return nil, err
+	}
+	if err := access.AssertSpaceWritable(c, space); err != nil { // a comment is a write: an archived space refuses it (13.2.2)
 		return nil, err
 	}
 	body = strings.TrimSpace(body)
@@ -146,7 +150,11 @@ func commentResolve(c *command.Ctx, input json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err := access.AssertNoteAccess(c, note, false); err != nil {
+	space, err := access.AssertNoteAccess(c, note, false)
+	if err != nil {
+		return nil, err
+	}
+	if err := access.AssertSpaceWritable(c, space); err != nil {
 		return nil, err
 	}
 	if _, err := c.Tx.Exec(c.Context,

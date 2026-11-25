@@ -31,12 +31,12 @@ func aiIndexOnNoteEvent(c *command.Ctx, e jobs.Event) error {
 // finance, projects, ai, importers).
 func New(pool *pgxpool.Pool, reg *command.Registry) *Worker {
 	w := newWorker(pool, reg)
-	w.OnEvent("mention.created", mentionEmail)
 	w.OnEvent("note.", syncHandler)
 	w.OnEvent("", freshnessOnEvent)
 	w.OnEvent("", automationOnEvent)
 	w.OnEvent("note.created", aiIndexOnNoteEvent)
 	w.OnEvent("note.updated", aiIndexOnNoteEvent)
+	w.OnEvent("note.updated", mentionsOnNoteUpdated) // before pageNotifyOnEvent: it skips a page_updated for who a mention already told
 	w.OnEvent("note.created", pageNotifyOnEvent)
 	w.OnEvent("note.updated", pageNotifyOnEvent)
 	w.OnEvent("comment.added", pageNotifyOnEvent)
@@ -53,6 +53,7 @@ func New(pool *pgxpool.Pool, reg *command.Registry) *Worker {
 	w.OnJob("docs.propose_edit", proposeEditJob)
 	w.OnJob("hook.deliver", hooks.DeliverJob)
 	w.OnJob(mailer.JobKind, mailSendJob)
+	w.OnJob(NotifyMailJob, notifyMailJob)
 	w.OnJob("import.run", importers.RunJob)
 	w.OnJob("data_import.run", importers.RunDataJob)
 	w.OnJob("tables.import", tables.ImportJob)
@@ -64,6 +65,7 @@ func New(pool *pgxpool.Pool, reg *command.Registry) *Worker {
 	w.AddSweep(Sweep{"docs.freshness_sweep", day, FreshnessSweep})
 	w.AddSweep(Sweep{"docs.search_plain_backfill", time.Minute, SearchPlainBackfill})
 	w.AddSweep(Sweep{"docs.a2_backfill", time.Minute, A2DeletionBackfill})
+	w.AddSweep(Sweep{"docs.mention_seed", time.Minute, MentionSeedSweep})
 	w.AddSweep(Sweep{"finance.irn_window", day, func(ctx context.Context, w *Worker) error {
 		_, err := IRNWindowSweep(ctx, w, todayIST())
 		return err
@@ -81,9 +83,11 @@ func New(pool *pgxpool.Pool, reg *command.Registry) *Worker {
 	w.AddSweep(Sweep{"sites.abuse", day, func(ctx context.Context, w *Worker) error { return sites.AbuseSweep(ctx, w.Pool) }})
 	w.AddSweep(Sweep{"tables.purge", day, func(ctx context.Context, w *Worker) error { return tables.PurgeSweep(ctx, w.Pool) }})
 	w.AddSweep(Sweep{"files.record_sweep", time.Hour, func(ctx context.Context, w *Worker) error { return files.RecordSweep(ctx, w.Pool) }})
+	w.AddSweep(Sweep{"notify.mail_direct", 2 * time.Minute, NotifyDirectSweep})
 	w.AddSweep(Sweep{"reminders.send", 5 * time.Minute, func(ctx context.Context, w *Worker) error {
 		return reminders.Sweep(ctx, w.Pool, w.Registry, time.Now())
 	}})
+	w.addRegistered()
 	return w
 }
 

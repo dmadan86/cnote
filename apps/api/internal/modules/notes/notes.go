@@ -21,7 +21,7 @@ func Commands() []command.Command {
 		command.NewCommand("space.list", command.GroupRead, spaceList),
 		command.NewCommand("note.get", command.GroupRead, noteGet),
 		command.NewCommand("note.history", command.GroupRead, noteHistory),
-	}, append(writeCommands(), append(a1Commands(), a2Commands()...)...)...)
+	}, append(writeCommands(), append(a1Commands(), append(a2Commands(), b1Commands()...)...)...)...)
 }
 
 var uuidRe = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
@@ -47,6 +47,11 @@ type Space struct {
 	Template   string          `json:"template"`
 	Visibility string          `json:"visibility"`
 	Config     json.RawMessage `json:"config"`
+	// Phase B1 (docs-parity-b 4.1): settings, archive state and the caller's own role.
+	Description *string `json:"description"`
+	Archived    bool    `json:"archived"`
+	PublicLinks bool    `json:"public_links"` // false only when a space admin turned page links off (NULL in the table means on)
+	MyRole      *string `json:"my_role"`      // admin, editor or viewer; null for a guest outside the space
 }
 
 func spaceList(c *command.Ctx, input json.RawMessage) (any, error) {
@@ -54,12 +59,24 @@ func spaceList(c *command.Ctx, input json.RawMessage) (any, error) {
 	if json.Unmarshal(input, &obj) != nil || obj == nil {
 		return nil, command.ErrFallback
 	}
+	var opt struct {
+		IncludeArchived bool `json:"include_archived"`
+	}
+	if raw, ok := obj["include_archived"]; ok {
+		if json.Unmarshal(raw, &opt.IncludeArchived) != nil {
+			return nil, command.ErrFallback
+		}
+	}
 	ids, err := access.ReadableSpaceIDs(c)
 	if err != nil {
 		return nil, err
 	}
 	rows, err := c.Tx.Query(c.Context,
-		"select id::text, key, name, template, visibility, config from core.spaces where id = any($1::text[]::uuid[]) order by name", ids)
+		`select s.id::text, s.key, s.name, s.template, s.visibility, s.config, s.description, s.archived_at is not null, coalesce(s.public_links, true),
+		        coalesce(case when $3::bool then 'admin' end, sm.role, case when s.visibility = 'open' and not $4::bool then 'editor' end)
+		 from core.spaces s left join core.space_members sm on sm.space_id = s.id and sm.user_id = $2::uuid
+		 where s.id = any($1::text[]::uuid[]) and ($5::bool or s.archived_at is null) order by s.name`,
+		ids, c.Principal.UserID, c.Principal.Role >= command.Admin, c.Principal.Role == command.Guest, opt.IncludeArchived)
 	if err != nil {
 		return nil, err
 	}
@@ -68,7 +85,7 @@ func spaceList(c *command.Ctx, input json.RawMessage) (any, error) {
 	for rows.Next() {
 		var s Space
 		var cfg []byte
-		if err := rows.Scan(&s.ID, &s.Key, &s.Name, &s.Template, &s.Visibility, &cfg); err != nil {
+		if err := rows.Scan(&s.ID, &s.Key, &s.Name, &s.Template, &s.Visibility, &cfg, &s.Description, &s.Archived, &s.PublicLinks, &s.MyRole); err != nil {
 			return nil, err
 		}
 		if s.Config, err = command.Norm(cfg); err != nil {

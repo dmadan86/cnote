@@ -61,7 +61,7 @@ These restate section 7 for this phase. Builders read them first.
 
 ### Migration numbers
 
-Written here as **1337 and 1338 for B1, 1339 for B2**. That assumes A2's follow-ups from 7.10 (the consistency constraint, the recreated access functions) fit inside 1334 to 1336. If they took later numbers, B shifts up by the same count. 1327 stays reserved for invites. The lead confirms the numbers at step 0, as 7.7 requires.
+(Superseded by 13.5: B1 is **1340 to 1342**, B2 takes the next free number.) Written here as **1337 and 1338 for B1, 1339 for B2**. That assumes A2's follow-ups from 7.10 (the consistency constraint, the recreated access functions) fit inside 1334 to 1336. If they took later numbers, B shifts up by the same count. 1327 stays reserved for invites. The lead confirms the numbers at step 0, as 7.7 requires.
 
 ## 4. Release B1
 
@@ -896,3 +896,116 @@ This section overrides sections 1–12 wherever they disagree.
       - the central write gate for archived spaces;
       - the public body rewriter interface, which P2 implements and Q2 extends through a registered hook rather than by editing P2's file.
     - Import in B2 is one package that owns the parser, the command, the raw route and cleanup.
+
+### 13.3 Write-path audit for archived spaces (step 0, 2026-11-25)
+
+The gate. `access.AssertSpaceAccess(write=true)` refuses an archived space for every role, workspace admins and owners included
+(message `This space is archived`, `access.ArchivedMessage`). `access.AssertNoteAccess(write=true)` refuses it too, and does so
+whether or not the caller can read the space, so a page reached by a direct share is covered. `access.AssertSpaceWritable` is the
+same check for code that writes without either call. The gateway has the same two rules in `apps/collab/src/access.ts`
+(`assertSpaceAccess`, `assertNoteAccess`, so `mayWrite` is false: connect-time admission and the 10 second recheck). Every writing
+command below reaches one of them; the second column says which.
+
+| Writer | Commands and routes | Reaches the gate through | Test |
+|---|---|---|---|
+| Page create, edit, delete | `note.create`, `note.update`, `note.delete`, `note.duplicate`, `note.move`, `note.reorder`, `note.undelete`, `note.restore` (revisions) | `InsertNote` and `AssertSpaceAccess(true)`; `AssertNoteAccess(true)`; trash and lifecycle `AssertSpaceAccess(true)` | `TestArchivedSpaceRefusesWritesOnEveryRoute` |
+| Page access and metadata | `note.share`, `note.unshare`, `note.restrict`, `label.set`, `relation.add`, `relation.remove`, `view.create`, `doc.verify`, `doc.set_owner`, `doc.restore`, `doc.proposal_decide`, `template.render` (into a space or under a page), `template.refresh` | `AssertNoteAccess(true)` or `AssertSpaceAccess(true)`. `view.create` had no space check at all; step 0 added one | same test; `view.create` in `notes_write_test.go` |
+| Comments | `comment.add`, `comment.resolve` (reopen) | Read-level page access only, by design (anyone who can read may comment), so step 0 added `AssertSpaceWritable` with the page's space to both | same test, also through a direct share |
+| Files | `file.upload`, `file.delete`, `file.copy_for_note` | `guard()` calls `AssertNoteAccess(write)` | same test (`file.upload`) |
+| Tasks | The task index and `task.mine` are derived from page text; there is no task write command | A task is edited by editing the page: `note.update` or the gateway | gateway tests below |
+| Tables | `base.*`, `field.*`, `record.*`, `file.record_*` | `tables.spaceRole` caps the caller's role at read when the space is archived (it did not call the write rule) | `base.create` in the same test |
+| Projects, planning, CRM, billing, quotes, receipts, purchases, expenses, recurring, time log, leads | `item.*`, `sprint.*`, `version.*`, `component.*`, `automation.*`, `deal.*`, `invoice.*`, `quote.*`, ... | Each handler calls `AssertNoteAccess(true)` or `AssertSpaceAccess(true)` before it writes (static scan of every function that writes `core.*`, `billing.*`, `projects.*`; the helpers it found are reached only from guarded handlers) | `item.create` in the same test |
+| Import | `import.start` | `AssertSpaceAccess(true)` at start; step 0 added a re-check in the `import.run` job, because a space can be archived while an import is queued | none yet (Q3 and P1 may add one) |
+| Live editing | Gateway connect, the 10 second recheck, `persist` | `access.ts`, as above. An edit sent in the window before the recheck is still saved: at most 10 seconds | `apps/collab/test/b1-step0.test.ts` (open, live recheck, direct share) |
+| Automations | The `comment.add` action in `worker/automation.go` | Runs `comment.add` through the registry as the system principal, so it is refused too and the automation run records the failure | covered by the comment gate |
+
+Deliberately not gated, so nobody adds them by mistake:
+
+- `note.star`, `note.watch`, `note.viewed`, `notification.*`, `notify_prefs.set`: a person's own state, not a write to the page.
+- `template.save`, `template.delete`, `capture.answer`, `doc.capture`: they write a template or a capture request that points at a page and leave the page alone.
+- `data.erase_subject` (privacy erasure by an owner) and the system sweeps (`docs.freshness_sweep`, `docs.search_plain_backfill`,
+  `docs.a2_backfill`, `docs.mention_seed`, binding sync, the task index, mail marking): they keep derived data and metadata right and
+  must keep running in an archived space.
+- Support tickets, inquiries and the customer portal write `support.*` and `leads.*` rows, not pages or comments. They are not
+  covered; whether an archived project space should still receive customer mail is an owner decision.
+
+Rules for the packages (each is checked in review):
+
+1. A command that writes after only a read-level check calls `access.AssertSpaceWritable(c, spaceID)`. P5's `comment.edit`,
+   `comment.delete` and `comment.react` do, with the space `AssertNoteAccess` returned. P4's task rebuild and P3's mail marking are
+   derived data and do not.
+2. `space.archive`, `space.update` and `space.member_set` use `access.AssertSpaceAdmin`, which reads the space and never writes a
+   page, so they work on an archived space (an admin must be able to unarchive it).
+3. Q1's `doc.archive` and any other subtree command answer the generic `Some pages here are restricted` for an archived space as well
+   (that is what `note.delete`, `note.duplicate`, `note.move` and `note.reorder` do today). It names nothing, but a person may read it as a
+   restriction; Q1 may check `AssertSpaceWritable` first to give the real reason, which leaks nothing a reader of the space does not know.
+
+### 13.4 Work packages P1 to P5 (as built after step 0)
+
+Step 0 is in. Packages work in parallel on disjoint files. A file not listed for a package belongs to the lead. **No package edits a
+migration, `notes/notes.go`, `notes/write.go`, `command/*`, `access/*`, `apps/collab/src/*`, `worker/wire.go`, `worker/notifydeliver.go`,
+`worker/mentions.go`, `mailer/*`, `unsub/*`, `schemautil/*`, `server/server.go`, `apps/web/src/lib/api.ts`, `apps/web/src/lib/docs.ts`, the
+fixtures or `e2e/helpers.ts`.** Where the design said a package edits one of these, step 0 did it (below) or gave the package a hook.
+
+How a package plugs in:
+
+- **Commands.** Each module has a stub list (`b1Specs`) and a registry map (`b1Handlers`). A package registers its handler from an `init()`
+  in its own file: `b1Handlers["space.members"] = spaceMembers`. The contract (group, role, confirm, secret, schemas) is fixed by
+  `modules/b1_contract_test.go`; changing it is a lead decision.
+- **Worker.** `worker.RegisterEvent(prefix, handler)`, `worker.RegisterJob(kind, handler)` and `worker.RegisterSweep(sweep)` from an
+  `init()` in the package's own file. `wire.go` is not edited.
+- **Public body.** `publiclinks.RegisterCoreBodyPass(p)` (P2, exactly once) and `publiclinks.RegisterBodyPass(order, p)` (later phases:
+  B2's `[[children]]` line is Q2's pass, in Q2's file). `PublicBody` refuses to run without the core pass.
+- **Mail.** Anything that wants a notification emailed sends it with `notify.Send` and one of `worker.MailKinds`. The sweeps and the
+  mail job already exist (below). A space notification has `NoteID` nil and `Source: notify.SpaceSource(spaceID)`.
+
+| | P1 Spaces | P2 Public links | P3 Email and digest | P4 Tasks | P5 Comments |
+|---|---|---|---|---|---|
+| **Creates** | `notes/spaces.go` (handlers `space.members`, `space.member_set`, `space.update`, `space.archive`; `space.update` calls `page_link.revoke_space` through `c.Call`), `components/docs/space-settings.tsx`, `app/w/[ws]/s/[id]/settings/page.tsx`, `server/docs_b1_spaces_test.go`, `e2e/space-members.spec.ts` | `publiclinks/page.go` (handlers `page_link.*`), `publiclinks/pagebody.go` and `pagebody_test.go` (the core pass), `server/pagepublic.go` (replaces the step 0 placeholder wholesale), `server/pagepublic_test.go`, `app/pg/[token]/page.tsx`, `components/docs/public-page.tsx`, `components/share/public-link.tsx`, `components/docs/space-public-links.tsx`, `e2e/public-page.spec.ts` | `worker/notifymail.go` and `notifymail_test.go` (the digest sweep and its tests; sets `worker.DigestExtras`), `notifications/prefs.go` (handlers `notify_prefs.get`, `notify_prefs.set`), `components/notification-settings.tsx`, `server/docs_b1_email_test.go` | `notes/tasks.go` and `tasks_test.go` (`notes.Tasks`, handler `task.mine`), `worker/pagetasks.go` (event consumer and backfill sweep, registered with `worker.Register*`), `components/editor/task-controls.tsx`, `components/docs/my-tasks.tsx`, `app/w/[ws]/tasks/page.tsx`, `server/docs_b1_tasks_test.go`, `e2e/tasks.spec.ts` | `notes/reactions.go` (handlers `comment.edit`, `comment.delete`, `comment.react`), `server/docs_b1_comments_test.go`, `e2e/comment-actions.spec.ts` |
+| **Edits** | `app/w/[ws]/s/[id]/page.tsx`, `components/shell.tsx` (space menu entry, archived spaces hidden, the "My tasks" link for P4), `components/space-dialog.tsx` | `components/share/share-dialog.tsx` (mounts the row), `components/docs/page-header.tsx` (the Public chip), `apps/web/next.config.ts` | `components/notifications.tsx` (sentences for `shared` and `access_request`, link to settings), `app/w/[ws]/settings/page.tsx` (mounts the tab), `sharing/sharing.go` (`shared` notification in `note.share`) | `components/editor/slash.tsx`, `components/note-editor.tsx` (mounts the controls) | `notes/comments.go` (`comment.list` fields, edit notifications), `components/comments-panel.tsx` |
+| **Must not touch** | Editor, comments, `publiclinks/*` except through `c.Call` | Editor, shell, worker | Editor, shell, `worker/pagenotify.go`, `worker/notifydeliver.go` | Shell, comments, notifications | Editor, shell, worker |
+| **Depends on** | Step 0. Mounts `<SpacePublicLinks>` from P2's file; sends the space `shared` notification with `notify.SpaceSource` | Step 0. Reads `spaces.public_links` (null is on). Its resolver is `core.resolve_page_link` (migration 1340) | Step 0. `worker.DigestExtras` reads `core.note_tasks`, which P4 fills, with the access predicate in the query | Step 0. P1 adds its sidebar link. Uses `core.note_tasks`, `core.note_task_state`, `core.note_task_notified` | Step 0. Calls `access.AssertSpaceWritable` in every write |
+
+Merge order: P1, then P2, P5, P4, P3 (unchanged). Cross-package checks for the lead at integration: turning the space switch off kills a
+live link; removing a space member stops their link, their watch mail and their task rows; a task assigned in a co-edited page reaches
+the assignee's bell and, three minutes later, their inbox; one mention in a co-edited page makes one notification and one mail.
+
+### 13.5 What step 0 built, and what changed in the plan
+
+Migrations (online-safe, `SET LOCAL lock_timeout`, nullable columns, `NOT VALID` checks, tenant RLS, composite foreign keys, explicit grants):
+**1340** `docs_parity_b1` (all B1 tables and columns, both functions), **1341** `public_links_one_active_page` (unique partial index,
+`CONCURRENTLY`), **1342** `notifications_unmailed` (partial index, `CONCURRENTLY`). B2's migration takes **1343**. 1327 stays reserved. The two
+`VALIDATE CONSTRAINT` groups for the release after B1 are in `docs/deploy.md`.
+
+Built by the lead:
+
+- **Mentions** (13.2.10): `notes.NotifyPageMentions` (`notes/mentions.go`), called by `note.update` and by the worker consumer
+  `mentionsOnNoteUpdated` (`worker/mentions.go`, registered before `pageNotifyOnEvent`). Per-note advisory lock, `core.note_mention_state`
+  holds the last handled version and the set of people mentioned then. A sweep (`docs.mention_seed`) seeds pages that predate the table.
+  Co-edit integration test in `apps/collab/test/b1-step0.test.ts`.
+- **Archived spaces** (13.2.2): column `core.spaces.archived_at`, the gate in `access`, `tables.spaceRole`, comments, the import job, `view.create`,
+  and the gateway. Audit in 13.3.
+- **Mail** (13.2.5): `worker/notifydeliver.go` (the `notify.mail` job that rebuilds the message, the direct sweep every 2 minutes,
+  `EnqueueNotifyMail` for the digest sweep), `mailer.Mail.Headers`, `unsub` (signed token), `server/unsubscribe.go` (landing page and RFC 8058
+  POST at `/api/public/unsubscribe/<token>`, no login), `core.notify_prefs` (with `direct_off` and `digest_off`, which the unsubscribe links set),
+  `core.notifications.emailed_at` and `email_state` (`queued`, `mailed`, `suppressed`). `worker/mail.go` and `mentionEmail` are gone. Mail needs `SMTP_URL`,
+  `EMAIL_FROM` and `CNOTE_MASTER_KEY`; without the key nothing is sent.
+- **Public body** (13.2.11): `publiclinks/bodyhook.go`, with tests. `server/publicaddr.go` is the shared address key (`publicIPKey`); the forms use it.
+  `server/pagepublic.go` is a placeholder that answers the one 404.
+- **Contract**: stubs and schemas for all 15 commands (`notes/b1_commands.go`, `publiclinks/b1_commands.go`, `notifications/b1_commands.go`, built with the new
+  `schemautil` package), `space.list` fields (`description`, `archived`, `public_links`, `my_role`, `include_archived`), web types in `lib/docs.ts`.
+- **Fixtures**: `task-assignee-due` and `task-lookalike`. The gateway's Markdown reader flattened a nested to-do (the sub-task moved out of its parent on the
+  next save) and wrote its children six spaces in; fixed in `apps/collab/src/md.ts` (`parseTasks`), so a to-do's children are two spaces in, as the editor writes
+  them. The web editor, the plain-text extractor and the importer already passed.
+
+Changes to the plan:
+
+1. **The task index version lives in its own table.** `core.note_task_state (note_id, indexed_version)` holds it, because a page with no tasks has no row to carry it;
+   `core.note_tasks` also keeps `indexed_version` per row. P4 applies a rebuild only when the event's version is newer than `note_task_state`.
+2. **Unsubscribe is per kind and does not rewrite the chosen mode.** Two flags, `direct_off` and `digest_off`, so a mail client's one-click POST cannot change what a person picked in settings.
+3. **The direct sweep is already built** (in `notifydeliver.go`), so P3 builds the digest only, plus the settings tab and the preferences commands.
+4. **No `wire.go` edits for packages**: `worker.Register*` replaces them.
+5. **Mail is suppressed, not queued, without `CNOTE_MASTER_KEY`.** Dev environments need the key.
+6. The first co-edit of a page with mentions that predate the mention store notifies only people not already notified, until the seeding sweep has covered it (about a minute per 10,000 pages).
+7. Archived-space refusals from subtree commands carry the generic restricted text (13.3, rule 3).
+

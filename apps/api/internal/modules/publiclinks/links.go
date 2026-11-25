@@ -33,13 +33,13 @@ func Commands() []command.Command {
 	sm := command.GroupSendMessages
 	confirm := func(c command.Command) command.Command { c.Confirm = true; return c }
 	nc := command.NewCommand
-	return []command.Command{
+	return append([]command.Command{
 		confirm(secret(nc("share.create", sm, create))),
 		nc("share.list", command.GroupRead, list),
 		nc("share.revoke", command.GroupWriteNotes, revoke),
 		confirm(nc("share.email", sm, email)),
 		nc("share.preview", command.GroupRead, preview),
-	}
+	}, b1Commands()...)
 }
 
 func secret(c command.Command) command.Command { c.ReturnsSecret = true; return c }
