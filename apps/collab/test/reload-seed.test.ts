@@ -88,6 +88,8 @@ describe('seed pinned before the first logged update', () => {
     const cb = await open(g.port, f, { cookie: f.owner.cookie })
     await ca.sync(a)
     await cb.sync(b)
+    const stale = g.rooms.get(`${f.ws}/${f.note}`)
+    expect(stale).toBeDefined()
     await cmdOk(f.ws, f.owner, 'note.update', {
       id: f.note,
       content_md: 'written elsewhere',
@@ -99,7 +101,7 @@ describe('seed pinned before the first logged update', () => {
     expect(await cb.closeCode(3000)).toBe(CLOSE_RETRY)
     await sleep(800) // longer than the fold debounce: a room that kept the refused edit would persist it now
     expect(await noteRow(f)).toMatchObject({ md: 'written elsewhere', has_ydoc: false })
-    expect(g.rooms.size).toBe(0)
+    expect(g.rooms.size).toBe(0) // the failed room is out of the map
 
     const a2 = new Y.Doc()
     const b2 = new Y.Doc()
@@ -107,6 +109,9 @@ describe('seed pinned before the first logged update', () => {
     const cb2 = await open(g.port, f, { cookie: f.owner.cookie })
     await ca2.sync(a2)
     await cb2.sync(b2)
+    const fresh = g.rooms.get(`${f.ws}/${f.note}`)
+    expect(fresh).toBeDefined()
+    expect(fresh).not.toBe(stale) // never the room whose pin failed
     expect(text(a2)).toBe('<paragraph>written elsewhere</paragraph>')
     expect(text(b2)).toBe('<paragraph>written elsewhere</paragraph>')
     ca2.send(2, append(a2, '!'))

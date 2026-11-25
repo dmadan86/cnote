@@ -71,6 +71,7 @@ export function buildDoc(
     }
     // Persisting writes content_md from the doc, so a mismatch means the note was edited through the API;
     // then the API text wins and updates logged against the older snapshot are dropped.
+    // Accepted trade-off: a tab's close save can drop another peer's unfolded edit once both have left (main duplicates text instead).
     if (ok && md.same(md.toMarkdown(d), mdText)) {
       replay = true
       doc = d

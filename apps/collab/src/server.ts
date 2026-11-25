@@ -299,6 +299,8 @@ export function createServer(opts: Options) {
     room.discard = true
     room.dirty = false
     room.applied = []
+    room.closeCode = CLOSE_RETRY
+    retire(room) // out of the map before anything else can reuse it; every peer, the sender included, closes
     throw new FencedError()
   }
 
