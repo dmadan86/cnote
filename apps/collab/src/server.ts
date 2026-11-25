@@ -65,6 +65,12 @@ interface Room {
    * edited the note since and wins; live editors also save through the API (same text), so then it is ignored. */
   version: number
   doc: Y.Doc
+  /** content_md this room was seeded from (no snapshot existed), until the first logged update pins the seed. */
+  seedMd: string | null
+  /** The in-flight or finished pin of that seed; every update waits for it. */
+  pin: Promise<void> | null
+  /** The room's doc holds an edit that was refused (stale seed): it is never persisted. */
+  discard: boolean
   peers: Map<number, Peer>
   nextPeer: number
   dirty: boolean
@@ -226,6 +232,9 @@ export function createServer(opts: Options) {
       epoch: l.epoch,
       version: l.version,
       doc: l.doc,
+      seedMd: l.seedMd,
+      pin: null,
+      discard: false,
       peers: new Map(),
       nextPeer: 0,
       dirty: false,
@@ -266,8 +275,46 @@ export function createServer(opts: Options) {
     })
   }
 
+  /**
+   * Store the seed as the snapshot base, only if the row is exactly what the seed was built from. Any other outcome on
+   * a live page (a server write since the room loaded, or a snapshot that appeared) means this room's history is not
+   * the row's: the refused edit is already in room.doc, so nothing of the room may be persisted, and it is retired
+   * (the caller's fence closes every peer; they reconnect and reload from the row).
+   */
+  async function pinSeed(room: Room, seedMd: string): Promise<void> {
+    const seed = Buffer.from(Y.encodeStateAsUpdate(buildDoc(room.note, seedMd, null, [])))
+    const live = `deleted_at is null and freshness <> 'archived' and (fenced_until is null or fenced_until <= now())`
+    const r = await tenant(pool, room.ws, (tx) =>
+      tx.query(
+        `update core.notes set content_ydoc = $3 where id = $1 and collab_epoch = $2 and version = $4
+         and content_md = $5 and content_ydoc is null and ${live}`,
+        [room.note, room.epoch, seed, room.version, seedMd],
+      ),
+    )
+    if (r.rowCount) return
+    const g = await tenant(pool, room.ws, (tx) =>
+      tx.query(`select ${live} as live from core.notes where id = $1`, [room.note]),
+    )
+    if (!g.rows[0]?.live) return // gone, archived or fenced: the insert below says which
+    room.discard = true
+    room.dirty = false
+    room.applied = []
+    room.closeCode = CLOSE_RETRY
+    retire(room) // out of the map before anything else can reuse it; every peer, the sender included, closes
+    throw new FencedError()
+  }
+
   /** Commit one update to the log, fenced on the room's epoch. Conflict means the page was restored since. */
   async function logUpdate(room: Room, update: Uint8Array): Promise<string> {
+    // Pin the seed the log is built on before the first update, so a content_md written later no longer looks like
+    // the text these updates were typed on (seed + replay would then apply them twice). Taken synchronously, so
+    // updates arriving together share one pin.
+    const seedMd = room.seedMd
+    if (seedMd !== null) {
+      room.seedMd = null
+      room.pin = pinSeed(room, seedMd)
+    }
+    await room.pin
     const id = await tenant(pool, room.ws, async (tx) => {
       // FOR SHARE: a delete holds the page row FOR UPDATE, so an edit is either logged before it (and found there) or refused after it.
       const r = await tx.query(
@@ -323,7 +370,7 @@ export function createServer(opts: Options) {
   /** Write the doc and its Markdown snapshot, bump the version, and emit note.updated as the last editor. */
   function persist(room: Room): Promise<void> {
     const run = async () => {
-      if (!room.dirty) return
+      if (!room.dirty || room.discard) return
       room.dirty = false
       const state = Buffer.from(Y.encodeStateAsUpdate(room.doc))
       const mdText = md.toMarkdown(room.doc)
@@ -340,6 +387,7 @@ export function createServer(opts: Options) {
           )
           if (!v.rows[0]) return false // restored, deleted, or (nobody connected) API-edited since this room loaded: fenced out
           room.version = v.rows[0].version as number
+          room.seedMd = null // a snapshot now exists
           await tx.query('delete from core.note_updates where id = any($1::bigint[])', [applied])
           await tx.query(
             `insert into core.note_revisions (workspace_id, note_id, number, title, content_md, reason, created_by)

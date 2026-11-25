@@ -15,7 +15,7 @@ export function seedClient(note: string): number {
 export async function loadDoc(
   tx: Tx,
   note: string,
-): Promise<{ doc: Y.Doc; epoch: number; version: number; ids: string[] }> {
+): Promise<{ doc: Y.Doc; epoch: number; version: number; ids: string[]; seedMd: string | null }> {
   const n = await tx.query(
     'select content_md, content_ydoc, collab_epoch, version from core.notes where id = $1 and deleted_at is null',
     [note],
@@ -38,6 +38,8 @@ export async function loadDoc(
   )
   const ids = log.rows.map((r) => String(r.id))
   return {
+    // Set while the note has no snapshot: the doc was seeded from this Markdown (see logUpdate, which pins the seed).
+    seedMd: ydoc && ydoc.length > 0 ? null : mdText,
     doc: buildDoc(
       note,
       mdText,
@@ -69,6 +71,7 @@ export function buildDoc(
     }
     // Persisting writes content_md from the doc, so a mismatch means the note was edited through the API;
     // then the API text wins and updates logged against the older snapshot are dropped.
+    // Accepted trade-off: a tab's close save can drop another peer's unfolded edit once both have left (main duplicates text instead).
     if (ok && md.same(md.toMarkdown(d), mdText)) {
       replay = true
       doc = d

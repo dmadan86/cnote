@@ -1,0 +1,40 @@
+import { expect, test } from '@playwright/test'
+import { createSpace, signup } from './helpers'
+
+// A page typed on and reloaded before the gateway's ~2 s snapshot debounce must not come back with its text twice
+// (the tab's pagehide save writes content_md while the edit is still only in the gateway's log).
+for (const delay of [0, 500, 1500]) {
+  test(`typing then reloading after ${delay} ms keeps the text once`, async ({ page }) => {
+    await signup(page)
+    await createSpace(page)
+    await page.getByRole('button', { name: 'New page' }).last().click()
+    await expect(page).toHaveURL(/\/n\/[0-9a-f-]+$/)
+    const box = page.getByRole('textbox', { name: 'Page content' })
+    await expect(page.getByText(/· live/)).toBeVisible()
+    await box.click()
+    await page.keyboard.type('Mark word')
+    await page.waitForTimeout(delay)
+    for (let i = 0; i < 2; i++) {
+      await page.reload()
+      await expect(page.getByText(/· live/)).toBeVisible()
+      await expect(box).toContainText('Mark word')
+      expect(await box.innerText()).toBe('Mark word')
+      await expect(box.locator('p')).toHaveCount(1)
+    }
+  })
+}
+
+// With no gateway the editor is solo: the pagehide flush is the only copy of an edit typed in the last 700 ms.
+test('solo mode: typing then reloading at once still saves the text', async ({ page }) => {
+  await signup(page)
+  await createSpace(page)
+  await page.routeWebSocket(/\/collab\//, (ws) => ws.close())
+  await page.getByRole('button', { name: 'New page' }).last().click()
+  await expect(page).toHaveURL(/\/n\/[0-9a-f-]+$/)
+  const box = page.getByRole('textbox', { name: 'Page content' })
+  await box.click()
+  await page.keyboard.type('Solo words')
+  await page.reload()
+  await expect(box).toContainText('Solo words')
+  expect(await box.innerText()).toBe('Solo words')
+})
