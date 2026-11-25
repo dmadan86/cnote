@@ -35,19 +35,20 @@ test('ED-003 italic, link and ordered list', async ({ page }) => {
   await page.keyboard.press('Enter')
   await page.keyboard.press('Enter')
   await page.keyboard.type('docs')
-  page.once('dialog', (d) => d.accept('https://example.test/a'))
   for (let i = 0; i < 4; i++) await page.keyboard.press('Shift+ArrowLeft')
-  await page
-    .getByRole('toolbar', { name: 'Text formatting' })
-    .getByRole('button', { name: 'Link', exact: true })
-    .click()
+  const setLink = async (url: string) => {
+    await page
+      .getByRole('toolbar', { name: 'Text formatting' })
+      .getByRole('button', { name: 'Link', exact: true })
+      .click()
+    const dialog = page.getByRole('dialog', { name: 'Link' })
+    await dialog.getByLabel('Paste a URL or search for a page').fill(url)
+    await dialog.getByRole('button', { name: 'Apply' }).click()
+  }
+  await setLink('https://example.test/a')
   await expect(editor.locator('a[href="https://example.test/a"]')).toHaveText('docs')
   // javascript: links are refused
-  page.once('dialog', (d) => d.accept('javascript:alert(1)'))
-  await page
-    .getByRole('toolbar', { name: 'Text formatting' })
-    .getByRole('button', { name: 'Link', exact: true })
-    .click()
+  await setLink('javascript:alert(1)')
   await expect(editor.locator('a[href^="javascript"]')).toHaveCount(0)
   const md = await markdown(page)
   expect(md).toContain('1. first')

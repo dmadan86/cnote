@@ -5,6 +5,7 @@ import { Bold, Code, Italic, Link2, MessageSquarePlus, Strikethrough, Underline 
 import { BlockControls } from './block-controls'
 import { selectionAnchor } from './inline-comments'
 import { EmojiPicker, ImageDialog } from './inserts'
+import { LinkDialog } from './page-link'
 import { TableControls, TablePicker } from './table-controls'
 
 const btn =
@@ -44,16 +45,8 @@ export function Tool({
   )
 }
 
-/** Prompts for a URL and sets/removes the link on the selection. */
-export function promptLink(editor: Editor) {
-  const prev = editor.getAttributes('link').href as string | undefined
-  const url = window.prompt('Link URL (leave empty to remove)', prev ?? 'https://')
-  if (url === null) return
-  const chain = editor.chain().focus().extendMarkRange('link')
-  // The Link extension also rejects javascript: and other unsafe schemes.
-  if (!url.trim()) chain.unsetLink().run()
-  else chain.setLink({ href: url.trim() }).run()
-}
+/** Opens the link dialog (page-link.tsx): a URL or a page search; the dialog sets or removes the link. */
+export const promptLink = (editor: Editor) => editor.view.dom.dispatchEvent(new Event('cn:link-dialog'))
 
 /** Formatting toolbar over selected text, table handles/toolbar, and the table size picker. */
 type OnComment = (anchor: { anchor_text: string; anchor_prefix: string }) => void
@@ -125,6 +118,7 @@ export function EditorMenus({ editor, onComment }: { editor: Editor; onComment?:
       <TablePicker editor={editor} />
       <EmojiPicker editor={editor} />
       <ImageDialog editor={editor} />
+      <LinkDialog editor={editor} />
     </>
   )
 }

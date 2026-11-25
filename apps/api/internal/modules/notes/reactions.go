@@ -80,7 +80,10 @@ func commentPage(c *command.Ctx, id string) (note string, author *string, delete
 	if err != nil {
 		return "", nil, false, err
 	}
-	return note, author, deleted, access.AssertSpaceWritable(c, space)
+	if err := access.AssertSpaceWritable(c, space); err != nil {
+		return "", nil, false, err
+	}
+	return note, author, deleted, access.AssertNoteNotArchived(c, note)
 }
 
 func commentEdit(c *command.Ctx, input json.RawMessage) (any, error) {

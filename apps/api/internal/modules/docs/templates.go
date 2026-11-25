@@ -4,13 +4,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"math"
+	"net/url"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
 
@@ -64,9 +67,98 @@ func catalogue(kind string) []field {
 // Rust's \s is Unicode White_Space; RE2's is ASCII only.
 const ws = `[\t-\r \x{85}\x{A0}\x{1680}\x{2000}-\x{200A}\x{2028}\x{2029}\x{202F}\x{205F}\x{3000}]*`
 
-var placeholderRe = regexp.MustCompile(`\{\{` + ws + `([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)` + ws + `\}\}`)
+// The editor stores an underscore as `\_`, so `{{ask.meeting_date}}` typed in a page arrives as `{{ask.meeting\_date}}`.
+const identSeg = `(?:\\?_|[A-Za-z])(?:\\?_|[A-Za-z0-9])*`
+
+var placeholderRe = regexp.MustCompile(`\{\{` + ws + `(` + identSeg + `(?:\.` + identSeg + `)*)` + ws + `\}\}`)
+
+// pathOf is the placeholder's name without the editor's backslashes.
+func pathOf(s string) string { return strings.ReplaceAll(s, `\`, "") }
 
 type vals map[string]string
+
+// ---------- prompts (docs-parity-b 5.8) ----------
+
+const (
+	askPrefix    = "ask."
+	maxPrompts   = 20
+	maxAnswerLen = 500
+	promptKeyRe  = `^[A-Za-z_][A-Za-z0-9_]*$`
+)
+
+type prompt struct {
+	Key   string `json:"key"`
+	Label string `json:"label"`
+}
+
+var promptKeyRx = regexp.MustCompile(promptKeyRe)
+
+// promptsOf lists the {{ask.name}} placeholders of a template, in order of first appearance in title and body.
+func promptsOf(title, body string) []prompt {
+	out := []prompt{}
+	seen := map[string]bool{}
+	for _, text := range []string{title, body} {
+		for _, m := range placeholderRe.FindAllStringSubmatch(text, -1) {
+			k, ok := strings.CutPrefix(pathOf(m[1]), askPrefix)
+			if !ok || strings.Contains(k, ".") || seen[k] || len(out) >= maxPrompts {
+				continue
+			}
+			seen[k] = true
+			label := strings.ReplaceAll(k, "_", " ")
+			out = append(out, prompt{k, strings.ToUpper(label[:1]) + label[1:]})
+		}
+	}
+	return out
+}
+
+// mdLiteral makes an answer plain text inside Markdown: it cannot open a link, tag, emphasis, table cell or block.
+func mdLiteral(s string) string {
+	var b strings.Builder
+	for i, r := range s {
+		switch r {
+		case '\\', '*', '_', '`', '~', '[', ']', '<', '>', '|', '&', '#', '!', '(', ')':
+			b.WriteByte('\\')
+		case '-', '+', '=':
+			if i == 0 {
+				b.WriteByte('\\')
+			}
+		}
+		b.WriteRune(r)
+	}
+	out := strings.ReplaceAll(b.String(), "://", "\\://") // no bare address for the editor to turn into a link
+	if n := len(out) - len(strings.TrimLeft(out, "0123456789")); n > 0 && n < len(out) && (out[n] == '.' || out[n] == ')') {
+		out = out[:n] + "\\" + out[n:]
+	}
+	return out
+}
+
+// checkAnswers validates the answers of template.render against the template's own prompts and returns the values to
+// substitute, keyed by prompt name.
+func checkAnswers(raw map[string]any, t tpl) (map[string]string, error) {
+	known := map[string]bool{}
+	for _, p := range promptsOf(t.title, t.content) {
+		known[p.Key] = true
+	}
+	out := map[string]string{}
+	for k, v := range raw {
+		s, ok := v.(string)
+		key := strings.TrimPrefix(k, askPrefix)
+		switch {
+		case !ok:
+			return nil, command.ErrInvalid("answers must be text")
+		case !promptKeyRx.MatchString(key) || !known[key]:
+			return nil, command.ErrInvalid("this template has no prompt named " + k)
+		case utf8.RuneCountInString(s) > maxAnswerLen:
+			return nil, command.ErrInvalid("an answer is at most 500 characters")
+		case strings.ContainsAny(s, "\r\n"):
+			return nil, command.ErrInvalid("an answer must be one line")
+		}
+		if s = strings.TrimSpace(s); s != "" {
+			out[key] = s
+		}
+	}
+	return out, nil
+}
 
 // substitute replaces every known placeholder in one pass (values are never re-scanned).
 func substitute(text string, v vals, missing map[string]bool) string {
@@ -74,7 +166,7 @@ func substitute(text string, v vals, missing map[string]bool) string {
 	last := 0
 	for _, m := range placeholderRe.FindAllStringSubmatchIndex(text, -1) {
 		b.WriteString(text[last:m[0]])
-		path := text[m[2]:m[3]]
+		path := pathOf(text[m[2]:m[3]])
 		if x, ok := v[path]; ok {
 			b.WriteString(x)
 		} else {
@@ -85,6 +177,88 @@ func substitute(text string, v vals, missing map[string]bool) string {
 	}
 	b.WriteString(text[last:])
 	return b.String()
+}
+
+// renderMarkdownAnswers removes links whose substituted destination is not an allowed URL.
+// Work on the template before escaping answers, so validation sees the actual destination.
+func renderMarkdownAnswers(text string, raw, escaped vals, missing map[string]bool) string {
+	var out strings.Builder
+	for i := 0; i < len(text); {
+		start := i
+		if text[i] == '!' && i+1 < len(text) && text[i+1] == '[' {
+			i++
+		}
+		if text[i] != '[' {
+			out.WriteByte(text[start])
+			i = start + 1
+			continue
+		}
+		labelStart := i + 1
+		depth := 1
+		i++
+		for i < len(text) && depth > 0 {
+			if text[i] == '\\' && i+1 < len(text) {
+				i += 2
+				continue
+			}
+			if text[i] == '[' {
+				depth++
+			}
+			if text[i] == ']' {
+				depth--
+			}
+			i++
+		}
+		if depth != 0 || i >= len(text) || text[i] != '(' {
+			out.WriteByte(text[start])
+			i = start + 1
+			continue
+		}
+		labelEnd := i - 1
+		destStart := i + 1
+		i++
+		depth = 1
+		for i < len(text) && depth > 0 {
+			if text[i] == '\\' && i+1 < len(text) {
+				i += 2
+				continue
+			}
+			if text[i] == '(' {
+				depth++
+			}
+			if text[i] == ')' {
+				depth--
+			}
+			i++
+		}
+		if depth != 0 {
+			out.WriteByte(text[start])
+			i = start + 1
+			continue
+		}
+		dest := text[destStart : i-1]
+		hasAnswer := false
+		for _, p := range placeholderRe.FindAllStringSubmatch(dest, -1) {
+			if strings.HasPrefix(pathOf(p[1]), askPrefix) {
+				hasAnswer = true
+			}
+		}
+		if !hasAnswer {
+			out.WriteString(text[start:i])
+			continue
+		}
+		resolved := html.UnescapeString(substitute(dest, raw, map[string]bool{}))
+		resolved = strings.TrimSpace(resolved)
+		u, err := url.Parse(resolved)
+		safe := err == nil && !strings.ContainsAny(resolved, "\\\r\n\t ") &&
+			((u.Scheme == "http" || u.Scheme == "https") && u.Host != "" || u.Scheme == "mailto" && u.Opaque != "" || u.Scheme == "" && u.Host == "" && strings.HasPrefix(resolved, "/w/"))
+		if !safe {
+			out.WriteString(text[labelStart:labelEnd])
+		} else {
+			out.WriteString(text[start:i])
+		}
+	}
+	return substitute(out.String(), escaped, missing)
 }
 
 // serdeValue rewrites decoded JSON the way serde_json::Value would print it (floats as notes.F64 prints them); a number
@@ -373,6 +547,7 @@ type template struct {
 	Builtin     bool       `json:"builtin,omitempty"`
 	Category    string     `json:"category,omitempty"`
 	Description string     `json:"description,omitempty"`
+	Prompts     []prompt   `json:"prompts"`
 	ContentMD   *string    `json:"content_md,omitempty"` // only when the caller asks for include_content (gallery preview)
 }
 
@@ -495,7 +670,7 @@ func templateList(c *command.Ctx, input json.RawMessage) (any, error) {
 		return nil, err
 	}
 	rows, err := c.Tx.Query(c.Context,
-		`select id::text, name, kind, source_kind, updated_at, content_md from docs.templates
+		`select id::text, name, kind, source_kind, updated_at, content_md, title from docs.templates
 		 where ($1::text is null or source_kind in ('none', $1)) and ($2::text is null or kind = $2)
 		   and (space_id is null or space_id = any($3::text[]::uuid[])) order by name`, sk, kind, readable)
 	if err != nil {
@@ -506,7 +681,7 @@ func templateList(c *command.Ctx, input json.RawMessage) (any, error) {
 	// Built-ins first: pages with no source record, so a board or record filter excludes them.
 	if (kind == nil || *kind == "page") && (sk == nil || *sk == "none") {
 		for _, b := range builtins {
-			t := template{ID: builtinPrefix + b.Key, Name: b.Name, Kind: "page", SourceKind: "none", Builtin: true, Category: b.Category, Description: b.Description}
+			t := template{ID: builtinPrefix + b.Key, Name: b.Name, Kind: "page", SourceKind: "none", Builtin: true, Category: b.Category, Description: b.Description, Prompts: promptsOf(b.Title, b.Body)}
 			if withBody {
 				t.ContentMD = &b.Body
 			}
@@ -516,11 +691,12 @@ func templateList(c *command.Ctx, input json.RawMessage) (any, error) {
 	for rows.Next() {
 		var t template
 		var at time.Time
-		var body string
-		if err := rows.Scan(&t.ID, &t.Name, &t.Kind, &t.SourceKind, &at, &body); err != nil {
+		var body, title string
+		if err := rows.Scan(&t.ID, &t.Name, &t.Kind, &t.SourceKind, &at, &body, &title); err != nil {
 			return nil, err
 		}
 		t.UpdatedAt = command.Ts(at)
+		t.Prompts = promptsOf(title, body)
 		if withBody {
 			t.ContentMD = &body
 		}
@@ -609,7 +785,7 @@ func loadTemplate(c *command.Ctx, id string) (tpl, error) {
 }
 
 // render returns (title, body, unresolved placeholders) for a template against its source record.
-func render(c *command.Ctx, t tpl, source *string) (string, string, []string, error) {
+func render(c *command.Ctx, t tpl, source *string, answers map[string]string) (string, string, []string, error) {
 	if t.sourceKind != "none" && source == nil {
 		return "", "", nil, command.ErrInvalid("this template needs a " + t.sourceKind + " as its source")
 	}
@@ -618,14 +794,26 @@ func render(c *command.Ctx, t tpl, source *string) (string, string, []string, er
 		return "", "", nil, err
 	}
 	missing := map[string]bool{}
+	// An answer is text, never markup: a page body takes it escaped; a title and a board's JSON strings take it as is.
+	bv := vals{}
+	for k, x := range v {
+		bv[k] = x
+	}
+	for k, a := range answers {
+		v[askPrefix+k] = a
+		bv[askPrefix+k] = a
+		if t.kind != "board" {
+			bv[askPrefix+k] = mdLiteral(a)
+		}
+	}
 	title := substitute(t.title, v, missing)
 	var body string
 	if t.kind == "board" {
-		if body, err = renderBoard(t.content, v, missing); err != nil {
+		if body, err = renderBoard(t.content, bv, missing); err != nil {
 			return "", "", nil, err
 		}
 	} else {
-		body = substitute(t.content, v, missing)
+		body = renderMarkdownAnswers(t.content, v, bv, missing)
 	}
 	un := []string{}
 	for k := range missing {
@@ -666,11 +854,25 @@ func templateRender(c *command.Ctx, input json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	var rawAnswers map[string]any
+	if o.Has("answers") {
+		raw, err := o.OptValue("answers")
+		if err != nil {
+			return nil, err
+		}
+		if string(raw) != "null" && (json.Unmarshal(raw, &rawAnswers) != nil || rawAnswers == nil) {
+			return nil, command.ErrInvalid("answers must be an object of text values")
+		}
+	}
 	t, err := loadTemplate(c, tid)
 	if err != nil {
 		return nil, err
 	}
-	title, body, unresolved, err := render(c, t, source)
+	answers, err := checkAnswers(rawAnswers, t)
+	if err != nil {
+		return nil, err
+	}
+	title, body, unresolved, err := render(c, t, source, answers)
 	if err != nil {
 		return nil, err
 	}
@@ -701,9 +903,13 @@ func templateRender(c *command.Ctx, input json.RawMessage) (any, error) {
 	}
 	// A built-in has no row to bind to and no record to refresh from.
 	if _, isBuiltin := builtinKey(tid); !isBuiltin {
+		var stored []byte // the answers live on the binding, because refresh renders again from the template
+		if len(answers) > 0 {
+			stored, _ = json.Marshal(answers)
+		}
 		if _, err := c.Tx.Exec(c.Context,
-			"insert into docs.template_bindings (note_id, workspace_id, template_id, source_kind, source_id) values ($1::uuid,$2::uuid,$3::uuid,$4,$5::uuid)",
-			note.ID, c.WorkspaceID(), tid, t.sourceKind, source); err != nil {
+			"insert into docs.template_bindings (note_id, workspace_id, template_id, source_kind, source_id, answers) values ($1::uuid,$2::uuid,$3::uuid,$4,$5::uuid,$6::jsonb)",
+			note.ID, c.WorkspaceID(), tid, t.sourceKind, source, stored); err != nil {
 			return nil, err
 		}
 	}
@@ -726,7 +932,8 @@ func templateRefresh(c *command.Ctx, input json.RawMessage) (any, error) {
 		return nil, err
 	}
 	var tid, source *string
-	err = c.Tx.QueryRow(c.Context, "select template_id::text, source_id::text from docs.template_bindings where note_id = $1::uuid", noteID).Scan(&tid, &source)
+	var stored []byte
+	err = c.Tx.QueryRow(c.Context, "select template_id::text, source_id::text, answers from docs.template_bindings where note_id = $1::uuid", noteID).Scan(&tid, &source, &stored)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, command.ErrInvalid("this note was not created from a template")
 	}
@@ -743,7 +950,11 @@ func templateRefresh(c *command.Ctx, input json.RawMessage) (any, error) {
 	if t.kind != "page" {
 		return nil, command.ErrInvalid("boards are one-shot: render the template again to get fresh data")
 	}
-	_, body, unresolved, err := render(c, t, source)
+	var answers map[string]string
+	if stored != nil {
+		_ = json.Unmarshal(stored, &answers) // a prompt the template no longer has is simply not used
+	}
+	_, body, unresolved, err := render(c, t, source, answers)
 	if err != nil {
 		return nil, err
 	}

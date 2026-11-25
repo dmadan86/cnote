@@ -98,6 +98,9 @@ func commentAdd(c *command.Ctx, input json.RawMessage) (any, error) {
 	if err := access.AssertSpaceWritable(c, space); err != nil { // a comment is a write: an archived space refuses it (13.2.2)
 		return nil, err
 	}
+	if err := access.AssertNoteNotArchived(c, noteID); err != nil {
+		return nil, err
+	}
 	body = strings.TrimSpace(body)
 	if body == "" {
 		return nil, command.ErrInvalid("comment body is empty")
@@ -172,6 +175,9 @@ func commentResolve(c *command.Ctx, input json.RawMessage) (any, error) {
 		return nil, err
 	}
 	if err := access.AssertSpaceWritable(c, space); err != nil {
+		return nil, err
+	}
+	if err := access.AssertNoteNotArchived(c, note); err != nil {
 		return nil, err
 	}
 	if _, err := c.Tx.Exec(c.Context,

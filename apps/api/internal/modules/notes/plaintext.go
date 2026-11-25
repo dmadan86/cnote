@@ -64,7 +64,7 @@ func PlainText(md string) string {
 var (
 	panelMarker = regexp.MustCompile(`(?i)^\[!(info|note|success|warning|error)\]$`)
 	summaryLine = regexp.MustCompile(`^<details>\s*<summary>(.*)</summary>$`)
-	tagRe       = regexp.MustCompile(`</?(details|summary|span|time|table|thead|tbody|tr|th|td|p|br)(\s[^>]*)?/?>`)
+	tagRe       = regexp.MustCompile(`</?(details|summary|span|time|a|table|thead|tbody|tr|th|td|p|br)(\s[^>]*)?/?>`)
 	cellEnd     = regexp.MustCompile(`</(td|th|tr|p|summary)>|<br\s*/?>`)
 	// ![alt](src "title"): alt and title may hold backslash escapes (\] \[ \\ \"), which the editor writes.
 	imageRe  = regexp.MustCompile(`!\[((?:\\.|[^\]\\])*)\]\([^)\s]*(?:\s+"(?:\\.|[^"\\])*")?\)`)

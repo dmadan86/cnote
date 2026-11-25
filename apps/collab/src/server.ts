@@ -11,11 +11,11 @@ import * as encoding from 'lib0/encoding'
 import pg from 'pg'
 import { WebSocket, WebSocketServer } from 'ws'
 import * as Y from 'yjs'
-import { mayWrite, trashedVisible } from './access.ts'
+import { archivedVisible, mayWrite, trashedVisible } from './access.ts'
 import { authenticate, type Principal } from './auth.ts'
 import { CmdError, tenant } from './db.ts'
 import { buildDoc, loadDoc } from './doc.ts'
-import { CLOSE_DELETED, CLOSE_RELOAD, CLOSE_RETRY } from './doc-schema.ts'
+import { CLOSE_ARCHIVED, CLOSE_DELETED, CLOSE_RELOAD, CLOSE_RETRY } from './doc-schema.ts'
 import * as md from './md.ts'
 
 export const CLOSE_STALE_EPOCH = 4409
@@ -38,6 +38,13 @@ class FencedError extends CmdError {
 class GoneError extends CmdError {
   constructor() {
     super('conflict', 'page deleted')
+  }
+}
+
+/** The page was archived (read-only until restored): its sockets close with CLOSE_ARCHIVED. */
+class ArchivedError extends CmdError {
+  constructor() {
+    super('conflict', 'page archived')
   }
 }
 
@@ -248,10 +255,11 @@ export function createServer(opts: Options) {
   async function recheck(p: Principal, room: Room): Promise<boolean> {
     return tenant(pool, room.ws, async (tx) => {
       const e = await tx.query(
-        'select collab_epoch, deleted_at is not null as gone from core.notes where id = $1',
+        "select collab_epoch, deleted_at is not null as gone, freshness = 'archived' as archived from core.notes where id = $1",
         [room.note],
       )
       if (e.rows[0]?.gone) throw new GoneError()
+      if (e.rows[0]?.archived) throw new ArchivedError()
       const w = await mayWrite(tx, p, room.note)
       if (e.rows[0]?.collab_epoch !== room.epoch) throw new CmdError('conflict', 'page restored')
       return w
@@ -265,24 +273,26 @@ export function createServer(opts: Options) {
       const r = await tx.query(
         `insert into core.note_updates (workspace_id, note_id, epoch, update)
          select workspace_id, id, collab_epoch, $3 from core.notes
-         where id = $1 and collab_epoch = $2 and deleted_at is null and (fenced_until is null or fenced_until <= now())
+         where id = $1 and collab_epoch = $2 and deleted_at is null and freshness <> 'archived' and (fenced_until is null or fenced_until <= now())
          for share
          returning id`,
         [room.note, room.epoch, Buffer.from(update)],
       )
       if (r.rows[0]) return { id: r.rows[0].id as string }
       const g = await tx.query(
-        'select deleted_at is not null as gone, collab_epoch = $2 and fenced_until > now() as fenced from core.notes where id = $1',
+        "select deleted_at is not null as gone, collab_epoch = $2 and fenced_until > now() as fenced, freshness = 'archived' as archived from core.notes where id = $1",
         [room.note, room.epoch],
       )
-      return { gone: !!g.rows[0]?.gone, fenced: !!g.rows[0]?.fenced }
+      return { gone: !!g.rows[0]?.gone, fenced: !!g.rows[0]?.fenced, archived: !!g.rows[0]?.archived }
     })
     if ('gone' in id)
       throw id.gone
         ? new GoneError()
-        : id.fenced
-          ? new FencedError()
-          : new CmdError('conflict', 'page restored')
+        : id.archived
+          ? new ArchivedError()
+          : id.fenced
+            ? new FencedError()
+            : new CmdError('conflict', 'page restored')
     return String(id.id)
   }
 
@@ -476,6 +486,7 @@ export function createServer(opts: Options) {
       cleanup()
       retire(room)
       if (room.closeCode === CLOSE_DELETED) socket.close(CLOSE_DELETED, 'page deleted')
+      else if (room.closeCode === CLOSE_ARCHIVED) socket.close(CLOSE_ARCHIVED, 'page archived')
       else if (room.closeCode === CLOSE_RETRY) socket.close(CLOSE_RETRY, 'page is being deleted, retry')
       else socket.close(CLOSE_STALE_EPOCH, 'page restored')
     }
@@ -514,6 +525,9 @@ export function createServer(opts: Options) {
           if (e instanceof GoneError) {
             room.closeCode = CLOSE_DELETED
             fence()
+          } else if (e instanceof ArchivedError) {
+            room.closeCode = CLOSE_ARCHIVED
+            fence()
           } else if (e instanceof CmdError && e.code === 'conflict') fence()
           else if (e instanceof CmdError && (e.code === 'not_found' || e.code === 'forbidden')) socket.close()
           // else transient database error: keep the connection, retry next tick
@@ -533,6 +547,7 @@ export function createServer(opts: Options) {
           await onFrame(room, me, p, write, new Uint8Array(buf.buffer, buf.byteOffset, buf.length))
         } catch (e) {
           if (e instanceof GoneError) room.closeCode = CLOSE_DELETED
+          if (e instanceof ArchivedError) room.closeCode = CLOSE_ARCHIVED
           // The room's doc already holds the refused edit: drop the room unsaved; every client keeps its edit and resyncs.
           if (e instanceof FencedError) room.closeCode = CLOSE_RETRY
           if (e instanceof CmdError && e.code === 'conflict') return fence()
@@ -759,6 +774,10 @@ export function createServer(opts: Options) {
       if (await tenant(pool, ws, (tx) => trashedVisible(tx, p, note))) {
         // The page is in the trash: accept the upgrade just to close with the final code (a browser cannot read an HTTP refusal).
         return wss.handleUpgrade(req, socket, head, (s) => s.close(CLOSE_DELETED, 'page deleted'))
+      }
+      if (await tenant(pool, ws, (tx) => archivedVisible(tx, p, note))) {
+        // Archived pages are read-only until restored: no live editing, the web reloads into the read-only page.
+        return wss.handleUpgrade(req, socket, head, (s) => s.close(CLOSE_ARCHIVED, 'page archived'))
       }
       const { room, write } = await prepare(p, ws, note)
       wss.handleUpgrade(req, socket, head, (s) => {

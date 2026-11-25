@@ -125,5 +125,17 @@
     "covers": ["task", "mention", "lookalike"],
     "md": "- Ask [@Ravi Kumar](/w/00000000-0000-4000-8000-0000000000a1/people/00000000-0000-4000-8000-0000000000b2) about the quote <time datetime=\"2026-12-03\">3 Dec 2026</time>\n\n- [ ] Pay the vendor\n\nCall [@Ravi Kumar](/w/00000000-0000-4000-8000-0000000000a1/people/00000000-0000-4000-8000-0000000000b2) before <time datetime=\"2026-12-04\">4 Dec 2026</time> (not a task: no checkbox).",
     "plain": "- Ask [@Ravi Kumar](/w/00000000-0000-4000-8000-0000000000a1/people/00000000-0000-4000-8000-0000000000b2) about the quote 3 Dec 2026\n- [ ] Pay the vendor\nCall [@Ravi Kumar](/w/00000000-0000-4000-8000-0000000000a1/people/00000000-0000-4000-8000-0000000000b2) before 4 Dec 2026 (not a task: no checkbox)."
+  },
+  {
+    "id": "file-link",
+    "covers": ["link", "table", "merged"],
+    "md": "[Price list 2026.pdf](/api/w/7b3f1c2e-5a4d-4e6f-8a9b-0c1d2e3f4a5b/files/0f0e0d0c-0b0a-4908-8706-050403020100)\n\n- [Price list 2026.pdf](/api/w/7b3f1c2e-5a4d-4e6f-8a9b-0c1d2e3f4a5b/files/0f0e0d0c-0b0a-4908-8706-050403020100)\n\n<table><tr><th colspan=\"2\"><p><a href=\"/api/w/7b3f1c2e-5a4d-4e6f-8a9b-0c1d2e3f4a5b/files/0f0e0d0c-0b0a-4908-8706-050403020100\">Price list 2026.pdf</a></p></th></tr></table>\n\n[Old](/api/files/0f0e0d0c-0b0a-4908-8706-050403020100) [Other](/api/w/00000000-0000-4000-8000-000000000001/files/0f0e0d0c-0b0a-4908-8706-050403020100)",
+    "plain": "[Price list 2026.pdf](/api/w/7b3f1c2e-5a4d-4e6f-8a9b-0c1d2e3f4a5b/files/0f0e0d0c-0b0a-4908-8706-050403020100)\n- [Price list 2026.pdf](/api/w/7b3f1c2e-5a4d-4e6f-8a9b-0c1d2e3f4a5b/files/0f0e0d0c-0b0a-4908-8706-050403020100)\nPrice list 2026.pdf\n[Old](/api/files/0f0e0d0c-0b0a-4908-8706-050403020100) [Other](/api/w/00000000-0000-4000-8000-000000000001/files/0f0e0d0c-0b0a-4908-8706-050403020100)"
+  },
+  {
+    "id": "page-link",
+    "covers": ["link", "code"],
+    "md": "[Project](/w/7b3f1c2e-5a4d-4e6f-8a9b-0c1d2e3f4a5b/n/0f0e0d0c-0b0a-4908-8706-050403020100) and [[unfinished\n\n```\n[[inside code\n```",
+    "plain": "[Project](/w/7b3f1c2e-5a4d-4e6f-8a9b-0c1d2e3f4a5b/n/0f0e0d0c-0b0a-4908-8706-050403020100) and [[unfinished\n[[inside code"
   }
 ]

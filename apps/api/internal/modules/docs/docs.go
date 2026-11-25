@@ -22,7 +22,7 @@ const (
 
 func Commands() []command.Command {
 	w, r := command.GroupWriteNotes, command.GroupRead
-	return []command.Command{
+	return append([]command.Command{
 		command.NewCommand("doc.verify", w, docVerify),
 		command.NewCommand("doc.set_owner", w, docSetOwner),
 		command.NewCommand("doc.flags", r, docFlags),
@@ -39,9 +39,9 @@ func Commands() []command.Command {
 		command.NewCommand("template.list", r, templateList),
 		command.NewCommand("template.delete", w, templateDelete),
 		command.NewCommand("template.fields", r, templateFields),
-		command.NewCommand("template.render", w, templateRender),
+		templateRenderCommand(),
 		command.NewCommand("template.refresh", w, templateRefresh),
-	}
+	}, b2Commands()...)
 }
 
 func user(c *command.Ctx) (string, error) {
@@ -59,7 +59,16 @@ func same(a, b *string) bool { return a == nil && b == nil || a != nil && b != n
 
 // pageOwner loads a page the caller can read and returns its owner; manage demands owner-or-admin.
 func pageOwner(c *command.Ctx, id string, manage bool) (*string, error) {
-	if _, err := access.AssertNoteAccess(c, id, manage); err != nil {
+	return pageOwnerOf(c, id, manage, false)
+}
+
+// pageOwnerOf: archivedOK is for verify and restore, which bring an archived page back (an archived page is read-only otherwise).
+func pageOwnerOf(c *command.Ctx, id string, manage, archivedOK bool) (*string, error) {
+	assert := access.AssertNoteAccess
+	if archivedOK {
+		assert = access.AssertNoteAccessArchivedOK
+	}
+	if _, err := assert(c, id, manage); err != nil {
 		return nil, err
 	}
 	var owner *string
@@ -96,7 +105,7 @@ func docVerify(c *command.Ctx, input json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err := pageOwner(c, id, true); err != nil {
+	if _, err := pageOwnerOf(c, id, true, true); err != nil {
 		return nil, err
 	}
 	by := todayPlus(defaultVerifyDays)
@@ -206,7 +215,13 @@ func docRestore(c *command.Ctx, input json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err := pageOwner(c, id, true); err != nil {
+	var opt struct {
+		WithChildren *bool `json:"with_children"`
+	}
+	if json.Unmarshal(input, &opt) != nil {
+		return nil, command.ErrInvalid("with_children must be true or false")
+	}
+	if _, err := pageOwnerOf(c, id, true, true); err != nil {
 		return nil, err
 	}
 	tag, err := c.Tx.Exec(c.Context,
@@ -227,7 +242,15 @@ func docRestore(c *command.Ctx, input json.RawMessage) (any, error) {
 	if _, err := c.Emit("doc.restored", &id, map[string]any{}); err != nil {
 		return nil, err
 	}
-	return map[string]any{"note_id": id, "freshness": "stale"}, nil
+	restored := 1
+	if opt.WithChildren != nil && *opt.WithChildren {
+		n, err := restoreChildren(c, id)
+		if err != nil {
+			return nil, err
+		}
+		restored += n
+	}
+	return map[string]any{"note_id": id, "freshness": "stale", "restored": restored}, nil
 }
 
 // ---------- owner dashboard ----------

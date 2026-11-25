@@ -1,13 +1,16 @@
 'use client'
 import { useRouter } from 'next/navigation'
 import { Fragment, type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
+import { DocxImportButton } from '@/components/import/docx-button'
 import { useShell } from '@/components/shell'
 import { btn, btnPrimary, ErrorText, Field, inputCls, Modal, Pill } from '@/components/ui'
 import { cmd, type Note } from '@/lib/api'
 import { useCmd } from '@/lib/hooks'
 
+export type Prompt = { key: string; label: string }
 export type GalleryTpl = {
   id: string
+  prompts?: Prompt[]
   name: string
   builtin?: boolean
   category?: string
@@ -168,6 +171,49 @@ export function Preview({ md }: { md: string }) {
   return <div className="space-y-2 text-[13px] leading-relaxed">{blocks(md)}</div>
 }
 
+// ---------- prompts ----------
+
+/** The non-empty answers, for the prompts of the chosen template only. */
+export function answersOf(prompts: Prompt[], answers: Record<string, string>) {
+  const out: Record<string, string> = {}
+  for (const p of prompts) {
+    const v = (answers[p.key] ?? '').trim()
+    if (v) out[p.key] = v
+  }
+  return Object.keys(out).length ? out : undefined
+}
+
+/** One text box per `{{ask.name}}` of the template. An empty box leaves the placeholder in the page. */
+export function PromptFields({
+  prompts,
+  answers,
+  onChange,
+}: {
+  prompts: Prompt[]
+  answers: Record<string, string>
+  onChange: (a: Record<string, string>) => void
+}) {
+  if (prompts.length === 0) return null
+  return (
+    <fieldset className="space-y-2 rounded-md border border-line p-2.5">
+      <legend className="px-1 text-[12px] font-semibold text-muted">Fill in</legend>
+      {prompts.map((p) => (
+        <Field key={p.key} label={p.label}>
+          {(id) => (
+            <input
+              id={id}
+              className={inputCls}
+              maxLength={500}
+              value={answers[p.key] ?? ''}
+              onChange={(e) => onChange({ ...answers, [p.key]: e.target.value.replace(/[\r\n]+/g, ' ') })}
+            />
+          )}
+        </Field>
+      ))}
+    </fieldset>
+  )
+}
+
 // ---------- the gallery ----------
 
 /**
@@ -198,6 +244,7 @@ export function TemplateGallery({
   const [sel, setSel] = useState<string>()
   const [space, setSpace] = useState(spaceId ?? '')
   const [title, setTitle] = useState('')
+  const [answers, setAnswers] = useState<Record<string, string>>({})
   const [err, setErr] = useState<string>()
   const [busy, setBusy] = useState(false)
   const cards = useRef<(HTMLButtonElement | null)[]>([])
@@ -216,6 +263,7 @@ export function TemplateGallery({
     )
   }, [all, cat, q])
   const current = shown.find((t) => t.id === sel) ?? shown[0]
+  const prompts = current?.prompts ?? []
   const spaceVal = space || spaces[0]?.id || ''
 
   useEffect(() => {
@@ -247,6 +295,7 @@ export function TemplateGallery({
         template_id: current.id,
         ...(parentId ? { parent_id: parentId } : { space_id: spaceVal }),
         title: title.trim() || undefined,
+        answers: answersOf(prompts, answers),
       })
       router.push(`/w/${ws}/n/${r.note.id}`)
     } catch (x) {
@@ -376,8 +425,10 @@ export function TemplateGallery({
                   />
                 )}
               </Field>
+              <PromptFields prompts={prompts} answers={answers} onChange={setAnswers} />
               <ErrorText error={err} />
-              <div className="flex justify-end gap-2">
+              <div className="flex items-center justify-between gap-2">
+                {spaceVal ? <DocxImportButton spaceId={spaceVal} parentId={parentId} /> : <span />}
                 <button type="button" className={btn} onClick={onClose}>
                   Cancel
                 </button>

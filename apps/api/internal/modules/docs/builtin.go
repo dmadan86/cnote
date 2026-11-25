@@ -4,7 +4,7 @@ import "strings"
 
 // Built-in page templates (docs-parity 5.5, 7.6). They are code, not rows, so a wording fix reaches every workspace.
 // Ids are "builtin:<key>". Bodies use the stored block forms of 5.1 (panel, expand, status, toc) and only the common
-// placeholders, so each renders with nothing unresolved and reads sensibly as plain text where a block is unknown.
+// placeholders (the meeting notes also ask for a date and the attendees), so each renders with nothing unresolved except prompts and reads sensibly as plain text where a block is unknown.
 // The web tests read the raw string literals of this file: keep backticks for bodies only.
 
 const builtinPrefix = "builtin:"
@@ -30,12 +30,12 @@ var builtinCategories = []string{"Meetings", "Operations", "HR", "Sales", "Proje
 
 var builtins = []builtin{
 	{"meeting-notes", "Meeting notes (MoM)", "Meetings", "Minutes with attendees, decisions and action items.", "Meeting notes {{today}}", `> [!INFO]
-> Date: {{today}}. Minutes taken by {{user.name}} for {{workspace.name}}.
+> Date: {{ask.date}}. Minutes taken by {{user.name}} for {{workspace.name}}.
 
 ## Attendees
 
 - {{user.name}}
-- Add names here
+- {{ask.attendees}}
 
 ## Agenda
 

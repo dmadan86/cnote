@@ -7,3 +7,5 @@ export const CLOSE_RELOAD = 4410
 export const CLOSE_DELETED = 4411
 /** WebSocket close code: an edit was refused while the page is fenced for a delete. Reconnect; the resync resends it. Not final. */
 export const CLOSE_RETRY = 4412
+/** WebSocket close code: the page was archived, which makes it read-only until restored. Final: the web reloads and shows the archived page. */
+export const CLOSE_ARCHIVED = 4413

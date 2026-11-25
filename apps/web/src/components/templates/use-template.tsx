@@ -6,9 +6,9 @@ import { useShell } from '@/components/shell'
 import { btn, btnPrimary, ErrorText, Field, inputCls, Modal } from '@/components/ui'
 import { cmd, type Note } from '@/lib/api'
 import { useCmd } from '@/lib/hooks'
-import { TemplateGallery } from './gallery'
+import { answersOf, type Prompt, PromptFields, TemplateGallery } from './gallery'
 
-type Tpl = { id: string; name: string; kind: 'page' | 'board'; source_kind: string }
+type Tpl = { id: string; name: string; kind: 'page' | 'board'; source_kind: string; prompts?: Prompt[] }
 type Opt = { id: string; label: string }
 type Rendered = { note: Note; unresolved: string[] }
 
@@ -51,6 +51,7 @@ function TemplateDialog({
   const list = useCmd<Tpl[]>(ws, 'template.list', { kind, source_kind: sourceKind }, open)
   const [tid, setTid] = useState('')
   const [src, setSrc] = useState('')
+  const [answers, setAnswers] = useState<Record<string, string>>({})
   const [err, setErr] = useState<string>()
   const [result, setResult] = useState<Rendered>()
   const tpl = list.data?.find((t) => t.id === (tid || list.data?.[0]?.id))
@@ -74,6 +75,7 @@ function TemplateDialog({
         source_id: sourceId ?? (tpl.source_kind === 'none' ? undefined : src || sources.options?.[0]?.id),
         space_id: tpl.source_kind === 'none' ? f.get('space') : undefined,
         title: f.get('title') || undefined,
+        answers: answersOf(tpl.prompts ?? [], answers),
       })
       setErr(undefined)
       if (r.unresolved.length === 0) return open_(r.note)
@@ -120,6 +122,7 @@ function TemplateDialog({
                 onChange={(e) => {
                   setTid(e.target.value)
                   setSrc('')
+                  setAnswers({})
                 }}
               >
                 {list.data?.map((t) => (
@@ -161,6 +164,7 @@ function TemplateDialog({
               <input id={id} name="title" className={inputCls} placeholder="Defaults to the template title" />
             )}
           </Field>
+          <PromptFields prompts={tpl?.prompts ?? []} answers={answers} onChange={setAnswers} />
           <ErrorText error={err ?? sources.error} />
           <div className="flex justify-end gap-2">
             <button type="button" className={btn} onClick={close}>

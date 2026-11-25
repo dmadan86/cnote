@@ -17,6 +17,7 @@ import {
   ListChecks,
   ListOrdered,
   Minus,
+  Paperclip,
   Redo2,
   Smile,
   Strikethrough,
@@ -25,6 +26,7 @@ import {
   Undo2,
 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
+import { pickFiles } from './file-link'
 import { promptLink, Tool } from './menus'
 
 type Style = { label: string; key: string; size: string; keys: string; run: (e: Editor) => void }
@@ -379,6 +381,9 @@ export function FixedToolbar({ editor }: { editor: Editor }) {
       </Tool>
       <Tool label="Image" run={() => emit('cn:image-dialog')}>
         <ImageIcon size={sz} />
+      </Tool>
+      <Tool label="Attach file" run={() => pickFiles(editor)}>
+        <Paperclip size={sz} />
       </Tool>
       <Tool label="Emoji" run={() => emit('cn:emoji-picker')}>
         <Smile size={sz} />

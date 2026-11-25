@@ -43,6 +43,9 @@ func TestBuiltinsAreWellFormed(t *testing.T) {
 		// every placeholder must be one a template without a source can resolve
 		missing := map[string]bool{}
 		v := vals{"workspace.name": "W", "today": "1 Jan 2026", "user.name": "U"}
+		for _, p := range promptsOf(b.Title, b.Body) { // a prompt is filled in by the person using the template
+			v[askPrefix+p.Key] = "x"
+		}
 		for _, s := range []string{b.Title, b.Body} {
 			out := substitute(s, v, missing)
 			if strings.Contains(out, "{{") {

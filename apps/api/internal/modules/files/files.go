@@ -27,7 +27,8 @@ import (
 
 const (
 	MaxBytes     = 10 << 20
-	maxPerNote   = 10
+	maxPerNote   = 10 // other notes; a plain page may hold maxPerPage
+	maxPerPage   = 50
 	maxNameRunes = 200
 )
 
@@ -83,6 +84,15 @@ type meta struct {
 	ContentType string     `json:"content_type"`
 	SizeBytes   int64      `json:"size_bytes"`
 	CreatedAt   command.Ts `json:"created_at"`
+	CreatedBy   *string    `json:"created_by_name,omitempty"` // file.list only
+}
+
+// limitFor is the per-note file cap: 50 on a plain page (types = '{}'), 10 on any other note.
+func limitFor(plain bool) int {
+	if plain {
+		return maxPerPage
+	}
+	return maxPerNote
 }
 
 // cleanName keeps the base name, drops control characters and caps the length.
@@ -172,11 +182,14 @@ func upload(c *command.Ctx, input json.RawMessage) (any, error) {
 		return nil, err
 	}
 	var n int
-	if err := c.Tx.QueryRow(c.Context, "select count(*) from core.attachments where note_id = $1::uuid and (data is not null or storage_key = 's3')", v.NoteID).Scan(&n); err != nil {
+	var plain bool
+	if err := c.Tx.QueryRow(c.Context,
+		`select count(*), (select types = '{}' from core.notes where id = $1::uuid) from core.attachments
+		 where note_id = $1::uuid and (data is not null or storage_key = 's3')`, v.NoteID).Scan(&n, &plain); err != nil {
 		return nil, command.DB(err)
 	}
-	if n >= maxPerNote {
-		return nil, command.ErrConflict("a page can hold at most 10 files")
+	if max := limitFor(plain); n >= max {
+		return nil, command.ErrConflict(fmt.Sprintf("a page can hold at most %d files", max))
 	}
 	var m meta
 	var created time.Time
@@ -214,8 +227,9 @@ func list(c *command.Ctx, input json.RawMessage) (any, error) {
 		return nil, err
 	}
 	rows, err := c.Tx.Query(c.Context,
-		`select id::text, note_id::text, filename, content_type, size_bytes, created_at from core.attachments
-		 where note_id = $1::uuid and (data is not null or storage_key = 's3') order by created_at, id`, v.NoteID)
+		`select a.id::text, a.note_id::text, a.filename, a.content_type, a.size_bytes, a.created_at, u.name
+		 from core.attachments a left join core.users u on u.id = a.created_by
+		 where a.note_id = $1::uuid and (a.data is not null or a.storage_key = 's3') order by a.created_at, a.id`, v.NoteID)
 	if err != nil {
 		return nil, command.DB(err)
 	}
@@ -224,7 +238,7 @@ func list(c *command.Ctx, input json.RawMessage) (any, error) {
 	for rows.Next() {
 		var m meta
 		var t time.Time
-		if err := rows.Scan(&m.ID, &m.NoteID, &m.Filename, &m.ContentType, &m.SizeBytes, &t); err != nil {
+		if err := rows.Scan(&m.ID, &m.NoteID, &m.Filename, &m.ContentType, &m.SizeBytes, &t, &m.CreatedBy); err != nil {
 			return nil, command.DB(err)
 		}
 		m.CreatedAt = command.Ts(t)

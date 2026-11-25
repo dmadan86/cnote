@@ -5,10 +5,12 @@ import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
 import { Suspense, use, useEffect, useMemo, useRef, useState } from 'react'
 import { type Anchor, type Comment, CommentsTab, openThreads } from '@/components/comments-panel'
+import { AttachmentsPanel } from '@/components/docs/attachments-panel'
 import { LabelChips } from '@/components/docs/labels'
 import { DocActions, Proposals } from '@/components/docs/note-tools'
 import { PageMenuButton } from '@/components/docs/page-actions'
 import {
+  ArchiveButton,
   EmojiPicker,
   ExportMenu,
   StarButton,
@@ -16,6 +18,9 @@ import {
   useRecordViewed,
   WideToggle,
 } from '@/components/docs/page-header'
+import { RequestAccess } from '@/components/docs/request-access'
+import { SubPages } from '@/components/docs/sub-pages'
+import { Viewers } from '@/components/docs/viewers'
 import { locate } from '@/components/editor/inline-comments'
 import { NoteEditor } from '@/components/note-editor'
 import { personProps } from '@/components/person'
@@ -109,9 +114,23 @@ function Panel({
   )
 }
 
+/** Live pages under id, for the Archive confirmation. */
+function countBelow(notes: { id: string; parent_id: string | null }[], id: string) {
+  const seen = new Set([id])
+  for (let grew = true; grew; ) {
+    grew = false
+    for (const n of notes)
+      if (n.parent_id && seen.has(n.parent_id) && !seen.has(n.id)) {
+        seen.add(n.id)
+        grew = true
+      }
+  }
+  return seen.size - 1
+}
+
 function NotePageInner({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params)
-  const { ws, me, spaces, members, reload, newPage } = useShell()
+  const { ws, me, spaces, members, notes, reload, newPage } = useShell()
   const {
     data: note,
     error,
@@ -168,10 +187,17 @@ function NotePageInner({ params }: { params: Promise<{ id: string }> }) {
       </div>
     )
   if (error)
-    return <p className="p-6 text-muted">This page does not exist or you do not have access to it.</p>
+    return (
+      <>
+        <p className="p-6 text-muted">This page does not exist or you do not have access to it.</p>
+        <RequestAccess ws={ws} id={id} />
+      </>
+    )
   if (!note) return null
 
-  const canEdit = note.level === 'edit'
+  const archived = note.freshness === 'archived'
+  const canEdit = note.level === 'edit' && !archived // an archived page is read-only until it is restored
+  const subPages = countBelow(notes, id)
 
   async function saveTitle() {
     if (!note || !canEdit || title.trim() === note.title) return
@@ -195,6 +221,7 @@ function NotePageInner({ params }: { params: Promise<{ id: string }> }) {
           />
           <FreshnessPill freshness={note.freshness} verifyBy={note.verify_by} />
           <span className="text-[12px] text-muted">Updated {ago(note.updated_at)}</span>
+          <Viewers ws={ws} id={id} />
           {/* Wraps instead of clipping on narrow screens. */}
           <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
             <DocActions
@@ -274,7 +301,12 @@ function NotePageInner({ params }: { params: Promise<{ id: string }> }) {
             been kept.
           </p>
         )}
-        {!canEdit && (
+        {archived && (
+          <p role="status" className="border-b border-line bg-hover px-6 py-1.5 text-[13px]">
+            Archived. This page is read-only until it is restored from the Docs dashboard.
+          </p>
+        )}
+        {!canEdit && !archived && (
           <p role="status" className="border-b border-line bg-hover px-6 py-1.5 text-[13px] text-muted">
             You can view this page but not edit it.
           </p>
@@ -338,6 +370,21 @@ function NotePageInner({ params }: { params: Promise<{ id: string }> }) {
               },
             }}
           />
+          <SubPages ws={ws} noteId={id} spaceId={note.space_id} />
+          <AttachmentsPanel ws={ws} noteId={id} canEdit={canEdit} editorRef={editorRef} />
+          {canEdit && note.types.length === 0 && (
+            <div className="mt-8 border-t border-line pt-3">
+              <ArchiveButton
+                ws={ws}
+                id={id}
+                subPages={subPages}
+                onDone={() => {
+                  reloadNote()
+                  reload()
+                }}
+              />
+            </div>
+          )}
         </article>
       </div>
       {panel && (

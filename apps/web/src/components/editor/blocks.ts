@@ -505,7 +505,7 @@ export const CodeBlockLang = CodeBlock.extend({
 const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp']
 const MAX_BYTES = 10 << 20
 
-function toast(msg: string) {
+export function toast(msg: string) {
   const t = el('div', 'cn-toast', msg)
   t.setAttribute('role', 'alert')
   document.body.append(t)
@@ -531,6 +531,7 @@ export async function uploadImage(
   const j = await res.json().catch(() => null)
   if (!res.ok || typeof j?.id !== 'string')
     throw new Error(j?.error?.message ?? 'Could not upload the image.')
+  window.dispatchEvent(new Event('cnote:files')) // the Attachments panel reloads (file-link.ts FILES_EVENT)
   return { src: `/api/w/${ws}/files/${j.id}`, alt: f.name.replace(/\.[^.]+$/, '') }
 }
 
@@ -596,6 +597,22 @@ export function pickImages(editor: Editor) {
   input.click()
 }
 
+/** Text nodes that hold `[[` and no `]` are not a link in the making, so the writer leaves them as typed
+ * (shortcut: a `]` in a later text node can still close one; the serializer then reads it back as text). */
+const PageLinkText = Extension.create({
+  name: 'pageLinkText',
+  onBeforeCreate() {
+    // after the Markdown extension, which makes editor.markdown (it comes first in every editor's list)
+    const md = this.editor.markdown as unknown as { escapeMarkdownSyntax: (t: string) => string } | undefined
+    if (!md) return
+    const orig = md.escapeMarkdownSyntax.bind(md)
+    md.escapeMarkdownSyntax = (t) =>
+      t.includes('[[') && !t.includes(']')
+        ? orig(t.replaceAll('[', '\u0000')).replaceAll('\u0000', '[')
+        : orig(t)
+  },
+})
+
 /** Everything the A1 blocks need besides the upload plugin (which needs the workspace and page). Pair it with
  * `StarterKit.configure({ codeBlock: false })`. */
-export const blockExtensions = [Panel, Expand, Toc, Status, DateMark, CodeBlockLang]
+export const blockExtensions = [Panel, Expand, Toc, Status, DateMark, CodeBlockLang, PageLinkText]

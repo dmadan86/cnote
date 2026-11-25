@@ -9,6 +9,7 @@ import {
   CheckCircle2,
   ChevronRight,
   Code,
+  FileText,
   Heading1,
   Heading2,
   Heading3,
@@ -21,6 +22,7 @@ import {
   ListTree,
   type LucideIcon,
   Minus,
+  Paperclip,
   Pilcrow,
   Quote,
   Smile,
@@ -34,6 +36,7 @@ import {
 } from 'lucide-react'
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import { blocksEnabled, formatDate, PANEL_LABEL, type PanelKind, pickImages, todayIso } from './blocks'
+import { pickFiles } from './file-link'
 
 export type SlashItem = {
   title: string
@@ -228,6 +231,20 @@ export const NEW_BLOCK_ITEMS: SlashItem[] = [
     icon: ListTree,
     needsSchema: true,
     run: (e) => c(e).insertContent({ type: 'toc' }).run(),
+  },
+  {
+    title: 'File',
+    hint: 'Attach a PDF or an image',
+    keywords: 'attach attachment pdf document',
+    icon: Paperclip,
+    run: (e) => pickFiles(e),
+  },
+  {
+    title: 'Link to page',
+    hint: 'Search pages by title',
+    keywords: 'page link reference mention [[',
+    icon: FileText,
+    run: (e) => c(e).insertContent('[[').run(), // PageLinkPicker opens on the typed marker
   },
   {
     title: 'Upload image',

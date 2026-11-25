@@ -7,7 +7,9 @@ export const MAX_IMAGE_BYTES = 25 << 20
 export type ExportMeta = { title: string; status: string | null; labels: string[]; updatedAt: string }
 export type Built = { root: HTMLElement; notes: string[] }
 type FetchImage = (src: string) => Promise<Blob>
-type Opts = { fetchImage?: FetchImage }
+/** A page's current title, or null when the reader cannot see it. */
+type ResolveTitle = (ws: string, id: string) => Promise<string | null>
+type Opts = { fetchImage?: FetchImage; resolveTitle?: ResolveTitle }
 
 const UPLOAD = /^\/api\/w\/[0-9a-f-]{36}\/files\/[0-9a-f-]{36}$/
 const DATA_IMG = /^data:image\/(?:png|jpe?g|gif|webp);base64,[a-z0-9+/=]+$/i
@@ -27,6 +29,41 @@ const defaultFetch: FetchImage = async (src) => {
   const r = await fetch(src, { credentials: 'same-origin' })
   if (!r.ok) throw new Error(`HTTP ${r.status}`)
   return r.blob()
+}
+
+const PAGE_LINK = /^\/w\/([0-9a-f-]{36})\/n\/([0-9a-f-]{36})$/i
+
+const defaultTitle: ResolveTitle = async (ws, id) => {
+  try {
+    const r = await fetch(`/api/w/${ws}/commands/note.get`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ id }),
+    })
+    return r.ok ? ((await r.json()).title ?? '') || 'Untitled' : null
+  } catch {
+    return null
+  }
+}
+
+/** A link to a page shows that page's title where the reader can see the page, and is plain text where they cannot. */
+async function resolvePageLinks(root: HTMLElement, resolve: ResolveTitle) {
+  const links = Array.from(root.querySelectorAll('a[href]')).flatMap((a) => {
+    let path = ''
+    try {
+      path = new URL(a.getAttribute('href') ?? '', location.origin).pathname
+    } catch {}
+    const m = PAGE_LINK.exec(path)
+    return m ? [{ a, ws: m[1], id: m[2].toLowerCase() }] : []
+  })
+  const titles = new Map<string, string | null>()
+  for (const { ws, id } of links) if (!titles.has(id)) titles.set(id, await resolve(ws, id))
+  for (const { a, id } of links) {
+    const t = titles.get(id)
+    if (t) a.textContent = t
+    else a.replaceWith(a.textContent ?? '')
+  }
 }
 
 const toDataUri = (b: Blob) =>
@@ -316,6 +353,8 @@ export async function buildExportDom(
   // Title heading is the page's h1; content headings get ids after it, so the TOC lists content only.
   resolveToc(body, doc)
   labelCode(body, doc)
+
+  await resolvePageLinks(body, opts?.resolveTitle ?? defaultTitle)
 
   const imgs = Array.from(body.querySelectorAll('img'))
   const { done, failed, notes } = await embed(

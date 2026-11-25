@@ -1,7 +1,8 @@
 'use client'
 import { Link2, Lock, X } from 'lucide-react'
 import NextLink from 'next/link'
-import { useState } from 'react'
+import { useSearchParams } from 'next/navigation'
+import { useEffect, useState } from 'react'
 import { Avatar, btn, btnPrimary, ErrorText, inputCls, Modal } from '@/components/ui'
 import { cmd, type Member, type Note } from '@/lib/api'
 import { useCmd } from '@/lib/hooks'
@@ -36,7 +37,8 @@ export function ShareButton({
   members: Member[]
   onChange: () => void
 }) {
-  const [open, setOpen] = useState(false)
+  const prefill = useSearchParams().get('share') // a request-access notification opens the dialog for the requester
+  const [open, setOpen] = useState(prefill !== null)
   const [seen, setSeen] = useState(0) // bumped when the dialog closes, so the Public chip re-reads the link
   return (
     <>
@@ -54,6 +56,7 @@ export function ShareButton({
         noteId={noteId}
         members={members}
         onChange={onChange}
+        prefill={prefill}
       />
     </>
   )
@@ -66,6 +69,7 @@ function ShareDialog({
   noteId,
   members,
   onChange,
+  prefill,
 }: {
   open: boolean
   onClose: () => void
@@ -73,12 +77,18 @@ function ShareDialog({
   noteId: string
   members: Member[]
   onChange: () => void
+  prefill: string | null
 }) {
   const { data, reload } = useCmd<Perms>(ws, 'note.permissions', { note_id: noteId }, open)
   const [err, setErr] = useState<string>()
   const [query, setQuery] = useState('')
   const [level, setLevel] = useState<'view' | 'edit'>('view')
   const [copied, setCopied] = useState(false)
+  useEffect(() => {
+    if (!open || !prefill) return
+    const same = members.filter((m) => m.name === prefill) // the notification names the requester; a unique match is the person
+    setQuery(same.length === 1 ? `${same[0].name} (${same[0].email})` : prefill)
+  }, [open, prefill, members])
 
   async function run(name: string, input: unknown) {
     try {

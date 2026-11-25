@@ -6,6 +6,7 @@ import { useShell } from '@/components/shell'
 import { btn, btnPrimary, EmptyState, ErrorText, Modal, Pill } from '@/components/ui'
 import { cmd } from '@/lib/api'
 import { ago, useCmd } from '@/lib/hooks'
+import { DocxImportButton } from './docx-button'
 import { ImportForm } from './import-form'
 import { JobList } from './job-list'
 import { jobHref, KIND_LABEL } from './lib'
@@ -45,11 +46,12 @@ const stateLabel = {
 }
 
 export function ImportHub() {
-  const { ws } = useShell()
+  const { ws, spaces } = useShell()
   const data = useCmd<DataJob[]>(ws, 'data_import.list')
   const jobs = useCmd<Job[]>(ws, 'import.list')
   const [undo, setUndo] = useState<DataJob>()
   const [err, setErr] = useState<string>()
+  const [wordSpace, setWordSpace] = useState('')
   const live = data.data?.some((j) => j.status === 'queued' || j.status === 'running')
   const { reload } = data
   useEffect(() => {
@@ -92,6 +94,28 @@ export function ImportHub() {
           </Link>
         ))}
       </div>
+
+      <section aria-label="Word document" className="space-y-2">
+        <h2 className="text-[15px] font-semibold">Word document</h2>
+        <p className="text-[13px] text-muted">
+          One .docx file becomes one page: headings, lists, tables, links and pictures are kept.
+        </p>
+        <div className="flex flex-wrap items-start gap-2">
+          <select
+            aria-label="Space for the Word import"
+            className="rounded-md border border-line bg-surface px-2 py-1.5 text-[13px]"
+            value={wordSpace || spaces[0]?.id || ''}
+            onChange={(e) => setWordSpace(e.target.value)}
+          >
+            {spaces.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}
+              </option>
+            ))}
+          </select>
+          {(wordSpace || spaces[0]?.id) && <DocxImportButton spaceId={wordSpace || spaces[0].id} />}
+        </div>
+      </section>
 
       <section aria-label="Recent imports" className="space-y-3">
         <h2 className="text-[15px] font-semibold">Recent imports</h2>

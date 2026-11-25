@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { cmd } from '@/lib/api'
 import {
+  docArchive,
   MINE_EVENT,
   type NoteChrome,
   noteMine,
@@ -15,7 +16,7 @@ import {
   STATUS_TONE,
 } from '@/lib/docs'
 import { EMOJI } from '../editor/inserts'
-import { btn, Pill } from '../ui'
+import { btn, btnPrimary, ErrorText, Modal, Pill } from '../ui'
 
 const tell = () => window.dispatchEvent(new Event(MINE_EVENT))
 
@@ -307,3 +308,59 @@ export function MineSections({ ws }: { ws: string }) {
 
 export { ExportMenu } from './export-menu'
 export type { NoteChrome }
+
+/** "Archive" for the page header: archives the page and its sub-pages after a confirmation that says how many there are. */
+export function ArchiveButton({
+  ws,
+  id,
+  subPages,
+  onDone,
+}: {
+  ws: string
+  id: string
+  subPages: number
+  onDone: () => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState<Error>()
+  return (
+    <>
+      <button type="button" className={btn} onClick={() => setOpen(true)}>
+        Archive
+      </button>
+      <Modal open={open} onClose={() => setOpen(false)} title="Archive page">
+        <p className="text-[13px]">
+          {subPages > 0
+            ? `This archives the page and its ${subPages} sub-page${subPages === 1 ? '' : 's'}. Archived pages are read-only until they are restored.`
+            : 'Archived pages are read-only until they are restored.'}
+        </p>
+        <ErrorText error={err} />
+        <div className="mt-3 flex justify-end gap-2">
+          <button type="button" className={btn} onClick={() => setOpen(false)}>
+            Cancel
+          </button>
+          <button
+            type="button"
+            disabled={busy}
+            className={btnPrimary}
+            onClick={async () => {
+              setBusy(true)
+              setErr(undefined)
+              try {
+                await docArchive(ws, id)
+                setOpen(false)
+                onDone()
+              } catch (x) {
+                setErr(x as Error)
+              }
+              setBusy(false)
+            }}
+          >
+            Archive
+          </button>
+        </div>
+      </Modal>
+    </>
+  )
+}
