@@ -59,6 +59,7 @@ func setupStatus(c *command.Ctx, input json.RawMessage) (any, error) {
 		{"site", "website", "setup.site_exists", "/site"},
 		{"tables", "table", "setup.table_exists", "/tables?new=1"},
 		{"", "import", "setup.import_exists", "/import"},
+		{"", "team", "setup.team_exists", "/settings?tab=Members"},
 	} {
 		if s.module != "" && !on(s.module) {
 			continue
