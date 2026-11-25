@@ -15,6 +15,7 @@ import {
   type TableRecordWithLinks,
   updateRecord,
 } from '@/lib/tables'
+import { AttachmentEditor } from './attachments'
 import { cellText } from './cells'
 import { typeLabel } from './field-dialog'
 import { LinkPicker } from './link-picker'
@@ -53,6 +54,7 @@ function Editor({
   disabled,
   onSave,
   onLink,
+  attach,
 }: {
   f: Field
   computed: string
@@ -61,6 +63,7 @@ function Editor({
   disabled: boolean
   onSave: (v: unknown) => void
   onLink: () => void
+  attach: (f: Field) => React.ReactNode
 }) {
   const { members } = useShell()
   const cls = `${inputCls} min-h-11 sm:min-h-0`
@@ -190,7 +193,7 @@ function Editor({
         </div>
       )
     case 'attachment':
-      return <p className="text-[13px] text-muted">Attachments are not available yet.</p>
+      return <>{attach(f)}</>
     case 'autonumber':
     case 'created_time':
     case 'modified_time':
@@ -276,6 +279,7 @@ export function RecordPanel({
   const [picking, setPicking] = useState<Field>()
   const [confirmDelete, setConfirmDelete] = useState(false)
   const dirty = useRef(false)
+  const flushers = useRef(new Set<() => Promise<boolean>>()) // attachment removals still waiting out their Undo
   const head = useRef<HTMLHeadingElement>(null)
   const display = useDisplay()
   const write = role !== 'read'
@@ -311,7 +315,7 @@ export function RecordPanel({
   }
   const close = useCallback(async () => {
     setErr(undefined)
-    const results = await Promise.all([...pending.current])
+    const results = await Promise.all([...[...flushers.current].map((f) => f()), ...pending.current])
     if (results.includes(false)) {
       setErr('A change could not be saved. Fix it or reload before closing')
       return // stay open: the field shows the reason
@@ -373,6 +377,24 @@ export function RecordPanel({
             disabled={!write || locked}
             onSave={(v) => save(f, v)}
             onLink={() => setPicking(f)}
+            attach={(f) => (
+              <AttachmentEditor
+                ws={ws}
+                tableId={table.id}
+                field={f}
+                recordId={recordId}
+                value={rec.data[f.id]}
+                readOnly={!write || locked}
+                onChange={(r) => {
+                  setRec(r)
+                  dirty.current = true
+                }}
+                onFlush={(fn) => {
+                  flushers.current.add(fn)
+                  return () => flushers.current.delete(fn)
+                }}
+              />
+            )}
           />
         )}
         {errs[f.id] && (

@@ -11,8 +11,9 @@ import (
 // (OutputSchema) and a description that also says what it returns, because MCP shows only description and input.
 // Handlers are stubs until packages 1 and 2 replace them; swap the handler in `handlers` by name.
 //
-// Left out on purpose (1b): table_form.*, record.attach|detach|file, table_import.upload (an HTTP endpoint, 17.6),
-// table_import.undo (no undo in 1a, 17.4).
+// Phase 1b (design section 18) adds table_form.* and the `files` input of record.create|update.
+// Left out on purpose: record.file (downloads are HTTP only, 18.8), table_import.upload (an HTTP endpoint, 17.6), table_import.undo (no undo, 17.4), and in 1b
+// record.attach|detach (design 9 is replaced by `files` and the upload endpoint).
 //
 // Roles: every command keeps NewCommand's workspace minimum (Guest for read, Member for the rest). The base role
 // (baseRole) is checked in the handler: read, write (space editor, any member of an open space) or manage
@@ -86,6 +87,17 @@ var (
 	sJob      = o([]string{"id", "status", "counts"}, "id", sID, "status", enum("queued", "running", "done", "failed"),
 		"counts", o([]string{"created", "skipped", "failed"}, "created", sInt, "skipped", sInt, "failed", sInt), "error", nullable(sStr))
 	sFieldNew = o([]string{"name", "type"}, "name", sStr, "type", enum(typeNames()...), "config", sObj)
+
+	// Phase 1b (design 18.1, 18.2)
+	sFilesIn = described(`{"type":"object","additionalProperties":`+o(nil, "add", arrMax(sID, 10), "remove", arrMax(sID, 10))+`}`,
+		"Attachment field id to {add: upload handles from POST /api/tables/files, remove: attached file ids}. A cell holds at most 10 files. Handles are staged by the same caller and expire after 24 hours")
+	sFormField = o([]string{"field_id"}, "field_id", sID, "label", sStr, "help", sStr, "required", sBool)
+	sFormCfg   = described(o([]string{"fields"}, "title", sStr, "intro", sStr, "thank_you", sStr, "fields", arrMax(sFormField, 50)),
+		"fields lists the table fields shown, in order. A field's label defaults to its name. Only text, long_text, number, currency, percent, date, checkbox, single_select, multi_select, phone, email and url fields are allowed; forms take no file uploads")
+	sForm = o([]string{"id", "table_id", "name", "enabled", "config", "submissions", "last_submission_at", "created_at", "updated_at"},
+		"id", sID, "table_id", sID, "name", sStr, "enabled", sBool, "config", sFormCfg, "submissions", sInt,
+		"last_submission_at", nullable(sTS), "created_at", sTS, "updated_at", sTS)
+	sFormURL = o([]string{"form", "url"}, "form", sForm, "url", described(sStr, "The public link /tf/<token>. Shown once; it cannot be read again, only replaced with table_form.rotate"))
 )
 
 func typeNames() []string {
@@ -111,8 +123,9 @@ var specs = []spec{
 		o([]string{"id"}, "id", sID),
 		o([]string{"base", "tables", "role", "limits", "usage"}, "base", sBase, "tables", arr(sTable), "role", sRole,
 			"limits", o([]string{"records_per_base", "tables_per_base", "fields_per_table", "records_per_table", "views_per_table"},
-				"records_per_base", sInt, "tables_per_base", sInt, "fields_per_table", sInt, "records_per_table", sInt, "views_per_table", sInt),
-			"usage", o([]string{"records", "tables"}, "records", sInt, "tables", sInt)),
+				"records_per_base", sInt, "tables_per_base", sInt, "fields_per_table", sInt, "records_per_table", sInt, "views_per_table", sInt,
+				"attachment_bytes_per_base", sInt),
+			"usage", o([]string{"records", "tables"}, "records", sInt, "tables", sInt, "attachment_bytes", sInt)),
 		command.GroupRead, false},
 	{"base.create", "Create a base in a space, optionally from a template key (see table_template.list). Needs write access to the space. Returns the base.",
 		o([]string{"space_id", "name"}, "space_id", sID, "name", sStr, "template", sStr), sBase, command.GroupAdmin, false},
@@ -155,13 +168,13 @@ var specs = []spec{
 		command.GroupRead, false},
 	{"record.get", "Get one record with its link chips. Returns the record with links {link field id: [{id,title}]}.",
 		o([]string{"id"}, "id", sID), sRecordLinks, command.GroupRead, false},
-	{"record.create", "Create a record. values maps field id to value; omitted fields stay empty. links sets link fields. Needs write access. Returns the record.",
-		o([]string{"table_id", "values"}, "table_id", sID, "values", sValues, "links", sLinkIn), sRecordLinks, command.GroupWriteItems, false},
+	{"record.create", "Create a record. values maps field id to value; omitted fields stay empty. links sets link fields. files attaches uploaded files to attachment fields (never put attachments in values). Needs write access. Returns the record.",
+		o([]string{"table_id", "values"}, "table_id", sID, "values", sValues, "links", sLinkIn, "files", sFilesIn), sRecordLinks, command.GroupWriteItems, false},
 	{"record.create_many", "Create up to 500 records in one transaction (all or nothing); the request body is at most 2 MB. Use this for imports from an agent. Above 100 records one record.batch event is emitted; fetch its ids with record.batch_list. Needs write access. Returns {count, ids, batch_id: string|null}.",
 		o([]string{"table_id", "records"}, "table_id", sID, "records", arrMax(o([]string{"values"}, "values", sValues, "links", sLinkIn), 500)),
 		o([]string{"count", "ids", "batch_id"}, "count", sInt, "ids", arr(sID), "batch_id", nullable(sID)), command.GroupWriteItems, false},
-	{"record.update", "Update a record: values sets fields, clear lists field ids to empty, links replaces link fields. Needs write access. Returns the record.",
-		o([]string{"id"}, "id", sID, "values", sValues, "clear", arr(sID), "links", sLinkIn), sRecordLinks, command.GroupWriteItems, false},
+	{"record.update", "Update a record: values sets fields, clear lists field ids to empty, links replaces link fields, files adds uploaded files to or removes attached files from attachment fields. Needs write access. Returns the record.",
+		o([]string{"id"}, "id", sID, "values", sValues, "clear", arr(sID), "links", sLinkIn, "files", sFilesIn), sRecordLinks, command.GroupWriteItems, false},
 	{"record.bulk_update", "Update up to 1,000 records of one table in one transaction. Needs write access. Returns {updated}.",
 		o([]string{"table_id", "updates"}, "table_id", sID, "updates", arrMax(o([]string{"id"}, "id", sID, "values", sValues, "clear", arr(sID)), 1000)),
 		o([]string{"updated"}, "updated", sInt), command.GroupWriteItems, false},
@@ -189,6 +202,18 @@ var specs = []spec{
 		o([]string{"id"}, "id", sID, "name", sStr, "config", sViewCfg, "position", sInt), sView, command.GroupWriteItems, false},
 	{"table_view.delete", "Delete a view. The last grid view of a table cannot be deleted. Needs write access. Returns {}.",
 		o([]string{"id"}, "id", sID), sEmpty, command.GroupWriteItems, false},
+	{"table_form.list", "List the public forms of a table (settings only; the link is never returned). Needs write access. Returns [form].",
+		o([]string{"table_id"}, "table_id", sID), arr(sForm), command.GroupRead, false},
+	{"table_form.get", "Get one public form's settings and counts. Needs write access. Returns the form.",
+		o([]string{"id"}, "id", sID), sForm, command.GroupRead, false},
+	{"table_form.create", "Create a public form for a table (at most 5 per table) and return its link once. config picks the fields shown, labels, required flags, and intro and thank-you text. Anyone with the link can add records to the table through the form, so it needs manage. Returns {form, url}.",
+		o([]string{"table_id", "name", "config"}, "table_id", sID, "name", sStr, "config", sFormCfg), sFormURL, command.GroupAdmin, false},
+	{"table_form.update", "Change a form's name or settings; the link stays the same. Needs manage. Returns the form.",
+		o([]string{"id"}, "id", sID, "name", sStr, "config", sFormCfg), sForm, command.GroupAdmin, false},
+	{"table_form.rotate", "Replace a form's link: the old link stops working at once, a disabled form is enabled again, and the new link is returned once. Needs manage. Returns {form, url}.",
+		o([]string{"id"}, "id", sID), sFormURL, command.GroupAdmin, false},
+	{"table_form.disable", "Turn a form off: its link answers not found. Records already collected stay. Use table_form.rotate to publish again with a new link. Needs manage. Returns the form.",
+		o([]string{"id"}, "id", sID), sForm, command.GroupAdmin, false},
 	{"table_import.preview", "Preview a CSV import. handle comes from the upload endpoint POST /api/tables/import (CSV, 10 MB, 5,000 rows). mapping optionally sets, per column index, an existing field_id, a new_field {name, type, config?} or skip. Returns {columns: [{index, header, samples, field_id|null, new_field|null}], ready, needs_fixing, errors: [{row, col, reason}]}. Needs write access to the base (writers add fields).",
 		o([]string{"handle"}, "handle", sStr, "mapping", sObj),
 		o([]string{"columns", "ready", "needs_fixing", "errors"}, "columns", arr(sObj), "ready", sInt, "needs_fixing", sInt, "errors", arrMax(sCellErr, 50)),
@@ -217,6 +242,9 @@ func Commands() []command.Command {
 		}
 		c := command.NewCommand(s.name, s.group, h)
 		c.Description, c.Schema, c.Confirm = s.desc, json.RawMessage(s.in), s.confirm
+		if s.name == "table_form.create" || s.name == "table_form.rotate" {
+			c.ReturnsSecret = true // the link is shown once
+		}
 		if s.name == "table_template.list" {
 			c.MinRole = command.Member // design 9: any member
 		}

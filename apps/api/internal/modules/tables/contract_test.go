@@ -25,6 +25,17 @@ var phase1a = map[string]command.Group{
 	"table_import.preview": command.GroupAdmin, "table_import.run": command.GroupAdmin, "table_import.status": command.GroupRead,
 }
 
+// Phase 1b (design 18): public forms and attachments. Merged into the contract above.
+func init() {
+	for name, g := range map[string]command.Group{
+		"table_form.list": command.GroupRead, "table_form.get": command.GroupRead,
+		"table_form.create": command.GroupAdmin, "table_form.update": command.GroupAdmin,
+		"table_form.rotate": command.GroupAdmin, "table_form.disable": command.GroupAdmin,
+	} {
+		phase1a[name] = g
+	}
+}
+
 func TestEveryTablesCommandIsRegisteredWithSchemas(t *testing.T) {
 	reg := command.NewRegistry(modules.Commands()...) // panics on a duplicate name anywhere in the registry
 	got := map[string]command.Command{}
@@ -63,7 +74,7 @@ func TestEveryTablesCommandIsRegisteredWithSchemas(t *testing.T) {
 			t.Errorf("%s: MinRole %s, want %s", name, c.MinRole, wantMin)
 		}
 	}
-	// nothing in the table families beyond the contract: no forms, attachments, import upload or undo in 1a
+	// nothing in the table families beyond the contract: no import upload, undo, record.attach or record.detach
 	for name := range got {
 		for _, p := range []string{"base.", "table.", "table_", "field.", "record."} {
 			if strings.HasPrefix(name, p) {
@@ -71,6 +82,16 @@ func TestEveryTablesCommandIsRegisteredWithSchemas(t *testing.T) {
 					t.Errorf("%s is registered but not in the Phase 1a contract", name)
 				}
 			}
+		}
+	}
+	for _, name := range []string{"table_form.create", "table_form.rotate"} {
+		if !got[name].ReturnsSecret {
+			t.Errorf("%s returns the link once and must set ReturnsSecret", name)
+		}
+	}
+	for _, name := range []string{"file.record_intent", "file.record_stage", "file.record_attach", "file.record_detach", "file.record_get", "file.record_discard"} {
+		if c, ok := got[name]; !ok || !c.Internal || len(c.Schema) == 0 {
+			t.Errorf("%s must be registered, internal and have a schema", name)
 		}
 	}
 	if !strings.Contains(string(got["record.create_many"].Schema), `"maxItems":500`) {

@@ -22,6 +22,7 @@ import {
 import { useEffect, useRef, useState } from 'react'
 import type { Member } from '@/lib/api'
 import type { Field, FieldType, LinkChip, SelectOption, TableRecord } from '@/lib/tables'
+import { AttachmentSummary } from './attachments'
 
 /** Display and editor for every 1a field type. Shared by the grid, record panel, kanban cards and forms. */
 
@@ -187,6 +188,8 @@ export function CellView({
           ) : null}
         </span>
       )
+    case 'attachment':
+      return <AttachmentSummary files={v} />
     case 'phone': {
       const t = cellText(f, r, chips, members)
       const digits = t.replace(/\D/g, '')

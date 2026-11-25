@@ -214,7 +214,7 @@ jobs:
       - name: Start Go, collab and web
         run: |
           (cd apps/api && go build -o ../../cnote-api ./cmd/api)
-          PUBLIC_BASE_URL=http://localhost:3000 AUTH_SIGNUP_FREE=100000 AUTH_IP_FREE=100000 AI_ALLOW_PRIVATE_ENDPOINTS=1 PORT=4100 WITH_WORKER=1 COLLAB_URL=http://localhost:4300 CNOTE_PLATFORM_ADMINS=@example.test SITES_DOMAIN=localhost:3000 SITES_TEST_SKIP_VERIFY=1 SITES_CUSTOM_DOMAINS=1 SITES_APEX_IP=127.0.0.1 SITES_TEST_DNS=cnote-e2e.test SITES_SERVER_TOKEN=$SITES_SERVER_TOKEN SITES_WEB_URL=http://localhost:3000 SITES_LANGUAGES=1 SITES_ABUSE_SCAN=1 HOME_WIDGETS=1 ./cnote-api > go-api.log 2>&1 &
+          PUBLIC_BASE_URL=http://localhost:3000 PUBLIC_TRUSTED_PROXIES=127.0.0.1,::1 AUTH_SIGNUP_FREE=100000 AUTH_IP_FREE=100000 AI_ALLOW_PRIVATE_ENDPOINTS=1 PORT=4100 WITH_WORKER=1 COLLAB_URL=http://localhost:4300 CNOTE_PLATFORM_ADMINS=@example.test SITES_DOMAIN=localhost:3000 SITES_TEST_SKIP_VERIFY=1 SITES_CUSTOM_DOMAINS=1 SITES_APEX_IP=127.0.0.1 SITES_TEST_DNS=cnote-e2e.test SITES_SERVER_TOKEN=$SITES_SERVER_TOKEN SITES_WEB_URL=http://localhost:3000 SITES_LANGUAGES=1 SITES_ABUSE_SCAN=1 HOME_WIDGETS=1 ./cnote-api > go-api.log 2>&1 &
           COLLAB_PORT=4300 COLLAB_ALLOWED_ORIGINS=http://localhost:3000 pnpm --filter @cnote/collab start > collab.log 2>&1 &
           HOME_WIDGETS=1 API_URL=http://localhost:4100 SITES_DOMAIN=localhost:3000 SITES_CUSTOM_DOMAINS=1 SITES_LANGUAGES=1 SITES_ABUSE_SCAN=1 SITES_SERVER_TOKEN=$SITES_SERVER_TOKEN PUBLIC_BASE_URL=http://localhost:3000 pnpm --filter @cnote/web start > web.log 2>&1 &
           npx --yes wait-on -t 120000 http://localhost:4100/healthz http://localhost:4300/healthz http://localhost:3000

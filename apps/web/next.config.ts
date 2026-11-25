@@ -13,6 +13,8 @@ const config: NextConfig = {
           { key: 'Referrer-Policy', value: 'no-referrer' },
         ],
       },
+      // The form link is the credential: never leak it through a referrer.
+      { source: '/tf/:path*', headers: [{ key: 'Referrer-Policy', value: 'no-referrer' }] },
     ]
   },
   // Same-origin API so the session cookie is first-party.

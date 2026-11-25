@@ -1,4 +1,4 @@
-import { cmd } from './api'
+import { CmdFailure, cmd } from './api'
 
 // Mirrors the output schemas in apps/api/internal/modules/tables/tables.go (OutputSchema). Keep both in step.
 
@@ -90,6 +90,7 @@ export type Base = {
   updated_at: string
 }
 export type BaseLimits = {
+  attachment_bytes_per_base?: number
   records_per_base: number
   tables_per_base: number
   fields_per_table: number
@@ -101,7 +102,7 @@ export type BaseDetail = {
   tables: Table[]
   role: Role
   limits: BaseLimits
-  usage: { records: number; tables: number }
+  usage: { records: number; tables: number; attachment_bytes?: number }
 }
 
 export type LinkChip = { id: string; title: string }
@@ -225,7 +226,8 @@ export const createRecord = (
   table_id: string,
   values: Record<string, unknown>,
   links?: Record<string, string[]>,
-) => cmd<TableRecordWithLinks>(ws, 'record.create', { table_id, values, links })
+  files?: FilesIn,
+) => cmd<TableRecordWithLinks>(ws, 'record.create', { table_id, values, links, files })
 export const createRecords = (
   ws: string,
   table_id: string,
@@ -238,7 +240,12 @@ export const createRecords = (
 export const updateRecord = (
   ws: string,
   id: string,
-  patch: { values?: Record<string, unknown>; clear?: string[]; links?: Record<string, string[]> },
+  patch: {
+    values?: Record<string, unknown>
+    clear?: string[]
+    links?: Record<string, string[]>
+    files?: FilesIn
+  },
 ) => cmd<TableRecordWithLinks>(ws, 'record.update', { id, ...patch })
 export const bulkUpdateRecords = (
   ws: string,
@@ -285,3 +292,117 @@ export const previewImport = (ws: string, handle: string, mapping?: ImportMappin
 export const runImport = (ws: string, handle: string, mapping?: ImportMapping) =>
   cmd<ImportJob>(ws, 'table_import.run', { handle, mapping })
 export const importStatus = (ws: string, id: string) => cmd<ImportJob>(ws, 'table_import.status', { id })
+
+// ---- Phase 1b (design section 18): attachments and public forms ----
+
+/** One element of an attachment cell: data[field id] is FileMeta[], at most 10. */
+export type FileMeta = { id: string; name: string; size: number; type: string }
+/** What POST /api/tables/files returns. The handle goes into `files.add` of record.create or record.update. */
+export type StagedFile = { handle: string; filename: string; size: number; content_type: string }
+/** Attachment field id to what to add (staged handles) and remove (attached file ids). */
+export type FilesIn = Record<string, { add?: string[]; remove?: string[] }>
+
+export const MAX_FILE_BYTES = 10 << 20
+export const MAX_FILES_PER_CELL = 10
+/** What attachments accept (design 18.8): pictures and PDF only. The server judges the bytes. */
+export const FILE_ACCEPT = 'image/jpeg,image/png,image/gif,image/webp,application/pdf'
+export const FILE_TYPE_HELP = 'Only pictures (PNG, JPEG, WebP, GIF) and PDF files can be attached.'
+/** Field types a public form may show. Forms take no uploads, so attachment fields are left out. */
+export const FORM_FIELD_TYPES: FieldType[] = [
+  'text',
+  'long_text',
+  'number',
+  'currency',
+  'percent',
+  'date',
+  'checkbox',
+  'single_select',
+  'multi_select',
+  'phone',
+  'email',
+  'url',
+]
+
+export type FormField = { field_id: string; label?: string; help?: string; required?: boolean }
+export type FormConfig = {
+  title?: string
+  intro?: string
+  thank_you?: string
+  fields: FormField[]
+}
+export type TableForm = {
+  id: string
+  table_id: string
+  name: string
+  enabled: boolean
+  config: FormConfig
+  submissions: number
+  last_submission_at: string | null
+  created_at: string
+  updated_at: string
+}
+/** The public form the page at /tf/<token> shows (GET /api/public/table-form/<token>); no field ids beyond the form's own. */
+export type PublicFormField = {
+  field_id: string
+  label: string
+  help: string
+  type: FieldType
+  required: boolean
+  options?: { id: string; name: string }[]
+  decimals?: number
+}
+export type PublicForm = {
+  title: string
+  intro: string
+  thank_you: string
+  fields: PublicFormField[]
+}
+
+/** Upload one file for an attachment field; the body is the raw file. Returns the handle to pass in `files.add`.
+ *  XHR rather than fetch, for upload progress; abort through the signal. */
+export function stageFile(
+  ws: string,
+  table_id: string,
+  field_id: string,
+  file: File,
+  opts: { onProgress?: (fraction: number) => void; signal?: AbortSignal } = {},
+): Promise<StagedFile> {
+  const q = new URLSearchParams({ ws, table_id, field_id, filename: file.name })
+  return new Promise((resolve, reject) => {
+    const x = new XMLHttpRequest()
+    x.open('POST', `/api/tables/files?${q}`)
+    x.upload.onprogress = (e) => e.lengthComputable && opts.onProgress?.(e.loaded / e.total)
+    x.onload = () => {
+      let data: { error?: { code?: string; message?: string }; handle?: string } = {}
+      try {
+        data = JSON.parse(x.responseText)
+      } catch {}
+      if (x.status >= 200 && x.status < 300) resolve(data as StagedFile)
+      else
+        reject(new CmdFailure(data.error?.code ?? 'internal', data.error?.message ?? x.statusText, x.status))
+    }
+    x.onerror = () => reject(new CmdFailure('network', 'The upload failed. Check your connection.', 0))
+    x.onabort = () => reject(new DOMException('Upload cancelled', 'AbortError'))
+    opts.signal?.addEventListener('abort', () => x.abort())
+    x.send(file)
+  })
+}
+/** Drop a staged upload that was never attached. Best effort: an unattached handle also expires on its own. */
+export const discardFile = (ws: string, handle: string) =>
+  fetch(`/api/tables/files/${encodeURIComponent(handle)}?${new URLSearchParams({ ws })}`, {
+    method: 'DELETE',
+  }).catch(() => undefined)
+/** Download link of an attached file. PDFs always download; images render inline (thumbnails use this). */
+export const fileUrl = (ws: string, record_id: string, file_id: string) =>
+  `/api/tables/files/${file_id}?${new URLSearchParams({ ws, record_id })}`
+
+export const listForms = (ws: string, table_id: string) =>
+  cmd<TableForm[]>(ws, 'table_form.list', { table_id })
+export const getForm = (ws: string, id: string) => cmd<TableForm>(ws, 'table_form.get', { id })
+export const createForm = (ws: string, table_id: string, name: string, config: FormConfig) =>
+  cmd<{ form: TableForm; url: string }>(ws, 'table_form.create', { table_id, name, config })
+export const updateForm = (ws: string, id: string, patch: { name?: string; config?: FormConfig }) =>
+  cmd<TableForm>(ws, 'table_form.update', { id, ...patch })
+export const rotateForm = (ws: string, id: string) =>
+  cmd<{ form: TableForm; url: string }>(ws, 'table_form.rotate', { id })
+export const disableForm = (ws: string, id: string) => cmd<TableForm>(ws, 'table_form.disable', { id })

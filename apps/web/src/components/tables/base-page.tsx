@@ -1,5 +1,5 @@
 'use client'
-import { ChevronLeft, FileUp, Plus, Settings2, Table2 } from 'lucide-react'
+import { ChevronLeft, ClipboardList, FileUp, Plus, Settings2, Table2 } from 'lucide-react'
 import Link from 'next/link'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -24,6 +24,7 @@ import {
 } from '@/lib/tables'
 import { FieldDialog } from './field-dialog'
 import { opsFor } from './filter-menu'
+import { FormBuilder } from './form-builder'
 import { TableGrid } from './grid'
 import { ImportWizard } from './import'
 import { Kanban } from './kanban'
@@ -96,6 +97,7 @@ type Dlg =
   | { k: 'edit-view' }
   | { k: 'field'; fieldId?: string }
   | { k: 'import' }
+  | { k: 'forms' }
   | { k: 'links'; recordId: string; fieldId: string; chips: LinkChip[] }
 type Menu = { fieldId: string; x: number; y: number }
 
@@ -328,6 +330,11 @@ export function BasePage({ baseId }: { baseId: string }) {
                   <Plus size={14} /> Add field
                 </button>
               )}
+              {manager && (
+                <button type="button" onClick={() => setDlg({ k: 'forms' })} className={btn}>
+                  <ClipboardList size={14} /> Forms
+                </button>
+              )}
               {write && (
                 <button type="button" onClick={() => setDlg({ k: 'import' })} className={btn}>
                   <FileUp size={14} /> Import CSV
@@ -471,6 +478,9 @@ export function BasePage({ baseId }: { baseId: string }) {
             setGridKey((k) => k + 1)
           }}
         />
+      )}
+      {dlg?.k === 'forms' && table && (
+        <FormBuilder ws={ws} table={table} fields={fields} onClose={() => setDlg(undefined)} />
       )}
       {dlg?.k === 'import' && table && (
         <ImportWizard
