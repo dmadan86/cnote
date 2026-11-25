@@ -234,9 +234,7 @@ function Surface({
     editorProps: { attributes: { 'aria-label': 'Page content', role: 'textbox', 'aria-multiline': 'true' } },
     onCreate: ({ editor }) => {
       if (editorRef) editorRef.current = editor
-      // A fresh Yjs room has no content yet: seed it from the stored Markdown once.
-      if (ydoc && ydoc.getXmlFragment('default').length === 0 && initialMd)
-        editor.commands.setContent(initialMd, { contentType: 'markdown' })
+      // Never seed here: the gateway seeds a room from content_md once, so seeding again would duplicate it.
     },
     onUpdate: ({ editor }) => {
       clearTimeout(timer.current)

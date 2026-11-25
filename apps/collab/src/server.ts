@@ -65,6 +65,8 @@ interface Room {
    * edited the note since and wins; live editors also save through the API (same text), so then it is ignored. */
   version: number
   doc: Y.Doc
+  /** The seed this room built from content_md, until the first logged update stores it as the snapshot base. */
+  seed: Uint8Array | null
   peers: Map<number, Peer>
   nextPeer: number
   dirty: boolean
@@ -226,6 +228,7 @@ export function createServer(opts: Options) {
       epoch: l.epoch,
       version: l.version,
       doc: l.doc,
+      seed: l.seed,
       peers: new Map(),
       nextPeer: 0,
       dirty: false,
@@ -268,6 +271,17 @@ export function createServer(opts: Options) {
 
   /** Commit one update to the log, fenced on the room's epoch. Conflict means the page was restored since. */
   async function logUpdate(room: Room, update: Uint8Array): Promise<string> {
+    // Pin the seed the log is built on before the first update: a content_md the API writes later (a client's flush
+    // on reload) then differs from the snapshot, so the API text wins instead of being replayed onto itself.
+    // Its own statement, taken before any FOR SHARE below: upgrading a share lock to a write would deadlock concurrent edits.
+    if (room.seed)
+      await tenant(pool, room.ws, (tx) =>
+        tx.query(
+          `update core.notes set content_ydoc = $3 where id = $1 and collab_epoch = $2 and content_ydoc is null
+           and deleted_at is null and freshness <> 'archived' and (fenced_until is null or fenced_until <= now())`,
+          [room.note, room.epoch, Buffer.from(room.seed as Uint8Array)],
+        ),
+      )
     const id = await tenant(pool, room.ws, async (tx) => {
       // FOR SHARE: a delete holds the page row FOR UPDATE, so an edit is either logged before it (and found there) or refused after it.
       const r = await tx.query(
@@ -293,6 +307,7 @@ export function createServer(opts: Options) {
           : id.fenced
             ? new FencedError()
             : new CmdError('conflict', 'page restored')
+    room.seed = null
     return String(id.id)
   }
 
