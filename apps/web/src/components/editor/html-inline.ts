@@ -20,6 +20,8 @@ export function hex(c: string): string | null {
 export const TINTS = ['yellow', 'green', 'blue', 'purple', 'red', 'orange', 'grey'] as const
 export const tintOf = (v: unknown): string | null =>
   typeof v === 'string' && (TINTS as readonly string[]).includes(v) ? v : null
+/** Text inside <mark> is stored HTML-escaped with markdown punctuation as numeric entities: a backslash escape would be read back as literal text. Same rule as the gateway. */
+export const hlEsc = (s: string) => esc(s).replace(/[\\*_`~[\]]/g, (c) => `&#${c.charCodeAt(0)};`)
 export const markTag = (tint: string, inner: string) => `<mark data-color="${tint}">${inner}</mark>`
 
 export const span = (color: string, inner: string) => {
@@ -65,7 +67,9 @@ export function inlineHtml(content: JSONContent[] = []): string {
   return content
     .map((n) => {
       if (n.type === 'hardBreak') return '<br>'
-      let out = esc(n.text ?? '')
+      const ts = n.marks?.find((x) => x.type === 'textStyle')
+      const hl = !!tintOf(ts?.attrs?.highlight) && !n.marks?.some((x) => x.type === 'code')
+      let out = hl ? hlEsc(n.text ?? '') : esc(n.text ?? '')
       for (const [name, wrap] of [...WRAP].reverse()) {
         const m = n.marks?.find((x) => x.type === name)
         if (!m) continue

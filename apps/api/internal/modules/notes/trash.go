@@ -274,7 +274,7 @@ func noteTrash(c *command.Ctx, input json.RawMessage) (any, error) {
 	}
 	out := []trashEntry{}
 	spaceOK := map[string]bool{}
-	ret, err := readRetention(c)
+	ret, err := readRetention(c, false)
 	if err != nil {
 		return nil, err
 	}

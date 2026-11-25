@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/cnote/api/internal/access"
 	"github.com/cnote/api/internal/command"
 	"github.com/cnote/api/internal/db"
 )
@@ -38,10 +39,14 @@ type retention struct {
 	Running bool
 }
 
-func readRetention(c *command.Ctx) (retention, error) {
+func readRetention(c *command.Ctx, lock bool) (retention, error) {
+	clause := ""
+	if lock {
+		clause = " for share"
+	}
 	var r retention
 	err := c.Tx.QueryRow(c.Context,
-		`select coalesce((settings->>'trash_retention_days')::int, $2), trash_purge_from from core.workspaces where id = $1::uuid`,
+		`select coalesce((settings->>'trash_retention_days')::int, $2), trash_purge_from from core.workspaces where id = $1::uuid`+clause,
 		c.WorkspaceID(), DefaultRetentionDays).Scan(&r.Days, &r.From)
 	if err != nil {
 		return r, command.DB(err)
@@ -61,7 +66,7 @@ func retentionOut(r retention) map[string]any {
 }
 
 func retentionGet(c *command.Ctx, input json.RawMessage) (any, error) {
-	r, err := readRetention(c)
+	r, err := readRetention(c, false)
 	return retentionOut(r), err
 }
 
@@ -78,10 +83,10 @@ func retentionSet(c *command.Ctx, input json.RawMessage) (any, error) {
 		return nil, command.ErrInvalid("days must be 0, 30, 90 or 365")
 	}
 	days := int(*n)
-	// the row lock serialises two changes; the clock restarts only when the rule really changes
+	// the row lock (no key update, so page inserts are not held up) serialises two changes and waits for a purge holding it shared; the clock restarts only when the rule really changes
 	var old int
 	if err := c.Tx.QueryRow(c.Context,
-		`select coalesce((settings->>'trash_retention_days')::int, $2) from core.workspaces where id = $1::uuid for update`,
+		`select coalesce((settings->>'trash_retention_days')::int, $2) from core.workspaces where id = $1::uuid for no key update`,
 		c.WorkspaceID(), DefaultRetentionDays).Scan(&old); err != nil {
 		return nil, command.DB(err)
 	}
@@ -95,7 +100,7 @@ func retentionSet(c *command.Ctx, input json.RawMessage) (any, error) {
 			return nil, err
 		}
 	}
-	r, err := readRetention(c)
+	r, err := readRetention(c, false)
 	return retentionOut(r), err
 }
 
@@ -123,26 +128,37 @@ func purgeDeletion(c *command.Ctx, did string, manual bool) (purgeResult, error)
 	if err := lockTree(c, space); err != nil {
 		return res, err
 	}
-	rt, err := readRetention(c)
+	// Serialize the archive check with space.archive, which updates this row.
+	if _, err := c.Tx.Exec(c.Context, "select id from core.spaces where id = $1::uuid for share", space); err != nil {
+		return res, command.DB(err)
+	}
+	if err := access.AssertSpaceWritable(c, space); err != nil {
+		if manual {
+			return res, err
+		}
+		res.Skip = "archived space"
+		return res, nil
+	}
+	rt, err := readRetention(c, true)
 	if err != nil {
 		return res, err
 	}
 	rows, err := c.Tx.Query(c.Context,
 		`select id::text, title, space_id::text, parent_id::text, coalesce(cardinality(types), 0), deleted_at, deleted_by::text,
-		        deleted_at is not null and $3::int > 0 and deleted_at < now() - make_interval(days => $3::int)
+		        freshness = 'archived', deleted_at is not null and $3::int > 0 and deleted_at < now() - make_interval(days => $3::int)
 		 from core.notes where deletion_id = $1::uuid and workspace_id = $2::uuid order by id for update`, did, c.WorkspaceID(), rt.Days)
 	if err != nil {
 		return res, command.DB(err)
 	}
 	var pages []trashPage
 	var ids []string
-	typed, old := false, true
+	typed, archived, old := false, false, true
 	for rows.Next() {
 		var p trashPage
 		var nt int
 		var at *time.Time
-		var ok bool
-		if err := rows.Scan(&p.ID, &p.Title, &p.Space, &p.Parent, &nt, &at, &p.DeletedBy, &ok); err != nil {
+		var ok, pageArchived bool
+		if err := rows.Scan(&p.ID, &p.Title, &p.Space, &p.Parent, &nt, &at, &p.DeletedBy, &pageArchived, &ok); err != nil {
 			rows.Close()
 			return res, command.DB(err)
 		}
@@ -152,6 +168,7 @@ func purgeDeletion(c *command.Ctx, did string, manual bool) (purgeResult, error)
 			p.DeletedAt = *at
 		}
 		typed = typed || nt > 0
+		archived = archived || pageArchived
 		old = old && ok
 		pages = append(pages, p)
 		ids = append(ids, p.ID)
@@ -187,6 +204,13 @@ func purgeDeletion(c *command.Ctx, did string, manual bool) (purgeResult, error)
 		}
 	} else if rt.Days == 0 || !rt.Running || !old {
 		res.Skip = "not due"
+		return res, nil
+	}
+	if archived {
+		res.Skip = "archived page"
+		if manual {
+			return res, access.AssertPageNotArchived(true)
+		}
 		return res, nil
 	}
 	if typed { // business records are never purged: their cascade would destroy invoices, deals and items
@@ -284,6 +308,7 @@ func PurgeDue(ctx context.Context, pool *pgxpool.Pool, ws string) (int, error) {
 		if rows, err = tx.Query(ctx,
 			`select deletion_id::text from core.notes where workspace_id = $1::uuid and deletion_id is not null and deleted_at is not null
 			 group by deletion_id having max(deleted_at) < now() - make_interval(days => $2::int)
+			 and (max(purge_skipped_at) is null or max(purge_skipped_at) < now() - interval '1 day')
 			 order by min(deleted_at), deletion_id limit $3`, ws, days, purgeBatchPerRun); err == nil {
 			dids, err = pgx.CollectRows(rows, pgx.RowTo[string])
 		}
@@ -321,8 +346,13 @@ func purgeOne(ctx context.Context, pool *pgxpool.Pool, ws, did string) (bool, er
 	}
 	c := &command.Ctx{Context: ctx, Tx: tx, Pool: pool, Principal: command.Principal{Kind: command.KindSystem, WorkspaceID: ws, Role: command.Owner}}
 	res, err := purgeDeletion(c, did, false)
-	if err != nil || !res.Purged {
+	if err != nil {
 		return false, err
 	}
-	return true, tx.Commit(ctx)
+	if !res.Purged {
+		if _, err := tx.Exec(ctx, "update core.notes set purge_skipped_at = now() where workspace_id = $1::uuid and deletion_id = $2::uuid", ws, did); err != nil {
+			return false, err
+		}
+	}
+	return res.Purged, tx.Commit(ctx)
 }

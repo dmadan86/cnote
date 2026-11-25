@@ -2,6 +2,7 @@ package notes
 
 import (
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/cnote/api/internal/command"
@@ -93,9 +94,22 @@ func stripMarkup(line string) string {
 	return strings.Join(parts, "`")
 }
 
-var htmlEntities = strings.NewReplacer("&lt;", "<", "&gt;", ">", "&quot;", `"`, "&#39;", "'", "&amp;", "&")
+var htmlEntities = strings.NewReplacer("&lt;", "<", "&gt;", ">", "&quot;", `"`, "&amp;", "&")
+var numericEntity = regexp.MustCompile(`&amp;|&#(\d{1,7});|&(?:lt|gt|quot);`)
 
-func unescapeHTML(s string) string { return htmlEntities.Replace(s) }
+// unescapeHTML decodes in one pass, so "&amp;#42;" stays "&#42;". Numeric entities are how the editor writes markdown
+// punctuation inside <mark>.
+func unescapeHTML(s string) string {
+	return numericEntity.ReplaceAllStringFunc(s, func(m string) string {
+		if sub := numericEntity.FindStringSubmatch(m); sub[1] != "" {
+			if n, _ := strconv.Atoi(sub[1]); n > 0 && n <= 0x10ffff && !(n >= 0xd800 && n <= 0xdfff) {
+				return string(rune(n))
+			}
+			return m
+		}
+		return htmlEntities.Replace(m)
+	})
+}
 
 // Snippets returns a ts_headline excerpt of PlainText(body) for each body, in order. Search queries select the
 // page body in the snippet column and pass the column through here, so panels, expands and status wrappers never

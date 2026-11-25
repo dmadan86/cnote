@@ -2,9 +2,11 @@ package server_test
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/cnote/api/internal/command"
 	"github.com/cnote/api/internal/modules/notes"
@@ -366,4 +368,167 @@ func TestC1PurgePermissions(t *testing.T) {
 		t.Fatal("space admin purge")
 	}
 	d.ok(owner, "note.purge", map[string]any{"deletion_id": rdid}) // a workspace admin may
+}
+
+func TestC1PurgeSkipsArchivedAndRetries(t *testing.T) {
+	d, owner := newDG(t)
+	sp := d.space(owner, "ARS", "open")
+	p := d.page(owner, sp, "Archived space", nil, "x")
+	did := d.trash(owner, p)
+	d.age(did, 100)
+	d.clock(100)
+	d.archive(sp, true)
+	if d.due() != 0 || !d.exists(p) {
+		t.Fatal("archived space was purged")
+	}
+	d.archive(sp, false)
+	d.sql("update core.notes set purge_skipped_at = now() - interval '2 days' where deletion_id = $1::uuid", did)
+	if d.due() != 1 || d.exists(p) {
+		t.Fatal("eligible deletion was not retried")
+	}
+}
+
+// waitBlocked waits until a statement matching like is waiting on a lock.
+func (d dg) waitBlocked(like string) {
+	d.t.Helper()
+	for end := time.Now().Add(15 * time.Second); time.Now().Before(end); time.Sleep(20 * time.Millisecond) {
+		if d.scalar("select count(*)::text from pg_stat_activity where wait_event_type = 'Lock' and query ilike $1", like) != "0" {
+			return
+		}
+	}
+	d.t.Fatalf("nothing blocked on %s", like)
+}
+
+func (d dg) retentionDays(w who) float64 {
+	d.t.Helper()
+	return d.ok(w, "trash.retention_get", map[string]any{})["days"].(float64)
+}
+
+// A retention change that commits first is seen by the purge, which then leaves the page alone (order 1).
+func TestC1PurgeRetentionChangeWinsLock(t *testing.T) {
+	d, owner := newDG(t)
+	sp := d.space(owner, "RTL", "open")
+	p := d.page(owner, sp, "Old", nil, "x")
+	did := d.trash(owner, p)
+	d.age(did, 100)
+	d.clock(100)
+	tx, err := dbTenant(d.e, d.ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(context.Background())
+	if _, err := tx.Exec(context.Background(), "select id from core.workspaces where id = $1::uuid for update", d.ws); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan int, 1)
+	go func() { n, _ := notes.PurgeDue(context.Background(), d.e.pool, d.ws); done <- n }()
+	d.waitBlocked("%core.workspaces%for share%")
+	if _, err := tx.Exec(context.Background(), "update core.workspaces set settings = settings || '{\"trash_retention_days\":90}'::jsonb, trash_purge_from = now() where id = $1::uuid", d.ws); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if n := <-done; n != 0 || !d.exists(p) {
+		t.Fatal("purge ignored changed retention")
+	}
+}
+
+// A purge that holds the workspace row first finishes under the old rule, and the retention change waits for it (order 2).
+func TestC1PurgeWinsLockBeforeRetentionChange(t *testing.T) {
+	d, owner := newDG(t)
+	sp := d.space(owner, "RTP", "open")
+	p := d.page(owner, sp, "Old", nil, "x")
+	did := d.trash(owner, p)
+	d.age(did, 100)
+	d.clock(100)
+	// Hold the page row: the purge takes the workspace lock first and then waits here, still holding it.
+	tx, err := dbTenant(d.e, d.ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(context.Background())
+	if _, err := tx.Exec(context.Background(), "select id from core.notes where id = $1::uuid for update", p); err != nil {
+		t.Fatal(err)
+	}
+	purged := make(chan int, 1)
+	go func() { n, _ := notes.PurgeDue(context.Background(), d.e.pool, d.ws); purged <- n }()
+	d.waitBlocked("%from core.notes where deletion_id%for update%")
+	set := make(chan resp, 1)
+	go func() { set <- d.run(owner, "trash.retention_set", map[string]any{"days": 90}) }()
+	d.waitBlocked("%core.workspaces%for no key update%")
+	select {
+	case <-set:
+		t.Fatal("retention changed while a purge held the workspace row")
+	default:
+	}
+	if err := tx.Rollback(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if n := <-purged; n != 1 || d.exists(p) {
+		t.Fatal("the purge that got the lock first was lost")
+	}
+	<-set
+	if d.retentionDays(owner) != 90 {
+		t.Fatal("retention change lost")
+	}
+}
+
+// Manual purge and the sweep both refuse an archived space and an archived page.
+func TestC1PurgeRefusesArchived(t *testing.T) {
+	d, owner := newDG(t)
+	sp := d.space(owner, "ARC", "open")
+	d.clock(100)
+	p := d.page(owner, sp, "In archived space", nil, "x")
+	did := d.trash(owner, p)
+	d.age(did, 100)
+	d.archive(sp, true)
+	d.archivedRefusal(owner, "note.purge", map[string]any{"deletion_id": did})
+	if d.due() != 0 || !d.exists(p) {
+		t.Fatal("sweep purged an archived space")
+	}
+	d.archive(sp, false)
+
+	a := d.page(owner, sp, "Archived page", nil, "x")
+	adid := d.trash(owner, a)
+	d.age(adid, 100)
+	d.sql("update core.notes set freshness = 'archived' where id = $1::uuid", a)
+	if code, _ := d.errOf(owner, "note.purge", map[string]any{"deletion_id": adid}); code == "" {
+		t.Fatal("manual purge of an archived page was allowed")
+	}
+	d.sql("update core.notes set purge_skipped_at = null") // the archived-space sweep above recorded a skip for p
+	if d.due() != 1 || d.exists(p) || !d.exists(a) {       // only the page of the now-live space goes
+		t.Fatal("sweep purged an archived page")
+	}
+}
+
+// Old deletions that can never be purged must not hide newer eligible ones: each is recorded and left alone for a day.
+func TestC1PurgeSweepIsNotStarvedByIneligibleDeletions(t *testing.T) {
+	d, owner := newDG(t)
+	sp := d.space(owner, "STV", "open")
+	d.clock(400)
+	const stuck = 201 // one more than a sweep run takes
+	ids := make([]string, 0, stuck)
+	for i := 0; i < stuck; i++ {
+		ids = append(ids, d.page(owner, sp, fmt.Sprintf("Invoice %d", i), nil, "x"))
+	}
+	good := d.page(owner, sp, "Plain and newer", nil, "x")
+	// typed pages are never purged; trashed in one statement, each its own deletion (the command is rate limited)
+	d.sql(`update core.notes set types = '{invoice}', deletion_id = gen_random_uuid(), deleted_at = now() - interval '300 days', deleted_by = $2::uuid
+	       where id = any($1::text[]::uuid[])`, ids, owner.userID)
+	d.age(d.trash(owner, good), 100)
+	if d.due() != 0 || !d.exists(good) {
+		t.Fatal("first run: the 200 oldest are all ineligible, nothing can be purged yet")
+	}
+	if n := d.scalar("select count(distinct deletion_id)::text from core.notes where purge_skipped_at is not null"); n != "200" {
+		t.Fatalf("skips recorded: %s", n)
+	}
+	if d.due() != 1 || d.exists(good) {
+		t.Fatal("second run did not reach the newer eligible deletion")
+	}
+	// a skip is retried after a day
+	d.sql("update core.notes set purge_skipped_at = now() - interval '2 days' where purge_skipped_at is not null")
+	if d.due() != 0 || d.scalar("select count(distinct deletion_id)::text from core.notes where purge_skipped_at > now() - interval '1 hour'") != "200" {
+		t.Fatal("old skips were not retried")
+	}
 }

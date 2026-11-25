@@ -3,11 +3,25 @@ import Image from '@tiptap/extension-image'
 import { Paragraph } from '@tiptap/extension-paragraph'
 import { Table } from '@tiptap/extension-table'
 import { TextStyle } from '@tiptap/extension-text-style'
+import { MarkdownManager } from '@tiptap/markdown'
 import { type Editor, Extension, type JSONContent } from '@tiptap/react'
-import { esc, inlineHtml, markTag, plainText, posInt, safeSrc, span, tintOf } from './html-inline'
+import { esc, hlEsc, inlineHtml, markTag, plainText, posInt, safeSrc, span, tintOf } from './html-inline'
 import { StickyHeader } from './sticky-header'
 
 // Storage contract (FORMATS.md): rich formatting that Markdown cannot hold is stored as a small HTML subset.
+
+// TipTap backslash-escapes text before marks wrap it, but <mark> content is read back as HTML, where a backslash is literal and
+// piles up at every save. Highlighted text is written as entities instead (see hlEsc).
+type Enc = (text: string, node: JSONContent, parent?: JSONContent) => string
+const proto = MarkdownManager.prototype as unknown as { encodeTextForMarkdown: Enc }
+const encodePlain = proto.encodeTextForMarkdown
+proto.encodeTextForMarkdown = function (text, node, parent) {
+  const marks = node.marks ?? []
+  const hl = marks.some((m) => typeof m !== 'string' && m.type === 'textStyle' && tintOf(m.attrs?.highlight))
+  return hl && !marks.some((m) => m.type === 'code')
+    ? hlEsc(text)
+    : encodePlain.call(this, text, node, parent)
+}
 
 let lastTint = 'yellow'
 /** Apply a tint to the selection, or remove it (null) and drop a textStyle mark left empty. */

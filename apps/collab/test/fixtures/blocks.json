@@ -186,5 +186,23 @@
     "pending": "c1",
     "md": "<table data-numbered=\"true\"><tr><th colspan=\"2\" data-bg=\"blue\"><p>Stock check</p></th></tr><tr><td data-bg=\"orange\"><p>Rice bags</p></td><td><p>40 <mark data-color=\"yellow\">low</mark></p></td></tr></table>",
     "plain": "Stock check\nRice bags\n40 low"
+  },
+  {
+    "id": "highlight-literal-close",
+    "covers": ["highlight"],
+    "md": "<mark data-color=\"yellow\">&lt;/mark&gt;</mark>",
+    "plain": "</mark>"
+  },
+  {
+    "id": "highlight-literal-markdown",
+    "covers": ["highlight"],
+    "md": "<mark data-color=\"yellow\">&#42;&#42;literal&#42;&#42;</mark>",
+    "plain": "**literal**"
+  },
+  {
+    "id": "highlight-literal-punctuation",
+    "covers": ["highlight"],
+    "md": "<mark data-color=\"yellow\">a&#92;b &#95;x&#95; &#91;l&#93; &#126;t&#126; &#96;c&#96; &amp; &lt;b&gt; &quot;q&quot;</mark>",
+    "plain": "a\\b _x_ [l] ~t~ `c` & <b> \"q\""
   }
 ]

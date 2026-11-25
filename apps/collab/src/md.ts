@@ -137,14 +137,16 @@ const i64 = (s: string): number | null => {
 
 const esc = (s: string) =>
   s.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;')
+const ENTITY: Record<string, string> = { lt: '<', gt: '>', quot: '"', apos: "'", amp: '&' }
+/** One pass, so `&amp;lt;` is `&lt;` and never `<`. */
 const unesc = (s: string) =>
-  s
-    .replaceAll('&lt;', '<')
-    .replaceAll('&gt;', '>')
-    .replaceAll('&quot;', '"')
-    .replaceAll('&#39;', "'")
-    .replaceAll('&apos;', "'")
-    .replaceAll('&amp;', '&')
+  s.replace(/&(?:#(\d+)|(lt|gt|quot|apos|amp));/g, (entity, n?: string, name?: string) => {
+    if (name !== undefined) return ENTITY[name]
+    const code = Number(n)
+    return code > 0 && code <= 0x10ffff && !(code >= 0xd800 && code <= 0xdfff)
+      ? String.fromCodePoint(code)
+      : entity
+  })
 
 interface Tag {
   name: string
@@ -440,7 +442,13 @@ function construct(rest: string, prev: string | undefined, m: Marks, br: boolean
       if (t.name === 'mark' && !t.closing) {
         const e = closeTag(rest, 'mark', t.len)
         if (e < 0) return null
-        return [e + 7, mdInline(rest.slice(t.len, e), { ...m, highlight: tintOf(t) }, br)]
+        const inner = rest.slice(t.len, e)
+        const mm = { ...m, highlight: tintOf(t) }
+        // The editors store highlighted text as HTML entities, never raw Markdown punctuation or tags, so such text is read as
+        // HTML. Anything with raw punctuation (older or hand-written pages) keeps the Markdown reading.
+        if (!/[<\\*_`~[\]]/.test(inner))
+          return [e + 7, inner === '' ? [] : [{ t: 'text', s: unesc(inner), m: mm }]]
+        return [e + 7, mdInline(inner, mm, br)]
       }
       if ((t.name === 'span' || t.name === 'time') && !t.closing) {
         const ds = t.name === 'span' ? attrOf(t, 'data-status') : attrOf(t, 'datetime')
@@ -1130,7 +1138,12 @@ function mark(text: string, a: Attrs | undefined, mode: Mode, literal = false): 
   if (inner === '') return text
   const lead = text.slice(0, text.length - trimStart(text).length)
   const trail = text.slice(trimEnd(text).length)
-  let s = col !== null ? span(col, esc(mdEscape(inner))) : inner
+  let s =
+    col !== null
+      ? span(col, esc(mdEscape(inner)))
+      : hl !== null
+        ? esc(inner).replace(/[\\*_`~[\]]/g, (c) => `&#${c.charCodeAt(0)};`)
+        : inner
   if (hl !== null) s = markTag(hl, s)
   if (code) s = `\`${s}\``
   if (has('italic') || has('em')) s = `*${s}*`
