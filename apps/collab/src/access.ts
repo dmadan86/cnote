@@ -3,15 +3,19 @@
 import { ADMIN, GUEST, type Principal } from './auth.ts'
 import { CmdError, type Tx } from './db.ts'
 
+/** Mirror of access.ArchivedMessage in the API: an archived space is read-only for everyone, on every route. */
+export const ARCHIVED_MESSAGE = 'This space is archived'
+
 async function assertSpaceAccess(tx: Tx, p: Principal, spaceId: string, write: boolean) {
   const r = await tx.query(
-    `select s.visibility, sm.role from core.spaces s
+    `select s.visibility, sm.role, s.archived_at is not null as archived from core.spaces s
      left join core.space_members sm on sm.space_id = s.id and sm.user_id = $2::uuid
      where s.id = $1::uuid`,
     [spaceId, p.userId],
   )
   const row = r.rows[0]
   if (!row) throw new CmdError('not_found', 'space')
+  if (write && row.archived) throw new CmdError('forbidden', ARCHIVED_MESSAGE)
   if (p.role >= ADMIN) return
   const member = row.role as string | null
   if ((row.visibility === 'private' || p.role === GUEST) && member === null)
@@ -33,7 +37,8 @@ async function readableSpaces(tx: Tx, p: Principal): Promise<string[]> {
 /** The note's space id. An unreadable page is not found; a read-only page is forbidden for writes. */
 export async function assertNoteAccess(tx: Tx, p: Principal, noteId: string, write: boolean) {
   const n = await tx.query(
-    'select space_id::text from core.notes where id = $1::uuid and deleted_at is null',
+    `select n.space_id::text, s.archived_at is not null as archived from core.notes n join core.spaces s on s.id = n.space_id
+     where n.id = $1::uuid and n.deleted_at is null`,
     [noteId],
   )
   if (!n.rows[0]) throw new CmdError('not_found', 'note')
@@ -48,6 +53,8 @@ export async function assertNoteAccess(tx: Tx, p: Principal, noteId: string, wri
   const level = lv.rows[0].level as string
   if (level === 'none') throw new CmdError('not_found', 'note')
   if (spaces.includes(space)) await assertSpaceAccess(tx, p, space, write)
+  // A page reached by a direct share sits in a space the caller cannot read: the archive rule does not depend on that.
+  if (write && n.rows[0].archived) throw new CmdError('forbidden', ARCHIVED_MESSAGE)
   if (write && level !== 'edit') throw new CmdError('forbidden', 'you can only view this page')
   return space
 }

@@ -10,14 +10,19 @@ import (
 	"github.com/cnote/api/internal/command"
 )
 
+// ArchivedMessage is the refusal for any write into an archived space (design 13.2.2). Archived is read-only for everyone,
+// workspace admins included, whatever route reached the page: space access, a direct share, the gateway, a comment.
+const ArchivedMessage = "This space is archived"
+
 func AssertSpaceAccess(c *command.Ctx, spaceID string, write bool) error {
 	p := c.Principal
 	var visibility string
 	var spaceRole *string
+	var archived bool
 	err := c.Tx.QueryRow(c.Context,
-		`select s.visibility, sm.role from core.spaces s
+		`select s.visibility, sm.role, s.archived_at is not null from core.spaces s
 		 left join core.space_members sm on sm.space_id = s.id and sm.user_id = $2::uuid
-		 where s.id = $1::uuid`, spaceID, p.UserID).Scan(&visibility, &spaceRole)
+		 where s.id = $1::uuid`, spaceID, p.UserID).Scan(&visibility, &spaceRole, &archived)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return command.ErrNotFound("space")
 	}
@@ -25,10 +30,16 @@ func AssertSpaceAccess(c *command.Ctx, spaceID string, write bool) error {
 		return command.DB(err)
 	}
 	if p.Role >= command.Admin {
+		if write && archived {
+			return command.ErrForbidden(ArchivedMessage)
+		}
 		return nil
 	}
 	if (visibility == "private" || p.Role == command.Guest) && spaceRole == nil {
 		return command.ErrNotFound("space")
+	}
+	if write && archived {
+		return command.ErrForbidden(ArchivedMessage)
 	}
 	if write && ((spaceRole != nil && *spaceRole == "viewer") || (p.Role == command.Guest && spaceRole == nil)) {
 		return command.ErrForbidden("read-only access to this space")
@@ -72,7 +83,10 @@ func NoteLevel(c *command.Ctx, noteID string, spaces []string) (string, error) {
 // page is forbidden for writes. A shared page is readable without any other access to its space.
 func AssertNoteAccess(c *command.Ctx, noteID string, write bool) (string, error) {
 	var space string
-	err := c.Tx.QueryRow(c.Context, "select space_id::text from core.notes where id = $1::uuid and deleted_at is null", noteID).Scan(&space)
+	var archived bool
+	err := c.Tx.QueryRow(c.Context,
+		`select n.space_id::text, s.archived_at is not null from core.notes n join core.spaces s on s.id = n.space_id
+		 where n.id = $1::uuid and n.deleted_at is null`, noteID).Scan(&space, &archived)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", command.ErrNotFound("note")
 	}
@@ -98,8 +112,54 @@ func AssertNoteAccess(c *command.Ctx, noteID string, write bool) (string, error)
 			break
 		}
 	}
+	// A page reached by a direct share is in a space the caller cannot read, so the loop above skipped it: the archive
+	// rule must not depend on that.
+	if write && archived {
+		return "", command.ErrForbidden(ArchivedMessage)
+	}
 	if write && level != "edit" {
 		return "", command.ErrForbidden("you can only view this page")
 	}
 	return space, nil
+}
+
+// AssertSpaceWritable refuses with ArchivedMessage when the space is archived. For code that writes into a space without
+// going through AssertSpaceAccess (jobs, imports, derived data a command writes for someone else).
+func AssertSpaceWritable(c *command.Ctx, spaceID string) error {
+	var archived bool
+	err := c.Tx.QueryRow(c.Context, "select archived_at is not null from core.spaces where id = $1::uuid", spaceID).Scan(&archived)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return command.ErrNotFound("space")
+	}
+	if err != nil {
+		return command.DB(err)
+	}
+	if archived {
+		return command.ErrForbidden(ArchivedMessage)
+	}
+	return nil
+}
+
+// AssertSpaceAdmin passes for a workspace admin or owner, and for a member whose row in core.space_members has role admin.
+// It is about the space only: a page restriction still applies to a space admin (design 13.2.1), so it never replaces
+// AssertNoteAccess. A space the caller cannot read is not found.
+func AssertSpaceAdmin(c *command.Ctx, spaceID string) error {
+	p := c.Principal
+	if err := AssertSpaceAccess(c, spaceID, false); err != nil {
+		return err
+	}
+	if p.Role >= command.Admin {
+		return nil
+	}
+	var admin bool
+	err := c.Tx.QueryRow(c.Context,
+		"select exists(select 1 from core.space_members where space_id = $1::uuid and user_id = $2::uuid and role = 'admin')",
+		spaceID, p.UserID).Scan(&admin)
+	if err != nil {
+		return command.DB(err)
+	}
+	if !admin {
+		return command.ErrForbidden("only a space admin can do this")
+	}
+	return nil
 }

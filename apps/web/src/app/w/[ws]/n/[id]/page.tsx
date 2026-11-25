@@ -28,7 +28,7 @@ import { VersionsTab } from '@/components/versions-panel'
 import { WatchButton } from '@/components/watch-button'
 import { activity, activityRest, type Evt } from '@/lib/activity'
 import { cmd, type NoteDetail } from '@/lib/api'
-import { type NoteChrome, STATUS_LABEL } from '@/lib/docs'
+import { type NoteChrome, type SpaceB1, STATUS_LABEL } from '@/lib/docs'
 import { ago, useCmd } from '@/lib/hooks'
 
 type Tab = 'relations' | 'history' | 'versions' | 'comments'
@@ -111,7 +111,7 @@ function Panel({
 
 function NotePageInner({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params)
-  const { ws, members, reload, newPage } = useShell()
+  const { ws, me, spaces, members, reload, newPage } = useShell()
   const {
     data: note,
     error,
@@ -132,6 +132,14 @@ function NotePageInner({ params }: { params: Promise<{ id: string }> }) {
     setFocus(thread)
   }, [thread, id])
   const [draft, setDraft] = useState<Anchor>()
+  // Same rule as the server: the page owner, a space admin or a workspace admin may delete any comment.
+  const wsRole = me.workspaces.find((w) => w.id === ws || w.slug === ws)?.role
+  const canModerate =
+    !!note &&
+    (note.owner_id === me.user.id ||
+      (spaces.find((s) => s.id === note.space_id) as Partial<SpaceB1> | undefined)?.my_role === 'admin' ||
+      wsRole === 'owner' ||
+      wsRole === 'admin')
   const threads = useMemo(() => openThreads(comments.data), [comments.data])
   const showComments = () => {
     setPanel(true)
@@ -345,6 +353,7 @@ function NotePageInner({ params }: { params: Promise<{ id: string }> }) {
             reload: comments.reload,
             draft,
             clearDraft: () => setDraft(undefined),
+            canModerate,
             focus,
             setFocus,
             onPage: (c) => {

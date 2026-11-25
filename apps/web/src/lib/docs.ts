@@ -123,3 +123,131 @@ export const bySiblingOrder = (
   a.id.localeCompare(b.id)
 /** Window event: the tree, Trash and the open page reload after a move, delete, restore or duplicate. */
 export const TREE_EVENT = 'cnote:tree'
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Docs parity Phase B1 (docs/design/docs-parity-b.md sections 4 and 13). Mirrors the output schemas in
+// apps/api/internal/modules/{notes,publiclinks,notifications}/b1_commands.go (B1OutputSchema). Keep both in step. Every
+// command answers "not implemented" until its package (P1 to P5, section 13.4) lands.
+
+/** Notification kinds that can reach an inbox (13.2.5); `shared` and `access_request` are new in B. */
+export type MailKind = 'mention' | 'assigned' | 'shared' | 'access_request' | 'comment' | 'page_updated'
+/** The message shown when a write is refused in an archived space (API ArchivedMessage, gateway ARCHIVED_MESSAGE). */
+export const ARCHIVED_MESSAGE = 'This space is archived'
+
+export type SpaceRole = 'admin' | 'editor' | 'viewer'
+export type WorkspaceRole = 'owner' | 'admin' | 'member' | 'guest'
+/** space.list, space.update and space.archive. */
+export type SpaceB1 = {
+  id: string
+  key: string
+  name: string
+  template: string
+  visibility: 'open' | 'private'
+  config: Record<string, unknown>
+  description: string | null
+  archived: boolean
+  /** false only when a space admin turned page links off */
+  public_links: boolean
+  /** null for a guest outside the space */
+  my_role: SpaceRole | null
+}
+export type SpaceMember = {
+  user_id: string
+  name: string
+  email: string
+  role: SpaceRole
+  workspace_role: WorkspaceRole
+}
+export type SpaceMembers = { visibility: 'open' | 'private'; members: SpaceMember[]; can_manage: boolean }
+export type SpaceUpdate = {
+  id: string
+  name?: string
+  description?: string | null
+  visibility?: 'open' | 'private'
+  public_links?: boolean
+}
+
+export const spaceMembers = (ws: string, space_id: string) =>
+  cmd<SpaceMembers>(ws, 'space.members', { space_id })
+export const spaceMemberSet = (ws: string, space_id: string, user_id: string, role: SpaceRole | null) =>
+  cmd<SpaceMember | { removed: true }>(ws, 'space.member_set', { space_id, user_id, role })
+export const spaceUpdate = (ws: string, input: SpaceUpdate) => cmd<SpaceB1>(ws, 'space.update', input)
+export const spaceArchive = (ws: string, id: string, archived: boolean) =>
+  cmd<SpaceB1>(ws, 'space.archive', { id, archived })
+
+/** page_link.get. The token is never returned: only page_link.create returns the address, once. */
+export type PageLink = {
+  id: string
+  status: 'active' | 'off'
+  created_by_name: string | null
+  created_at: string
+  expires_at: string | null
+  view_count: number
+  last_viewed_at: string | null
+}
+export type PageLinkGet = { link: PageLink | null; allowed: boolean; reason: string | null }
+export type PageLinkRow = {
+  note_id: string
+  title: string
+  created_by_name: string | null
+  created_at: string
+  expires_at: string | null
+  view_count: number
+}
+/** What GET /api/public/page/<token> returns; a golden test pins this key set. */
+export type PublicPage = {
+  title: string
+  icon: string | null
+  wide: boolean
+  body_md: string
+  updated_on: string
+  workspace_name: string
+}
+
+export const pageLinkGet = (ws: string, note_id: string) => cmd<PageLinkGet>(ws, 'page_link.get', { note_id })
+export const pageLinkCreate = (ws: string, note_id: string, expires_in_days?: number | null) =>
+  cmd<{ link: PageLink; url: string }>(ws, 'page_link.create', { note_id, expires_in_days })
+export const pageLinkRevoke = (ws: string, note_id: string) =>
+  cmd<{ revoked: number }>(ws, 'page_link.revoke', { note_id })
+export const pageLinkList = (ws: string, space_id: string) =>
+  cmd<PageLinkRow[]>(ws, 'page_link.list', { space_id })
+
+export type EmailMode = 'smart' | 'digest' | 'off'
+export type NotifyPrefs = {
+  email_mode: EmailMode
+  /** hour of the daily digest, IST */
+  digest_hour: number
+  email_configured: boolean
+  direct_off: boolean
+  digest_off: boolean
+}
+export const notifyPrefsGet = (ws: string) => cmd<NotifyPrefs>(ws, 'notify_prefs.get', {})
+export const notifyPrefsSet = (
+  ws: string,
+  input: Partial<Pick<NotifyPrefs, 'email_mode' | 'digest_hour' | 'direct_off' | 'digest_off'>>,
+) => cmd<NotifyPrefs>(ws, 'notify_prefs.set', input)
+
+export type MyTask = {
+  note_id: string
+  note_title: string
+  icon: string | null
+  space_id: string
+  ord: number
+  text: string
+  due: string | null
+  done: boolean
+}
+export const taskMine = (ws: string, opts: { done?: boolean; limit?: number } = {}) =>
+  cmd<MyTask[]>(ws, 'task.mine', opts)
+
+export const REACTIONS = ['👍', '❤️', '😂', '🎉', '👀', '✅'] as const
+export type Reaction = (typeof REACTIONS)[number]
+export type ReactionCount = { emoji: Reaction; count: number; mine: boolean }
+/** The fields comment.list adds to each comment in B1: a deleted top-level comment with replies comes back as a tombstone (empty body). */
+export type CommentB1 = { edited_at: string | null; deleted: boolean; reactions: ReactionCount[] }
+
+export const commentEdit = (ws: string, id: string, body: string) =>
+  cmd<CommentB1 & { id: string; body: string }>(ws, 'comment.edit', { id, body })
+export const commentDelete = (ws: string, id: string) => cmd<{ deleted: true }>(ws, 'comment.delete', { id })
+export const commentReact = (ws: string, id: string, emoji: Reaction, on: boolean) =>
+  cmd<{ id: string; reactions: ReactionCount[] }>(ws, 'comment.react', { id, emoji, on })

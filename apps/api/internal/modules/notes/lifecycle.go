@@ -400,7 +400,7 @@ func movePage(c *command.Ctx, in moveInput) (moveResult, error) {
 		if ok, err := check(); err != nil {
 			return moveResult{}, err
 		} else if !ok {
-			return moveResult{}, errRestricted()
+			return moveResult{}, errRestrictedIn(c, space)
 		}
 	}
 	// A restriction the pages inherit now and will not inherit after the move is released: only its owner or an admin may do that.
@@ -419,7 +419,7 @@ func movePage(c *command.Ctx, in moveInput) (moveResult, error) {
 			if ok, err := canManage(c, space, a.Owner); err != nil {
 				return moveResult{}, err
 			} else if !ok {
-				return moveResult{}, errRestricted()
+				return moveResult{}, errRestrictedIn(c, space)
 			}
 		}
 	}
@@ -522,7 +522,7 @@ func noteReorder(c *command.Ctx, input json.RawMessage) (any, error) {
 		if ok, err := check(); err != nil {
 			return nil, err
 		} else if !ok {
-			return nil, errRestricted()
+			return nil, errRestrictedIn(c, space)
 		}
 	}
 	pos, err := placePosition(c, space, parent, before, id)

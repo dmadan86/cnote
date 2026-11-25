@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"strings"
+	"sync"
 
 	"github.com/cnote/api/internal/command"
 	"github.com/cnote/api/internal/jobs"
@@ -21,6 +22,20 @@ type MailHook struct {
 
 // MailHooks is filled by New (wire.go).
 var MailHooks = map[string]MailHook{}
+var mailHooksMu sync.RWMutex
+
+func registerMailHook(kind string, hook MailHook) {
+	mailHooksMu.Lock()
+	defer mailHooksMu.Unlock()
+	MailHooks[kind] = hook
+}
+
+func getMailHook(kind string) (MailHook, bool) {
+	mailHooksMu.RLock()
+	defer mailHooksMu.RUnlock()
+	hook, ok := MailHooks[kind]
+	return hook, ok
+}
 
 // mailSendJob delivers one outbox mail (mailer.Enqueue). A failed send fails the job (the queue retries with backoff,
 // reusing the payload's Message-ID); the sent Message-ID is written back so a job that already sent never sends again.
@@ -41,7 +56,7 @@ func mailSendJob(c *command.Ctx, payload json.RawMessage) error {
 		return nil
 	}
 	kind, ref, _ := strings.Cut(m.Notify, ":")
-	hook, hooked := MailHooks[kind]
+	hook, hooked := getMailHook(kind)
 	if hooked && hook.Before != nil {
 		if ok, err := hook.Before(c, ref); err != nil || !ok {
 			return err

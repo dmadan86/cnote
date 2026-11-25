@@ -74,6 +74,14 @@ func spaceRole(c *command.Ctx, spaceID string) (Role, error) {
 		}
 		return RoleNone, err
 	}
+	// An archived space is read-only for everyone (docs-parity-b 13.2.2): cap the role, whatever it would have been.
+	if err := access.AssertSpaceWritable(c, spaceID); err != nil {
+		var ce *command.Error
+		if errors.As(err, &ce) && ce.Code == command.Forbidden {
+			return RoleRead, nil
+		}
+		return RoleNone, err
+	}
 	if c.Principal.Role >= command.Admin {
 		return RoleManage, nil
 	}

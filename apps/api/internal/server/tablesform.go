@@ -1,9 +1,6 @@
 package server
 
 import (
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"io"
 	"log/slog"
@@ -53,17 +50,8 @@ func warnTablesForm() {
 	})
 }
 
-// formIPKey is a keyed hash of the address, so counters never hold it. It needs the master key, which every replica
-// shares; without one there is no stable key and the endpoints answer 503 rather than count per process.
-func formIPKey(ip string) (string, error) {
-	key, err := secretbox.MasterKey()
-	if err != nil {
-		return "", err
-	}
-	h := hmac.New(sha256.New, key)
-	h.Write([]byte("table-form-ip\x00" + ip))
-	return hex.EncodeToString(h.Sum(nil))[:32], nil
-}
+// formIPKey is the address key of the public table forms (see publicIPKey).
+func formIPKey(ip string) (string, error) { return publicIPKey("table-form-ip", ip) }
 
 func formReply(w http.ResponseWriter, status int, body string) {
 	w.Header().Set("Content-Type", "application/json")

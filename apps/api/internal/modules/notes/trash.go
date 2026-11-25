@@ -417,7 +417,7 @@ func noteUndelete(c *command.Ctx, input json.RawMessage) (any, error) {
 		if ok, err := canEditParent(c, space, plan.ParentEdit); err != nil {
 			return nil, err
 		} else if !ok {
-			return nil, errRestricted()
+			return nil, errRestrictedIn(c, space)
 		}
 	}
 	if pend, err := pendingPages(c, ids); err != nil {

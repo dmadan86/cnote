@@ -331,7 +331,7 @@ func (w *Worker) runJob(ctx context.Context, j jobs.Job) (bool, error) {
 		return false, err
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
-	c := &command.Ctx{Context: ctx, Tx: tx, Principal: command.Principal{Kind: command.KindSystem, WorkspaceID: ws, Role: command.Owner}}
+	c := &command.Ctx{Context: ctx, Tx: tx, Pool: w.Pool, Principal: command.Principal{Kind: command.KindSystem, WorkspaceID: ws, Role: command.Owner}}
 	if w.Registry != nil {
 		w.Registry.Bind(c)
 	}

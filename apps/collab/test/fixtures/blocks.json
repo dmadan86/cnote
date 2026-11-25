@@ -113,5 +113,17 @@
     "covers": ["code", "panel", "lookalike"],
     "md": "> [!NOTE]\n> Run this:\n>\n> ```sh\n> echo hi\n> [[toc]]\n> ```\n>\n> Then stop.\n\n```\n[[toc]]\n```",
     "plain": "Run this:\necho hi\n[[toc]]\nThen stop.\n[[toc]]"
+  },
+  {
+    "id": "task-assignee-due",
+    "covers": ["task", "mention", "date", "nesting"],
+    "md": "- [ ] Send the GST summary [@Ravi Kumar](/w/00000000-0000-4000-8000-0000000000a1/people/00000000-0000-4000-8000-0000000000b2) <time datetime=\"2026-12-01\">1 Dec 2026</time>\n- [ ] Book the venue <time datetime=\"2026-12-05\">5 Dec 2026</time>\n- [ ] Review the draft [@Ravi Kumar](/w/00000000-0000-4000-8000-0000000000a1/people/00000000-0000-4000-8000-0000000000b2)\n- [x] File the return [@Ravi Kumar](/w/00000000-0000-4000-8000-0000000000a1/people/00000000-0000-4000-8000-0000000000b2) <time datetime=\"2026-11-30\">30 Nov 2026</time>\n- [ ] Plan the audit [@Ravi Kumar](/w/00000000-0000-4000-8000-0000000000a1/people/00000000-0000-4000-8000-0000000000b2)\n  - [ ] Collect the invoices <time datetime=\"2026-12-02\">2 Dec 2026</time>",
+    "plain": "- [ ] Send the GST summary [@Ravi Kumar](/w/00000000-0000-4000-8000-0000000000a1/people/00000000-0000-4000-8000-0000000000b2) 1 Dec 2026\n- [ ] Book the venue 5 Dec 2026\n- [ ] Review the draft [@Ravi Kumar](/w/00000000-0000-4000-8000-0000000000a1/people/00000000-0000-4000-8000-0000000000b2)\n- [x] File the return [@Ravi Kumar](/w/00000000-0000-4000-8000-0000000000a1/people/00000000-0000-4000-8000-0000000000b2) 30 Nov 2026\n- [ ] Plan the audit [@Ravi Kumar](/w/00000000-0000-4000-8000-0000000000a1/people/00000000-0000-4000-8000-0000000000b2)\n- [ ] Collect the invoices 2 Dec 2026"
+  },
+  {
+    "id": "task-lookalike",
+    "covers": ["task", "mention", "lookalike"],
+    "md": "- Ask [@Ravi Kumar](/w/00000000-0000-4000-8000-0000000000a1/people/00000000-0000-4000-8000-0000000000b2) about the quote <time datetime=\"2026-12-03\">3 Dec 2026</time>\n\n- [ ] Pay the vendor\n\nCall [@Ravi Kumar](/w/00000000-0000-4000-8000-0000000000a1/people/00000000-0000-4000-8000-0000000000b2) before <time datetime=\"2026-12-04\">4 Dec 2026</time> (not a task: no checkbox).",
+    "plain": "- Ask [@Ravi Kumar](/w/00000000-0000-4000-8000-0000000000a1/people/00000000-0000-4000-8000-0000000000b2) about the quote 3 Dec 2026\n- [ ] Pay the vendor\nCall [@Ravi Kumar](/w/00000000-0000-4000-8000-0000000000a1/people/00000000-0000-4000-8000-0000000000b2) before 4 Dec 2026 (not a task: no checkbox)."
   }
 ]

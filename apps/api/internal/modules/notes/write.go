@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"math"
 	"regexp"
 	"strconv"
@@ -219,6 +218,10 @@ func insertNote(c *command.Ctx, i createNote) (any, error) {
 	if _, err := c.Emit("note.created", &n.ID, map[string]any{"title": n.Title, "types": n.Types, "space_id": n.SpaceID}); err != nil {
 		return nil, err
 	}
+	// The mention store starts with the body the page was created with; mentions typed later are diffed against it.
+	if err := SeedMentionState(c, n.ID, c.WorkspaceID(), n.ContentMD, n.Version); err != nil {
+		return nil, err
+	}
 	return n, nil
 }
 
@@ -344,7 +347,7 @@ func noteUpdate(c *command.Ctx, input json.RawMessage) (any, error) {
 		if err := checkpoint(c, n.ID, c.Principal.UserID, checkpointEverySecs); err != nil {
 			return nil, err
 		}
-		if err := notifyMentions(c, n.ID, n.Title, before.ContentMD, n.ContentMD, fmt.Sprintf("note:%s:v%d", n.ID, n.Version)); err != nil {
+		if err := NotifyPageMentions(c, n.ID, &before.ContentMD); err != nil {
 			return nil, err
 		}
 	}
@@ -393,7 +396,8 @@ func mentions(md, ws string) []string {
 	return out
 }
 
-// notifyMentions notifies people mentioned in newMD but not in oldMD (in-app notification + mention.created).
+// notifyMentions notifies people mentioned in newMD but not in oldMD (in-app notification + mention.created). It is the
+// path for a comment, whose body is not a page version; a page goes through NotifyPageMentions (mentions.go).
 // eventKey names the edit or comment that made the mention (see worker.pageNotifyOnEvent).
 func notifyMentions(c *command.Ctx, noteID, title, oldMD, newMD, eventKey string) error {
 	ws := strings.ToLower(c.WorkspaceID())
@@ -401,8 +405,21 @@ func notifyMentions(c *command.Ctx, noteID, title, oldMD, newMD, eventKey string
 	for _, u := range mentions(oldMD, ws) {
 		old[u] = true
 	}
-	for _, user := range mentions(newMD, ws) {
-		if old[user] || (c.Principal.UserID != nil && *c.Principal.UserID == user) {
+	var fresh []string
+	for _, u := range mentions(newMD, ws) {
+		if !old[u] {
+			fresh = append(fresh, u)
+		}
+	}
+	return notifyUsers(c, noteID, title, fresh, eventKey, c.Principal.UserID)
+}
+
+// notifyUsers sends the mention notification to each user who is not the actor and can read the page, then emits
+// mention.created for hooks and agents (email is the mail sweep's job, from the notification row).
+func notifyUsers(c *command.Ctx, noteID, title string, users []string, eventKey string, actor *string) error {
+	ws := strings.ToLower(c.WorkspaceID())
+	for _, user := range users {
+		if actor != nil && strings.EqualFold(*actor, user) {
 			continue
 		}
 		// Member of this workspace who can read the page, judged with their own role and space access.
@@ -414,7 +431,7 @@ func notifyMentions(c *command.Ctx, noteID, title, oldMD, newMD, eventKey string
 			continue
 		}
 		ids, err := notify.Send(c.Context, c.Tx, notify.Notification{
-			WorkspaceID: ws, UserID: user, Kind: "mention", Title: title, NoteID: &noteID, ActorUserID: c.Principal.UserID, EventKey: &eventKey})
+			WorkspaceID: ws, UserID: user, Kind: "mention", Title: title, NoteID: &noteID, ActorUserID: actor, EventKey: &eventKey})
 		if err != nil {
 			return err
 		}
@@ -595,6 +612,11 @@ func viewCreate(c *command.Ctx, input json.RawMessage) (any, error) {
 	}
 	if opts == nil {
 		opts = []byte("{}")
+	}
+	if space != nil { // a saved view is written into a space: space access, and an archived space refuses it (13.2.2)
+		if err := access.AssertSpaceAccess(c, *space, true); err != nil {
+			return nil, err
+		}
 	}
 	return scanView(c.Tx.QueryRow(c.Context,
 		`insert into core.views (workspace_id, space_id, name, layout, query, options, created_by)

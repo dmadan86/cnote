@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
+	"github.com/cnote/api/internal/access"
 	"github.com/cnote/api/internal/command"
 	"github.com/cnote/api/internal/modules/notes"
 )
@@ -85,6 +86,11 @@ func RunJob(c *command.Ctx, payload json.RawMessage) error {
 	var perr error
 	if spaceID != nil {
 		parsed, perr = parseInput(source, input)
+	}
+	if spaceID != nil && perr == nil { // archived since the import was queued: read-only on every route (13.2.2)
+		if err := access.AssertSpaceWritable(c, *spaceID); err != nil {
+			perr = err
+		}
 	}
 	if spaceID == nil || perr != nil {
 		why := "the target space was deleted"

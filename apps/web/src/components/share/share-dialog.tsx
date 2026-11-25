@@ -6,6 +6,7 @@ import { Avatar, btn, btnPrimary, ErrorText, inputCls, Modal } from '@/component
 import { cmd, type Member, type Note } from '@/lib/api'
 import { useCmd } from '@/lib/hooks'
 import { personProps } from '../person'
+import { PublicChip, PublicLink } from './public-link'
 
 type Person = { user_id: string; name: string; email: string; level: 'view' | 'edit' }
 type Perms = {
@@ -36,14 +37,19 @@ export function ShareButton({
   onChange: () => void
 }) {
   const [open, setOpen] = useState(false)
+  const [seen, setSeen] = useState(0) // bumped when the dialog closes, so the Public chip re-reads the link
   return (
     <>
+      <PublicChip ws={ws} noteId={noteId} version={seen} />
       <button type="button" className={btn} onClick={() => setOpen(true)}>
         {restriction !== 'none' && <Lock size={14} aria-label="Restricted" />} Share
       </button>
       <ShareDialog
         open={open}
-        onClose={() => setOpen(false)}
+        onClose={() => {
+          setOpen(false)
+          setSeen((n) => n + 1)
+        }}
         ws={ws}
         noteId={noteId}
         members={members}
@@ -222,6 +228,8 @@ function ShareDialog({
               <p className="text-[12px] text-muted">Only people who can edit this page can change this.</p>
             )}
           </section>
+
+          <PublicLink ws={ws} noteId={noteId} open={open} canEdit={can} onChange={onChange} />
 
           <ErrorText error={err} />
           <div className="flex items-center justify-end gap-2">

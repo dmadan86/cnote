@@ -25,6 +25,18 @@ type Notification struct {
 	EventKey    *string // the edit or comment this came from (note:<id>:v<version>, comment:<id>), to tell a mention from a page notification of the same event
 }
 
+// Kinds added by docs parity Phase B. Kind is checked by the notifications_kind_check constraint (migration 1340).
+//
+// A shared notification about a space has no page: NoteID is nil and Source is "space:<space id>" with SourceDay set to today,
+// so the mail job can still check that the person is in the space when the mail is built (docs-parity-b 13.2.5).
+const (
+	KindShared        = "shared"         // a page, or a space, was shared with the person
+	KindAccessRequest = "access_request" // someone asked for access to a page the person can grant
+)
+
+// SpaceSource is the Source of a notification about a space.
+func SpaceSource(spaceID string) string { return "space:" + spaceID }
+
 // Sender delivers notifications. Implementations must be idempotent for rows the unique indexes guard.
 type Sender interface {
 	Send(ctx context.Context, tx pgx.Tx, ns []Notification) (ids []string, err error)

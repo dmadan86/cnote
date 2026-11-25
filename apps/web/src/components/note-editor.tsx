@@ -21,6 +21,7 @@ import { InlineComments, setThreads, type Thread } from './editor/inline-comment
 import { MentionPicker } from './editor/mention'
 import { CommentBubble, EditorMenus } from './editor/menus'
 import { SlashCommand } from './editor/slash'
+import { TaskControls } from './editor/task-controls'
 import { FixedToolbar } from './editor/toolbar'
 import { Presence, userColor } from './presence'
 import { useShell } from './shell'
@@ -307,6 +308,7 @@ function Surface({
         {editor && editable && <EditorMenus editor={editor} onComment={comments?.onNew} />}
         {editor && !editable && comments && <CommentBubble editor={editor} onComment={comments.onNew} />}
         <EditorContent editor={editor} />
+        {editor && <TaskControls editor={editor} editable={editable} />}
       </div>
       <p aria-live="polite" className="mt-6 text-[12px] text-muted">
         {status === 'saved'

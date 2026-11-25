@@ -30,6 +30,11 @@ interface Item {
   text: Inl
   nested: Block[]
 }
+interface TaskEntry {
+  done: boolean
+  text: Inl
+  nested: Block[]
+}
 type Block =
   | { k: 'para'; inl: Inl; align: string | null }
   | { k: 'heading'; level: number; inl: Inl; align: string | null }
@@ -37,7 +42,7 @@ type Block =
   | { k: 'quote'; paras: Inl[] }
   | { k: 'list'; ordered: boolean; items: Item[] }
   | { k: 'table'; rows: Cell[][] }
-  | { k: 'tasks'; items: [boolean, Inl][] }
+  | { k: 'tasks'; items: TaskEntry[] }
   | { k: 'image'; src: string; alt: string; title: string | null }
   | { k: 'panel'; kind: string; blocks: Block[] }
   | { k: 'expand'; title: string; blocks: Block[] }
@@ -499,14 +504,47 @@ function heading(line: string): [number, string] | null {
   return r.startsWith(' ') ? [n, trim(r.slice(1))] : null
 }
 
-function task(line: string): [boolean, string] | null {
+/** A to-do line at any indent: [indent, done, text]. */
+function taskAt(line: string): [number, boolean, string] | null {
   const lm = listMarker(line)
   if (!lm) return null
   const [indent, ordered, rest] = lm
-  if (indent > 0 || ordered) return null
-  if (rest.startsWith('[ ] ')) return [false, rest.slice(4)]
-  if (rest.startsWith('[x] ') || rest.startsWith('[X] ')) return [true, rest.slice(4)]
+  if (ordered) return null
+  if (rest.startsWith('[ ] ')) return [indent, false, rest.slice(4)]
+  if (rest.startsWith('[x] ') || rest.startsWith('[X] ')) return [indent, true, rest.slice(4)]
   return null
+}
+
+/** A to-do line that starts a task list: not indented. */
+function task(line: string): [boolean, string] | null {
+  const t = taskAt(line)
+  return t && t[0] === 0 ? [t[1], t[2]] : null
+}
+
+/** Task items at one indent, with the deeper to-do lines (or plain list lines) under an item as its nested blocks, as the
+ * editor's nested TaskItem stores them. A flat parse here moved a sub-task out of its parent on the next gateway save. */
+function parseTasks(lines: string[], cur: { i: number }, base: number): Block {
+  const items: TaskEntry[] = []
+  while (cur.i < lines.length) {
+    const t = taskAt(lines[cur.i])
+    if (!t) {
+      const lm = listMarker(lines[cur.i])
+      if (lm && lm[0] > base && items.length) {
+        items[items.length - 1].nested.push(parseList(lines, cur, lm[0]))
+        continue
+      }
+      break
+    }
+    const [indent, done, text] = t
+    if (indent < base) break
+    if (indent > base && items.length) {
+      items[items.length - 1].nested.push(parseTasks(lines, cur, indent))
+      continue
+    }
+    cur.i++
+    items.push({ done, text: md(trim(text)), nested: [] })
+  }
+  return { k: 'tasks', items }
 }
 
 function isTableSep(line: string): boolean {
@@ -794,13 +832,20 @@ function parse(text: string): Block[] {
         ),
       })
     } else if (task(line)) {
-      const items: [boolean, Inl][] = []
-      let tk: ReturnType<typeof task>
-      while (i < lines.length && (tk = task(lines[i]))) {
-        items.push([tk[0], md(trim(tk[1]))])
-        i++
-      }
-      blocks.push({ k: 'tasks', items })
+      blocks.push(
+        parseTasks(
+          lines,
+          {
+            get i() {
+              return i
+            },
+            set i(v) {
+              i = v
+            },
+          },
+          0,
+        ),
+      )
     } else if (listMarker(line)) {
       blocks.push(
         parseList(
@@ -937,11 +982,12 @@ function writeBlock(parent: Parent, b: Block) {
     case 'tasks': {
       const list = new Y.XmlElement('taskList')
       parent.push([list])
-      for (const [done, t] of b.items) {
+      for (const it of b.items) {
         const li = new Y.XmlElement('taskItem')
         list.push([li])
-        li.setAttribute('checked', done as never)
-        textEl(li, 'paragraph', t)
+        li.setAttribute('checked', it.done as never)
+        textEl(li, 'paragraph', it.text)
+        for (const n of it.nested) writeBlock(li, n)
       }
       break
     }
@@ -1138,7 +1184,8 @@ function render(node: unknown, top: boolean): string | null {
         .toArray()
         .map((c) => render(c, false))
         .filter((x): x is string => x !== null)
-      lines.push(marker + indentRest(parts.join('\n'), ' '.repeat(marker.length)))
+      // A to-do's children sit two spaces in, as the editor writes them, not under the text after the checkbox.
+      lines.push(marker + indentRest(parts.join('\n'), ' '.repeat(tag === 'taskList' ? 2 : marker.length)))
     })
     return lines.join('\n')
   }
