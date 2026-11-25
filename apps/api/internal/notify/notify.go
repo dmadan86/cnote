@@ -22,6 +22,7 @@ type Notification struct {
 	ThreadID    *string // top-level comment a comment notification points at
 	Source      *string // with SourceDay: at most one per (user, source, day), e.g. daily reminders
 	SourceDay   *string // YYYY-MM-DD
+	EventKey    *string // the edit or comment this came from (note:<id>:v<version>, comment:<id>), to tell a mention from a page notification of the same event
 }
 
 // Sender delivers notifications. Implementations must be idempotent for rows the unique indexes guard.
@@ -48,10 +49,10 @@ func (Local) Send(ctx context.Context, tx pgx.Tx, ns []Notification) ([]string, 
 	for _, n := range ns {
 		var id string
 		err := tx.QueryRow(ctx, `insert into core.notifications
-			(workspace_id, user_id, kind, title, note_id, channel_id, actor_user_id, source, source_day, thread_id)
-			values ($1::uuid, $2::uuid, $3, $4, $5::uuid, $6::uuid, $7::uuid, $8, $9::date, $10::uuid)
+			(workspace_id, user_id, kind, title, note_id, channel_id, actor_user_id, source, source_day, thread_id, event_key)
+			values ($1::uuid, $2::uuid, $3, $4, $5::uuid, $6::uuid, $7::uuid, $8, $9::date, $10::uuid, $11)
 			on conflict do nothing returning id::text`,
-			n.WorkspaceID, n.UserID, n.Kind, n.Title, n.NoteID, n.ChannelID, n.ActorUserID, n.Source, n.SourceDay, n.ThreadID).Scan(&id)
+			n.WorkspaceID, n.UserID, n.Kind, n.Title, n.NoteID, n.ChannelID, n.ActorUserID, n.Source, n.SourceDay, n.ThreadID, n.EventKey).Scan(&id)
 		if err == pgx.ErrNoRows { // a unique index (reminder once a day, quote decided once) already has it
 			continue
 		}

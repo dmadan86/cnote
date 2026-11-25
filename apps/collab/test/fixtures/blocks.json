@@ -95,5 +95,23 @@
     "md": "![x](/etc/passwd) and ![y](/api/w/7b3f1c2e-5a4d-4e6f-8a9b-0c1d2e3f4a5b/files/not-a-uuid) and ![z](/api/files/0f0e0d0c-0b0a-4908-8706-050403020100)",
     "plain": "x and y and z",
     "refused": true
+  },
+  {
+    "id": "image-alt-with-brackets",
+    "covers": ["image", "escaping"],
+    "md": "![chart \\[Q1\\] and a\\\\b](/api/w/7b3f1c2e-5a4d-4e6f-8a9b-0c1d2e3f4a5b/files/0f0e0d0c-0b0a-4908-8706-050403020100)",
+    "plain": "chart [Q1] and a\\b"
+  },
+  {
+    "id": "image-title-with-quotes",
+    "covers": ["image", "escaping"],
+    "md": "![Logo](https://example.com/logo.png \"say \\\"hi\\\" and a\\\\b\")",
+    "plain": "Logo"
+  },
+  {
+    "id": "code-inside-panel",
+    "covers": ["code", "panel", "lookalike"],
+    "md": "> [!NOTE]\n> Run this:\n>\n> ```sh\n> echo hi\n> [[toc]]\n> ```\n>\n> Then stop.\n\n```\n[[toc]]\n```",
+    "plain": "Run this:\necho hi\n[[toc]]\nThen stop.\n[[toc]]"
   }
 ]

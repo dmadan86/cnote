@@ -67,6 +67,41 @@ describe('schema fence', () => {
     fresh.close()
   })
 
+  it('an old tab that keeps sending through a raise has no update applied once the raise begins', async () => {
+    const f = await fixture()
+    const g = await gw()
+    const oldDoc = new Y.Doc()
+    const old = await open(g.port, f, { cookie: f.owner.cookie })
+    await old.sync(oldDoc)
+    const fresh = await open(g.port, f, { cookie: f.owner.cookie, query: 'schema=2' })
+    await fresh.sync(new Y.Doc())
+    let stop = false
+    const spam = (async () => {
+      for (let i = 0; !stop; i++) {
+        try {
+          old.send(2, append(oldDoc, `.${i}`))
+        } catch {}
+        if (i % 4 === 0) await sleep(1)
+      }
+    })()
+    await sleep(100)
+    const room = [...g.rooms.values()][0]
+    const raise = g.setMinSchema(2)
+    const at = text(room.doc) // frames queued before the raise may not land after it
+    await raise
+    const settled = text(room.doc)
+    expect(settled).toBe(at)
+    expect(
+      ((await (await fetch(`http://127.0.0.1:${g.port}/collab/min-schema`)).json()) as { min: number }).min,
+    ).toBe(2)
+    await sleep(500)
+    stop = true
+    await spam
+    expect(text(room.doc)).toBe(at)
+    expect(await old.closeCode()).toBe(CLOSE_RELOAD)
+    fresh.close()
+  })
+
   it('the minimum only goes up, and the internal endpoint needs the secret', async () => {
     const f = await fixture()
     const g = await gw()

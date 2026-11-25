@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/cnote/api/internal/command"
+	"github.com/cnote/api/internal/db"
 	"github.com/cnote/api/internal/jobs"
 	"github.com/cnote/api/internal/modules/billing"
 )
@@ -564,5 +565,64 @@ func TestLongJobHeartbeatExtendsLease(t *testing.T) {
 	}
 	if st, _, _ := jobState(t, e, w.ws, j.ID); st != "done" {
 		t.Fatal("expected done:", st)
+	}
+}
+
+// Migration 1331: search_plain is filled by a trigger on insert and edit, and by the sweep for rows that predate it.
+func TestSearchPlainTriggerAndBackfill(t *testing.T) {
+	e := newEnv(t)
+	w := e.signup("Sia")
+	e.settle(w.ws)
+	g := e.newGoSide(w)
+	sp := str(g.cmd("space.create", map[string]any{"key": "SRC", "name": "Src", "visibility": "open"}), "id")
+	page := str(g.cmd("note.create", map[string]any{"space_id": sp, "title": "Plan", "content_md": "> [!WARNING]\n> quokka onboarding"}), "id")
+	var filled bool
+	q := func(sql string, args ...any) bool {
+		var ok bool
+		if err := g.c.Tx.QueryRow(g.c.Context, sql, args...).Scan(&ok); err != nil {
+			t.Fatal(err)
+		}
+		return ok
+	}
+	if !q("select search_plain is not null and search_plain @@ plainto_tsquery('english','quokka') and not search_plain @@ plainto_tsquery('simple','warning') from core.notes where id = $1::uuid", page) {
+		t.Fatal("trigger did not fill search_plain on insert, or the marker was indexed")
+	}
+	img := str(g.cmd("note.create", map[string]any{"space_id": sp, "title": "Img", "content_md": `![chart \[Q1\] here](https://ex.test/zzurl.png "ttitle \"x\"")`}), "id")
+	if !q("select search_plain @@ plainto_tsquery('english','chart') and not search_plain @@ plainto_tsquery('simple','zzurl') and not search_plain @@ plainto_tsquery('simple','ttitle') from core.notes where id = $1::uuid", img) {
+		t.Fatal("image alt (with escaped brackets) must be indexed, its url and title not")
+	}
+	g.cmd("note.update", map[string]any{"id": page, "content_md": "wombat only"})
+	if !q("select search_plain @@ plainto_tsquery('english','wombat') and not search_plain @@ plainto_tsquery('english','quokka') from core.notes where id = $1::uuid", page) {
+		t.Fatal("trigger did not refresh search_plain on edit")
+	}
+	// rows that predate the column: null until the sweep
+	var many []string
+	for i := 0; i < 5; i++ {
+		many = append(many, str(g.cmd("note.create", map[string]any{"space_id": sp, "title": fmt.Sprintf("Old %d", i), "content_md": "legacy numbat"}), "id"))
+	}
+	if _, err := g.c.Tx.Exec(g.c.Context, "update core.notes set search_plain = null where id = any($1::text[]::uuid[])", many); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.c.Tx.Commit(g.c.Context); err != nil {
+		t.Fatal(err)
+	}
+	// a batch size of 2 forces several batches; the workspace's other pages are filled too
+	n, err := SearchPlainBackfillRun(context.Background(), e.w, 2, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n < 5 {
+		t.Fatalf("backfilled %d rows, want at least 5", n)
+	}
+	tx, err := db.BeginTenant(context.Background(), e.pool, w.ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(context.Background()) //nolint:errcheck
+	if err := tx.QueryRow(context.Background(), "select exists (select 1 from core.notes where id = any($1::text[]::uuid[]) and search_plain is null)", many).Scan(&filled); err != nil {
+		t.Fatal(err)
+	}
+	if filled {
+		t.Fatal("rows still unfilled after the sweep")
 	}
 }

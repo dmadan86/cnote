@@ -118,7 +118,7 @@ func commentAdd(c *command.Ctx, input json.RawMessage) (any, error) {
 	if err := c.Tx.QueryRow(c.Context, "select title from core.notes where id = $1::uuid", noteID).Scan(&title); err != nil {
 		return nil, err
 	}
-	if err := notifyMentions(c, noteID, title, "", body); err != nil {
+	if err := notifyMentions(c, noteID, title, "", body, "comment:"+id); err != nil {
 		return nil, err
 	}
 	return commentByID(c, id)

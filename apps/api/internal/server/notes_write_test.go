@@ -271,7 +271,8 @@ func TestShareIntoPrivateSpace(t *testing.T) {
 		if l := ids(g.list(p, "note.list", map[string]any{"parent_id": shared})); !slices.Equal(l, []string{kid}) {
 			t.Fatalf("children: %v", l)
 		}
-		if l := ids(g.list(p, "search.notes", map[string]any{"q": "quokka"})); !slices.Equal(l, []string{shared}) {
+		// the shared page and its child (readable through the ancestor); never the unshared sibling
+		if l := ids(g.list(p, "search.notes", map[string]any{"q": "quokka"})); len(l) != 2 || !slices.Contains(l, shared) || !slices.Contains(l, kid) {
 			t.Fatalf("search: %v", l)
 		}
 		for _, s := range g.list(p, "space.list", map[string]any{}) {

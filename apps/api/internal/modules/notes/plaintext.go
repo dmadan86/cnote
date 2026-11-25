@@ -18,12 +18,19 @@ import (
 // apps/collab/test/fixtures/blocks.json hold the expected output for both.
 func PlainText(md string) string {
 	var out []string
-	fence := 0 // length of the open code fence's backtick run, 0 when outside one
+	fence := 0  // length of the open code fence's backtick run, 0 when outside one
+	quotes := 0 // how many quote prefixes the open fence sits inside (a fenced block in a panel)
 	for _, line := range strings.Split(strings.ReplaceAll(md, "\r\n", "\n"), "\n") {
-		t := strings.TrimSpace(line)
+		// Quote and panel prefixes go first, so a fence inside a panel is still a fence. Inside a fence only as many
+		// prefixes as the fence opened under are removed: a code line that starts with ">" keeps it.
+		t, depth := strings.TrimSpace(line), 0
+		for strings.HasPrefix(t, ">") && (fence == 0 || depth < quotes) {
+			t = strings.TrimSpace(strings.TrimPrefix(t, ">"))
+			depth++
+		}
 		if n := backtickRun(t); n >= 3 {
 			if fence == 0 && (n == len(t) || !strings.Contains(t[n:], "`")) {
-				fence = n // opening fence, with or without a language
+				fence, quotes = n, depth // opening fence, with or without a language
 				continue
 			}
 			if fence > 0 && n >= fence && n == len(t) {
@@ -36,9 +43,6 @@ func PlainText(md string) string {
 				out = append(out, t)
 			}
 			continue
-		}
-		for strings.HasPrefix(t, ">") { // quote and panel prefixes, nested
-			t = strings.TrimSpace(strings.TrimPrefix(t, ">"))
 		}
 		if panelMarker.MatchString(t) || strings.EqualFold(t, "[[toc]]") {
 			continue
@@ -62,7 +66,9 @@ var (
 	summaryLine = regexp.MustCompile(`^<details>\s*<summary>(.*)</summary>$`)
 	tagRe       = regexp.MustCompile(`</?(details|summary|span|time|table|thead|tbody|tr|th|td|p|br)(\s[^>]*)?/?>`)
 	cellEnd     = regexp.MustCompile(`</(td|th|tr|p|summary)>|<br\s*/?>`)
-	imageRe     = regexp.MustCompile(`!\[([^\]]*)\]\([^)\s]*\)`)
+	// ![alt](src "title"): alt and title may hold backslash escapes (\] \[ \\ \"), which the editor writes.
+	imageRe  = regexp.MustCompile(`!\[((?:\\.|[^\]\\])*)\]\([^)\s]*(?:\s+"(?:\\.|[^"\\])*")?\)`)
+	unescape = regexp.MustCompile(`\\([\\\[\]"])`)
 )
 
 func backtickRun(s string) int {
@@ -79,7 +85,9 @@ func stripMarkup(line string) string {
 	for i := 0; i < len(parts); i += 2 {
 		p := cellEnd.ReplaceAllString(parts[i], "\n")
 		p = tagRe.ReplaceAllString(p, "")
-		p = imageRe.ReplaceAllString(p, "$1")
+		p = imageRe.ReplaceAllStringFunc(p, func(m string) string {
+			return unescape.ReplaceAllString(imageRe.FindStringSubmatch(m)[1], "$1")
+		})
 		parts[i] = unescapeHTML(p)
 	}
 	return strings.Join(parts, "`")

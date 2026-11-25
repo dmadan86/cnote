@@ -3,6 +3,7 @@ package worker
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"slices"
 
 	"github.com/jackc/pgx/v5"
@@ -18,7 +19,8 @@ import (
 // Auto-watch: the creator and the owner of a new page, a new owner after note.updated with "owner" changed, and
 // anyone who adds a comment. Recipients: watchers plus, for comment events, the people in the same thread. The actor
 // is never notified. Each recipient is checked for read access now; one who lost it is skipped and their watch is
-// removed. Someone who already got an @mention notification for this event is skipped, so a mention is not doubled.
+// removed. Someone who already got an @mention notification from this same edit or comment (same actor and event key) is skipped, so a
+// mention is not doubled; an unrelated earlier mention suppresses nothing.
 // Dedupe: at most one notification per recipient, page, actor, kind (and thread, for comments) in 10 minutes, which
 // also makes a retried event harmless.
 func pageNotifyOnEvent(c *command.Ctx, ev jobs.Event) error {
@@ -38,6 +40,7 @@ func pageNotifyOnEvent(c *command.Ctx, ev jobs.Event) error {
 	var p struct {
 		Changed   []string `json:"changed"`
 		CommentID string   `json:"comment_id"`
+		Version   int      `json:"version"`
 	}
 	_ = json.Unmarshal(ev.Payload, &p)
 	actor := c.Principal.UserID // dispatch sets it from the event: the user, or who an agent acts for
@@ -55,6 +58,7 @@ func pageNotifyOnEvent(c *command.Ctx, ev jobs.Event) error {
 		return err
 	}
 	kind := ""
+	eventKey := "" // what a mention made by this same edit or comment carries; empty when the event has no mention
 	switch ev.Kind {
 	case "note.created":
 		if err := watch(creator, "creator"); err != nil {
@@ -71,6 +75,7 @@ func pageNotifyOnEvent(c *command.Ctx, ev jobs.Event) error {
 			return nil
 		}
 		kind = "page_updated"
+		eventKey = fmt.Sprintf("note:%s:v%d", *ev.NoteID, p.Version)
 	case "comment.added", "comment.resolved", "comment.reopened":
 		if ev.Kind == "comment.added" {
 			if err := watch(actor, "commenter"); err != nil {
@@ -78,6 +83,9 @@ func pageNotifyOnEvent(c *command.Ctx, ev jobs.Event) error {
 			}
 		}
 		kind = "comment"
+		if p.CommentID != "" {
+			eventKey = "comment:" + p.CommentID
+		}
 	default:
 		return nil
 	}
@@ -122,10 +130,10 @@ func pageNotifyOnEvent(c *command.Ctx, ev jobs.Event) error {
 		var skip bool
 		if err := c.Tx.QueryRow(c.Context,
 			`select exists(select 1 from core.notifications where user_id = $1::uuid and note_id = $2::uuid and (
-			     (kind = 'mention' and created_at >= $5::timestamptz - interval '1 minute')
+			     (kind = 'mention' and $5::text <> '' and event_key = $5::text and actor_user_id is not distinct from $4::uuid)
 			  or (kind = $3 and actor_user_id is not distinct from $4::uuid and thread_id is not distinct from $6::uuid
 			      and created_at > now() - interval '10 minutes')))`,
-			u, *ev.NoteID, kind, actor, ev.CreatedAt, thread).Scan(&skip); err != nil {
+			u, *ev.NoteID, kind, actor, eventKey, thread).Scan(&skip); err != nil {
 			return err
 		}
 		if skip {

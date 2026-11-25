@@ -564,27 +564,14 @@ function parseList(lines: string[], cur: { i: number }, base: number): Block {
   return { k: 'list', ordered, items }
 }
 
+// ![alt](src "title"): a backslash, `[` and `]` are escaped in the alt text, a backslash and `"` in the title, as the editor writes them.
+const IMAGE_LINE = /^!\[((?:\\.|[^\]\\])*)\]\(([^\s)]+)(?:\s+"((?:\\.|[^"\\])*)")?\)$/
+const unescapeMd = (s: string) => s.replace(/\\([\\[\]"])/g, '$1')
+
 function image(line: string): Block | null {
-  const t0 = trim(line)
-  if (!t0.startsWith('![')) return null
-  const t = t0.slice(2)
-  const altEnd = t.indexOf('](')
-  if (altEnd < 0) return null
-  const tail = t.slice(altEnd + 2)
-  if (!tail.endsWith(')')) return null
-  const inner = tail.slice(0, -1)
-  let src = inner
-  let title: string | null = null
-  const sp = inner.indexOf(' ')
-  if (sp >= 0) {
-    src = inner.slice(0, sp)
-    let r = trim(inner.slice(sp + 1))
-    if (!r.startsWith('"')) return null
-    r = r.slice(1)
-    if (!r.endsWith('"')) return null
-    title = r.slice(0, -1)
-  }
-  return safeSrc(src) ? { k: 'image', src, alt: t.slice(0, altEnd), title } : null
+  const m = IMAGE_LINE.exec(trim(line))
+  if (!m || !safeSrc(m[2])) return null
+  return { k: 'image', src: m[2], alt: unescapeMd(m[1]), title: m[3] === undefined ? null : unescapeMd(m[3]) }
 }
 
 function parseCell(t: Tag, body: string): Cell | null {
@@ -1112,7 +1099,8 @@ function render(node: unknown, top: boolean): string | null {
     const alt = strOf(el.getAttribute('alt')) ?? ''
     if (!safeSrc(src)) return null
     const t = strOf(el.getAttribute('title'))
-    return t ? `![${alt}](${src} "${t}")` : `![${alt}](${src})`
+    const a = alt.replace(/[\\[\]]/g, '\\$&')
+    return t ? `![${a}](${src} "${t.replace(/["\\]/g, '\\$&')}")` : `![${a}](${src})`
   }
   if (tag === 'codeBlock') {
     const code = inline(el, 'md', true)

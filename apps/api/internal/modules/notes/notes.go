@@ -161,7 +161,7 @@ func listRelations(c *command.Ctx, id string) ([]Relation, error) {
 		`select r.id::text, r.from_id::text, r.to_id::text, r.kind, r.external_ref, o.title as other_title
 		 from core.relations r
 		 join core.notes o on o.id = case when r.from_id = $1::uuid then r.to_id else r.from_id end
-		 where (r.from_id = $1::uuid or r.to_id = $1::uuid) and o.deleted_at is null and o.space_id = any($2::text[]::uuid[])
+		 where (r.from_id = $1::uuid or r.to_id = $1::uuid) and o.deleted_at is null
 		   and core.note_access(o.id, $3::uuid, $4, $2::text[]::uuid[]) <> 'none'
 		 order by r.created_at`, id, spaces, uid, admin)
 	if err != nil {

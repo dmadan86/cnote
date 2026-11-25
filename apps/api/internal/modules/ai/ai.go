@@ -333,12 +333,12 @@ func clearProvider(c *command.Ctx, input json.RawMessage) (any, error) {
 // page restrictions and exclude archived/deleted notes inside the query, so nothing unreadable leaks through.
 const hybridSQL = `
 with ft as (
-  select n.id, row_number() over (order by ts_rank(n.search, websearch_to_tsquery('english', $1)) desc) as rnk
+  select n.id, row_number() over (order by ts_rank(coalesce(n.search_plain, n.search), websearch_to_tsquery('english', $1)) desc) as rnk
   from core.notes n
   where n.deleted_at is null and n.freshness <> 'archived' and n.space_id = any($2::text[]::uuid[])
     and core.note_access(n.id, $6::uuid, $7::bool, $2::text[]::uuid[]) <> 'none'
-    and n.search @@ websearch_to_tsquery('english', $1)
-  order by ts_rank(n.search, websearch_to_tsquery('english', $1)) desc
+    and (n.search_plain @@ websearch_to_tsquery('english', $1) or (n.search_plain is null and n.search @@ websearch_to_tsquery('english', $1)))
+  order by ts_rank(coalesce(n.search_plain, n.search), websearch_to_tsquery('english', $1)) desc
   limit 50
 ), near as (
   select c.note_id, min(c.embedding <=> $3::vector) as dist

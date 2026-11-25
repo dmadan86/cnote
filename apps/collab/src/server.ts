@@ -102,7 +102,12 @@ export function createServer(opts: Options) {
   const recheckMs = opts.recheckMs ?? 10_000
   const rooms = new Map<string, Room>()
   let minSchema = opts.minSchema ?? 0
+  /** What /collab/min-schema reports: the raised value only once every fenced peer has stopped applying updates. */
+  let reportedMin = minSchema
   const schemaOf = new WeakMap<WebSocket, number>()
+  /** Sockets below the minimum: their document-update frames are dropped, queued ones included. Set synchronously when the minimum rises. */
+  const fencedWs = new WeakSet<WebSocket>()
+  const chains = new WeakMap<WebSocket, Promise<void>>()
   const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_FRAME })
 
   // Single-writer fence across service instances: the room owner holds a session advisory lock per note on one
@@ -459,11 +464,12 @@ export function createServer(opts: Options) {
 
     // Frames of one connection are handled strictly in order.
     let chain = Promise.resolve()
+    chains.set(socket, chain)
     socket.on('message', (data, isBinary) => {
-      if (!isBinary || done) return
+      if (!isBinary || done || fencedWs.has(socket)) return
       const buf = data as Buffer
       chain = chain.then(async () => {
-        if (done) return
+        if (done || fencedWs.has(socket)) return
         try {
           await onFrame(room, me, p, write, new Uint8Array(buf.buffer, buf.byteOffset, buf.length))
         } catch (e) {
@@ -474,6 +480,7 @@ export function createServer(opts: Options) {
           cleanup()
         }
       })
+      chains.set(socket, chain)
     })
     // Frames still queued when the socket closes (a page leaving mid-typing) are applied before the final snapshot.
     socket.on('close', () => void chain.then(cleanup))
@@ -499,10 +506,16 @@ export function createServer(opts: Options) {
 
   /** Raise the minimum editor schema and close every open socket now below it, so an old tab cannot keep
    * editing through the change. A lower value is ignored: the minimum only goes up until the process restarts. */
-  function setMinSchema(n: number) {
+  async function setMinSchema(n: number) {
     if (!Number.isInteger(n) || n <= minSchema) return
     minSchema = n
-    for (const w of wss.clients) if ((schemaOf.get(w) ?? 0) < n) w.close(CLOSE_RELOAD, 'reload')
+    // Fence first, synchronously: no frame of an old tab is applied from here on. Then close, then wait for the one
+    // frame that may be mid-write, so a caller that sees the new minimum knows no old tab can still change a page.
+    const old = [...wss.clients].filter((w) => (schemaOf.get(w) ?? 0) < n)
+    for (const w of old) fencedWs.add(w)
+    for (const w of old) w.close(CLOSE_RELOAD, 'reload')
+    await Promise.allSettled(old.map((w) => chains.get(w)))
+    reportedMin = Math.max(reportedMin, n)
   }
 
   function setMin(req: http.IncomingMessage, res: http.ServerResponse) {
@@ -516,12 +529,12 @@ export function createServer(opts: Options) {
     req.on('data', (c: Buffer) => {
       if (raw.length < 1024) raw += c
     })
-    req.on('end', () => {
+    req.on('end', async () => {
       try {
         const n = JSON.parse(raw).min
         if (!Number.isInteger(n) || n < 0) throw new Error('bad')
-        setMinSchema(n)
-        send(200, JSON.stringify({ min: minSchema }))
+        await setMinSchema(n)
+        send(200, JSON.stringify({ min: reportedMin }))
       } catch {
         send(400, '{"error":"bad request"}')
       }
@@ -569,7 +582,7 @@ export function createServer(opts: Options) {
       // Under /collab/ because the API front forwards only that prefix. Public and harmless: the web client asks before it offers blocks an older tab would delete.
       res.setHeader('Access-Control-Allow-Origin', '*')
       res.setHeader('Content-Type', 'application/json')
-      return void res.end(JSON.stringify({ min: minSchema }))
+      return void res.end(JSON.stringify({ min: reportedMin }))
     }
     if (req.method === 'POST' && req.url === '/internal/render') return render(req, res)
     if (req.method === 'POST' && req.url === '/internal/min-schema') return setMin(req, res)

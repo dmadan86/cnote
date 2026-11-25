@@ -247,3 +247,63 @@ func TestA1SearchFiltersAndPlainTextIndex(t *testing.T) {
 	d.code("invalid", owner, "search.notes", map[string]any{"q": "x", "status": "bogus"})
 	d.code("invalid", owner, "search.notes", map[string]any{"q": "x", "updated_after": "yesterday"})
 }
+
+// A page shared through an ancestor is readable (core.note_access, note.get), so every list must show it: search,
+// label lists, recents and stars, and the page's relations. The space itself stays private to the member.
+func TestA1SharedThroughAncestorInPrivateSpace(t *testing.T) {
+	d, owner := newDG(t)
+	member := d.member(owner)
+	priv := d.space(owner, "SEC", "private")
+	parent := d.page(owner, priv, "Shared parent", nil, "x")
+	child := d.page(owner, priv, "Deep child", parent, "ostrichword content")
+	hidden := d.page(owner, priv, "Hidden sibling", nil, "ostrichword content")
+	d.ok(owner, "label.set", map[string]any{"note_id": child, "labels": []string{"kid"}})
+	d.ok(owner, "label.set", map[string]any{"note_id": hidden, "labels": []string{"kid", "nope"}})
+	d.ok(owner, "note.share", map[string]any{"note_id": parent, "user_id": member.userID, "level": "view"})
+
+	d.ok(member, "note.get", map[string]any{"id": child}) // the reference predicate: readable
+	if got := ids(d.list(member, "search.notes", map[string]any{"q": "ostrichword"})); len(got) != 1 || got[0] != child {
+		t.Fatalf("search through a shared ancestor: %v", got)
+	}
+	if mc := labelCounts(d, member, map[string]any{}); mc["kid"] != 1 || len(mc) != 1 {
+		t.Fatalf("label list: %v", mc)
+	}
+	d.ok(member, "note.viewed", map[string]any{"note_id": child})
+	d.ok(member, "note.star", map[string]any{"note_id": child, "starred": true})
+	if got := mineIDs(d, member, "recent"); len(got) != 1 || got[0] != child {
+		t.Fatalf("recents: %v", got)
+	}
+	if got := mineIDs(d, member, "starred"); len(got) != 1 || got[0] != child {
+		t.Fatalf("starred: %v", got)
+	}
+	// relations: the parent links to the child, and the member reads both ends
+	d.ok(owner, "relation.add", map[string]any{"from_id": parent, "to_id": child, "kind": "related"})
+	if rels, _ := d.ok(member, "note.get", map[string]any{"id": parent})["relations"].([]any); len(rels) != 2 { // the child link and the related one
+		t.Fatalf("relations: %v", rels)
+	}
+	// unshare: everything goes at once
+	d.ok(owner, "note.unshare", map[string]any{"note_id": parent, "user_id": member.userID})
+	if got := ids(d.list(member, "search.notes", map[string]any{"q": "ostrichword"})); len(got) != 0 {
+		t.Fatalf("search after unshare: %v", got)
+	}
+}
+
+// search_plain is read where set and the generated column is the fallback, so pages stay searchable before the backfill.
+func TestA1SearchUsesPlainWhereFilledAndFallsBack(t *testing.T) {
+	d, owner := newDG(t)
+	sp := d.space(owner, "OPN", "open")
+	filled := d.page(owner, sp, "Filled", nil, "> [!WARNING]\n> kangaroo here")
+	unfilled := d.page(owner, sp, "Unfilled", nil, "> [!WARNING]\n> kangaroo too")
+	d.sql("update core.notes set search_plain = null where id = $1::uuid", unfilled)
+	if got := ids(d.list(owner, "search.notes", map[string]any{"q": "kangaroo"})); len(got) != 2 {
+		t.Fatalf("filled and unfilled rows are both found: %v", got)
+	}
+	// the marker word is not indexed where search_plain is filled, and is where the raw column answers
+	if got := ids(d.list(owner, "search.notes", map[string]any{"q": "warning"})); len(got) != 1 || got[0] != unfilled {
+		t.Fatalf("plain text index vs fallback: %v", got)
+	}
+	d.sql("update core.notes set search_plain = null where id = $1::uuid", filled)
+	if got := ids(d.list(owner, "search.notes", map[string]any{"q": "kangaroo"})); len(got) != 2 {
+		t.Fatalf("all rows unfilled: %v", got)
+	}
+}

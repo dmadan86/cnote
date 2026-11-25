@@ -79,13 +79,13 @@ func searchNotes(c *command.Ctx, input json.RawMessage) (any, error) {
 	rows, err := c.Tx.Query(c.Context,
 		`select id::text, space_id::text, title, types, freshness, verified_at,
 		        content_md as snippet, -- replaced by Snippets below
-		        case when $1::text = '' then 0 else (ts_rank(search, websearch_to_tsquery('english', $1::text)) + similarity(title, $1::text))::real end as rank
+		        case when $1::text = '' then 0 else (ts_rank(coalesce(search_plain, search), websearch_to_tsquery('english', $1::text)) + similarity(title, $1::text))::real end as rank
 		 from core.notes
 		 where deleted_at is null and ($4::bool or freshness <> 'archived')
-		   and (space_id = any($2::text[]::uuid[]) or exists (select 1 from core.note_permissions sp where sp.note_id = notes.id and sp.user_id = $5::uuid))
+		   and (space_id = any($2::text[]::uuid[]) or exists (select 1 from core.note_permissions sp where sp.user_id = $5::uuid)) -- a share on any ancestor reaches a page in a private space; core.note_access decides
 		   and core.note_access(id, $5::uuid, $6::bool, $2::text[]::uuid[]) <> 'none'
 		   and ($1::text = '' or (case when $11::bool then title % $1::text or title ilike '%' || $1::text || '%'
-		        else search @@ websearch_to_tsquery('english', $1::text) or title % $1::text or title ilike '%' || $1::text || '%' end))
+		        else (search_plain @@ websearch_to_tsquery('english', $1::text) or (search_plain is null and search @@ websearch_to_tsquery('english', $1::text))) or title % $1::text or title ilike '%' || $1::text || '%' end))
 		   and ($7::uuid is null or space_id = $7::uuid)
 		   and ($8::uuid is null or owner_id = $8::uuid or created_by = $8::uuid
 		        or exists (select 1 from core.note_revisions r where r.note_id = notes.id and r.created_by = $8::uuid))

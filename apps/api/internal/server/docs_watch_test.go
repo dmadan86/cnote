@@ -232,3 +232,40 @@ func TestVersionCompareAccess(t *testing.T) {
 	g.code("not_found", bob, "note.revision", map[string]any{"id": rev[0]})
 	g.code("not_found", bob, "note.revisions", map[string]any{"note_id": page})
 }
+
+// A mention suppresses the page notification only when it came from the same edit or comment. An earlier mention by
+// someone else (or from another edit) does not hide a later change.
+func TestUnrelatedMentionDoesNotSuppressPageNotification(t *testing.T) {
+	e := newEnv(t)
+	g := gw{t, e}
+	owner := e.signup("Olive", true)
+	a := e.addMember(owner, e.signup("Ann", false), "member")
+	b := e.addMember(owner, e.signup("Ben", false), "member")
+	w := e.addMember(owner, e.signup("Wes", false), "member")
+	sp := g.space(owner, "MN", "open")
+	page := g.page(owner, sp, "Plan", nil, "x")
+	settle(t, e, owner.ws)
+	g.ok(w, "note.watch", map[string]any{"note_id": page, "watching": true})
+	save := func(p who, body string) {
+		g.ok(p, "note.update", map[string]any{"id": page, "schema": 2, "expected_epoch": 1, "content_md": body})
+	}
+	// A's edit mentions the watcher: one mention, and no second page_updated for the same edit
+	save(a, "x "+mention(owner.ws, w.userID, "Wes"))
+	settle(t, e, owner.ws)
+	if len(inbox(g, w, "mention")) != 1 || len(inbox(g, w, "page_updated")) != 0 {
+		t.Fatalf("same event: mention %v, page_updated %v", inbox(g, w, "mention"), inbox(g, w, "page_updated"))
+	}
+	// B's later edit, with no mention, still reaches the watcher
+	save(b, "x "+mention(owner.ws, w.userID, "Wes")+" and more")
+	settle(t, e, owner.ws)
+	if len(inbox(g, w, "mention")) != 1 || len(inbox(g, w, "page_updated")) != 1 {
+		t.Fatalf("B's edit: mention %v, page_updated %v", inbox(g, w, "mention"), inbox(g, w, "page_updated"))
+	}
+	// a comment by B that mentions the watcher is one mention; a plain comment by A afterwards still notifies
+	g.ok(b, "comment.add", map[string]any{"note_id": page, "body": "hi " + mention(owner.ws, w.userID, "Wes")})
+	g.ok(a, "comment.add", map[string]any{"note_id": page, "body": "plain"})
+	settle(t, e, owner.ws)
+	if len(inbox(g, w, "mention")) != 2 || len(inbox(g, w, "comment")) != 1 {
+		t.Fatalf("comments: mention %v, comment %v", inbox(g, w, "mention"), inbox(g, w, "comment"))
+	}
+}

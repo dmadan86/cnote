@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
 	"regexp"
 	"strconv"
@@ -329,7 +330,7 @@ func noteUpdate(c *command.Ctx, input json.RawMessage) (any, error) {
 		if err := checkpoint(c, n.ID, c.Principal.UserID, checkpointEverySecs); err != nil {
 			return nil, err
 		}
-		if err := notifyMentions(c, n.ID, n.Title, before.ContentMD, n.ContentMD); err != nil {
+		if err := notifyMentions(c, n.ID, n.Title, before.ContentMD, n.ContentMD, fmt.Sprintf("note:%s:v%d", n.ID, n.Version)); err != nil {
 			return nil, err
 		}
 	}
@@ -401,7 +402,8 @@ func mentions(md, ws string) []string {
 }
 
 // notifyMentions notifies people mentioned in newMD but not in oldMD (in-app notification + mention.created).
-func notifyMentions(c *command.Ctx, noteID, title, oldMD, newMD string) error {
+// eventKey names the edit or comment that made the mention (see worker.pageNotifyOnEvent).
+func notifyMentions(c *command.Ctx, noteID, title, oldMD, newMD, eventKey string) error {
 	ws := strings.ToLower(c.WorkspaceID())
 	old := map[string]bool{}
 	for _, u := range mentions(oldMD, ws) {
@@ -413,20 +415,14 @@ func notifyMentions(c *command.Ctx, noteID, title, oldMD, newMD string) error {
 		}
 		// Member of this workspace who can read the page, judged with their own role and space access.
 		var canRead bool
-		if err := c.Tx.QueryRow(c.Context,
-			`select exists(select 1 from core.memberships m where m.user_id = $1::uuid and core.note_access($2::uuid, $1::uuid,
-			   m.role in ('admin','owner'),
-			   array(select s.id from core.spaces s
-			         left join core.space_members sm on sm.space_id = s.id and sm.user_id = $1::uuid
-			         where m.role in ('admin','owner') or sm.user_id is not null
-			            or (s.visibility = 'open' and m.role <> 'guest'))) <> 'none')`, user, noteID).Scan(&canRead); err != nil {
+		if err := c.Tx.QueryRow(c.Context, "select "+notify.ReadableExpr("$1::uuid", "$2::uuid"), user, noteID).Scan(&canRead); err != nil {
 			return err
 		}
 		if !canRead {
 			continue
 		}
 		ids, err := notify.Send(c.Context, c.Tx, notify.Notification{
-			WorkspaceID: ws, UserID: user, Kind: "mention", Title: title, NoteID: &noteID, ActorUserID: c.Principal.UserID})
+			WorkspaceID: ws, UserID: user, Kind: "mention", Title: title, NoteID: &noteID, ActorUserID: c.Principal.UserID, EventKey: &eventKey})
 		if err != nil {
 			return err
 		}

@@ -217,6 +217,23 @@ describe('md', () => {
     expect(out.includes('<table')).toBe(false)
   })
 
+  it('image alt and title escape brackets, quotes and backslashes, and read them back as plain text', () => {
+    const doc = new Y.Doc()
+    seed(doc, '![chart \\[Q1\\] a\\\\b](https://x.y/c.png "say \\"hi\\" a\\\\b")')
+    const e = el(frag(doc).get(0))
+    expect(e.getAttribute('alt')).toBe('chart [Q1] a\\b')
+    expect(e.getAttribute('title')).toBe('say "hi" a\\b')
+    expect(toMarkdown(doc)).toBe('![chart \\[Q1\\] a\\\\b](https://x.y/c.png "say \\"hi\\" a\\\\b")')
+    // an image the editor made with those characters in its attributes is written escaped, so the next read keeps it
+    const made = new Y.Doc()
+    const img = new Y.XmlElement('image')
+    frag(made).insert(0, [img])
+    img.setAttribute('src', 'https://x.y/c.png')
+    img.setAttribute('alt', 'a]b[c')
+    img.setAttribute('title', 'q"t')
+    expect(toMarkdown(made)).toBe('![a\\]b\\[c](https://x.y/c.png "q\\"t")')
+  })
+
   it('images_with_and_without_title', () => {
     for (const md of [
       '![a cat](https://x.y/c.png)',
