@@ -1,5 +1,6 @@
 'use client'
 import { HomeDashboard } from '@/components/home/dashboard'
+import { SetupToast } from '@/components/home/setup-toast'
 import { HomeWidgets } from '@/components/home/widgets-home'
 import { PageList } from '@/components/page-list'
 import { useShell } from '@/components/shell'
@@ -20,6 +21,7 @@ export function HomePage({ widgets }: { widgets: boolean }) {
   return (
     <div className="mx-auto max-w-6xl space-y-8 px-6 py-8">
       <h1 className="text-2xl font-semibold tracking-tight">Welcome back, {me.user.name.split(' ')[0]}</h1>
+      <SetupToast />
       {spaces.length === 0 && (
         <div className="rounded-md border border-dashed border-line p-6 text-center">
           <p className="mb-3 text-muted">Create a space to start writing pages.</p>

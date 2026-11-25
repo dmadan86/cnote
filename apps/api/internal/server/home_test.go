@@ -1,6 +1,7 @@
 package server_test
 
 import (
+	"slices"
 	"testing"
 )
 
@@ -228,7 +229,13 @@ func TestHomeModulesOffHidesTiles(t *testing.T) {
 	b.invDue(day(-5))
 	b.ok("deal.create", map[string]any{"space_id": b.space, "title": "Lead"})
 	set := func(mods ...string) {
-		b.must(b.owner, "workspace.update", map[string]any{"settings": map[string]any{"modules": append([]string{}, mods...)}})
+		off := []string{} // hidden_modules lists what is off; `mods` are the ones left on
+		for _, k := range []string{"docs", "projects", "crm", "billing"} {
+			if !slices.Contains(mods, k) {
+				off = append(off, k)
+			}
+		}
+		b.must(b.owner, "workspace.update", map[string]any{"settings": map[string]any{"hidden_modules": off}})
 	}
 	set("docs", "projects", "crm") // billing off
 	h := b.home(b.owner)

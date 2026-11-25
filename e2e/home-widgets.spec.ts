@@ -52,7 +52,7 @@ test.describe('configurable Home', () => {
     // the move buttons announce and disable at the edge
     await page.getByRole('button', { name: 'Move Sales trend down' }).click()
     await expect(page.getByText(/Moved Sales trend down/)).toBeAttached()
-    await expect(page.getByRole('button', { name: 'Move Ask your business up' })).toBeDisabled()
+    await expect(page.getByRole('button', { name: 'Move Get set up up' })).toBeDisabled()
 
     // resize with the radio group, by keyboard
     const medium = page
@@ -175,6 +175,7 @@ test('with the flag off Home is the standard one', async ({ page }) => {
   test.skip(on, 'runs only without HOME_WIDGETS')
   await signup(page)
   await createSpace(page)
+  await page.goto(page.url().replace(/\/s\/.*$/, '')) // createSpace ends on the space page; this check is about Home
   await expect(page.getByRole('region', { name: 'Today at a glance' })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Customise' })).toHaveCount(0)
 })

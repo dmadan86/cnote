@@ -248,7 +248,8 @@ func Commands() []command.Command {
 			return execute(c, n, i)
 		}))
 	}
-	return append(out, command.NewCommand("contact.lifecycle", command.GroupRead, lifecycle), importCmd("contact.import_keys", importKeys), importCmd("contact.import_usage", importUsage))
+	return append(out, command.NewCommand("contact.lifecycle", command.GroupRead, lifecycle), importCmd("contact.import_keys", importKeys), importCmd("contact.import_usage", importUsage),
+		command.Exists("setup.customer_exists", "select 1 from crm.contacts c join core.notes n on n.id = c.note_id where c.workspace_id = $1::uuid and n.deleted_at is null and not c.is_vendor"))
 }
 func emit(c *command.Ctx, kind, id string, p any) error { _, err := c.Emit(kind, &id, p); return err }
 func rename(c *command.Ctx, id string, title *string) error {

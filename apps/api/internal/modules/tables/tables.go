@@ -222,6 +222,7 @@ func Commands() []command.Command {
 		}
 		cmds = append(cmds, c)
 	}
+	cmds = append(cmds, command.Exists("setup.table_exists", "select 1 from tables.bases where workspace_id = $1::uuid and deleted_at is null"))
 	return cmds
 }
 

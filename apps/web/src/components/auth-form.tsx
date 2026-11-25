@@ -39,7 +39,7 @@ export function AuthForm({ mode }: { mode: 'login' | 'signup' }) {
           password: get('password'),
           workspace_name: get('workspace'),
         })
-        router.push(r.workspace_id ? `/w/${r.workspace_id}` : '/')
+        router.push(r.workspace_id ? `/w/${r.workspace_id}/welcome` : '/')
       } else {
         if (challenge) {
           done(await auth.mfaVerify({ mfa_token: challenge, code: get('code') }))

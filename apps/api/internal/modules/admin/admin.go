@@ -39,6 +39,7 @@ func Commands() []command.Command {
 		{"apikey.revoke", command.GroupAdmin, command.Admin, false, keyRevoke},
 		{"workspace.get", command.GroupRead, command.Guest, false, workspaceGet},
 		{"workspace.update", command.GroupAdmin, command.Admin, false, workspaceUpdate},
+		{"onboarding.complete", command.GroupAdmin, command.Admin, false, onboardingComplete},
 		{"confirmation.list", command.GroupRead, command.Member, false, confirmationList},
 		{"confirmation.decide", command.GroupAdmin, command.Member, false, confirmationDecide},
 		{"usage.summary", command.GroupRead, command.Admin, false, usageSummary},
@@ -374,6 +375,9 @@ func workspaceUpdate(c *command.Ctx, b json.RawMessage) (any, error) {
 	}
 	var obj map[string]json.RawMessage
 	_ = json.Unmarshal(settings, &obj)
+	if _, set := obj["onboarding"]; set {
+		return nil, command.ErrInvalid("onboarding is changed only by onboarding.complete")
+	}
 	var groups []json.RawMessage
 	if json.Unmarshal(obj["agent_tool_groups"], &groups) == nil {
 		for _, g := range groups {
@@ -401,6 +405,25 @@ func workspaceUpdate(c *command.Ctx, b json.RawMessage) (any, error) {
 	}
 	_, e = c.Emit("workspace.settings_updated", nil, map[string]any{"keys": keys})
 	return out, e
+}
+
+// onboarding.complete {} -> {done_at}: marks first-run setup finished. Monotonic: one UPDATE that matches only while
+// done_at is unset, so concurrent or repeated calls keep the first timestamp. A second caller blocks on the row lock,
+// re-checks the WHERE under READ COMMITTED, matches nothing and reads the stored value.
+func onboardingComplete(c *command.Ctx, b json.RawMessage) (any, error) {
+	if _, e := object(b); e != nil {
+		return nil, e
+	}
+	var doneAt *string
+	e := c.Tx.QueryRow(c.Context, `update core.workspaces set settings = jsonb_set(settings, '{onboarding}',
+		  case when jsonb_typeof(settings->'onboarding') = 'object' then settings->'onboarding' else '{}'::jsonb end
+		  || jsonb_build_object('done_at', to_char(now() at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')))
+		where id = $1::uuid and coalesce(settings->'onboarding'->>'done_at', '') = ''
+		returning settings->'onboarding'->>'done_at'`, c.WorkspaceID()).Scan(&doneAt)
+	if errors.Is(e, pgx.ErrNoRows) {
+		e = c.Tx.QueryRow(c.Context, "select settings->'onboarding'->>'done_at' from core.workspaces where id = $1::uuid", c.WorkspaceID()).Scan(&doneAt)
+	}
+	return map[string]*string{"done_at": doneAt}, command.DB(e)
 }
 
 // confirmationList: held drafts of AI employees and outside agents. Admins see all; a member sees the ones raised by

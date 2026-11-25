@@ -34,6 +34,7 @@ func Commands() []command.Command {
 		confirm(nc("credit_note.create", mi, creditNoteCreate)),
 		confirm(nc("payment.record", mi, paymentRecord)),
 		role(confirm(nc("invoice.write_off", mi, invoiceWriteOff)), command.Admin),
+		command.Exists("setup.invoice_exists", "select 1 from billing.invoices i join core.notes n on n.id = i.note_id where i.workspace_id = $1::uuid and n.deleted_at is null and i.kind = 'invoice' and i.status <> 'draft' and not i.opening"),
 	}, append(reportCommands(), openingCommands()...)...)
 }
 

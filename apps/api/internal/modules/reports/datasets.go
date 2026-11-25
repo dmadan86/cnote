@@ -19,7 +19,7 @@ type field struct {
 
 type dataset struct {
 	key, label, noun, desc string
-	module                 string // settings.modules switch
+	module                 string // settings.hidden_modules switch
 	finance                bool   // whole dataset needs finance access
 	from                   string // after "from"
 	pk                     string // stable tiebreaker

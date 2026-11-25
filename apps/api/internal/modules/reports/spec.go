@@ -88,7 +88,7 @@ type Env struct {
 	Admin        bool              // access.Viewer
 	Role         int               // command.Role as int (0 guest .. 3 owner)
 	Finance      bool              // c.FinanceAllowed()
-	ModuleOn     func(string) bool // settings.modules switch ("billing", "crm", "projects", ...)
+	ModuleOn     func(string) bool // settings.hidden_modules switch ("billing", "crm", "projects", ...)
 	FYStartMonth int               // company fy_start_month, default 4
 	Today        time.Time         // billing.TodayIST()
 }

@@ -16,7 +16,7 @@ const minutesAgo = (at: number) => {
 
 /** The configurable Home (HOME_WIDGETS=1): a WidgetGrid over home.summary and report.run_many. */
 export function HomeWidgets() {
-  const { ws, me, modules } = useShell()
+  const { ws, me, modules, goal } = useShell()
   const [branch, setBranch] = useState('')
   const { data, error, reload } = useCmd<Summary>(ws, 'home.summary', branch ? { branch_id: branch } : {})
   const [nonce, setNonce] = useState(0)
@@ -36,7 +36,7 @@ export function HomeWidgets() {
   )
   // the starting layout depends on who is looking, not on the numbers
   const defaults = ctx
-    ? defaultGrid(homeDefaults({ role, finance }), homeWidgets, ctx)
+    ? defaultGrid(homeDefaults({ role, finance }, goal), homeWidgets, ctx)
     : { v: 1 as const, widgets: [] }
   if (error)
     return (

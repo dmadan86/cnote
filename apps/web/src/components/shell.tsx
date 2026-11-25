@@ -18,8 +18,8 @@ import { usePathname, useRouter } from 'next/navigation'
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { auth, cmd, type Me, type Member, type Note, type SharedNote, type Space } from '@/lib/api'
 import { MODULES, moduleOn } from '@/lib/modules'
+import { prependWidget } from '@/lib/screen-config'
 import { AskPanel } from './ai/ask-panel'
-import { BusinessTypeChooser } from './business-type'
 import { ChatNavLink } from './chat/nav'
 import { NotificationBell } from './notifications'
 import { Palette } from './palette'
@@ -34,8 +34,10 @@ type Shell = {
   notes: Note[]
   shared: SharedNote[]
   members: Member[]
-  /** settings.modules; null = all enabled. */
+  /** Modules not uninstalled in the Marketplace (settings.hidden_modules); null = all shown. */
   modules: string[] | null
+  /** settings.first_goal: the first thing the owner chose in setup; only orders the default Home. */
+  goal: string | null
   /** settings.deal_stage_labels: display labels for the fixed deal stage keys. */
   dealLabels: Record<string, string> | null
   reload: () => void
@@ -262,7 +264,15 @@ async function loadShared(ws: string) {
   return { roots, extra: extra.filter((k) => !roots.some((r) => r.id === k.id)) }
 }
 
-export function ShellView({ ws, children }: { ws: string; children: React.ReactNode }) {
+export function ShellView({
+  ws,
+  homeWidgets,
+  children,
+}: {
+  ws: string
+  homeWidgets?: boolean
+  children: React.ReactNode
+}) {
   const router = useRouter()
   const path = usePathname()
   const [me, setMe] = useState<Me>()
@@ -272,8 +282,7 @@ export function ShellView({ ws, children }: { ws: string; children: React.ReactN
   const [shared, setShared] = useState<SharedNote[]>([])
   const [modules, setModules] = useState<string[] | null>(null)
   const [dealLabels, setDealLabels] = useState<Record<string, string> | null>(null)
-  const [needType, setNeedType] = useState(false)
-  const [skipType, setSkipType] = useState(false)
+  const [goal, setGoal] = useState<string | null>(null)
   const [denied, setDenied] = useState(false)
   // Phones: the Spaces column is a drawer (closed on every navigation) so pages get the full width.
   const [spacesOpen, setSpacesOpen] = useState(false)
@@ -301,13 +310,18 @@ export function ShellView({ ws, children }: { ws: string; children: React.ReactN
       cmd<Member[]>(ws, 'member.list'),
       loadShared(ws),
       cmd<{
-        settings: { modules?: string[]; business_type?: string; deal_stage_labels?: Record<string, string> }
+        settings: {
+          hidden_modules?: string[]
+          first_goal?: string
+          deal_stage_labels?: Record<string, string>
+        }
       }>(ws, 'workspace.get'),
     ]).then(
       ([s, n, m, sh, w]) => {
-        setModules(w.settings.modules ?? null)
+        const off = w.settings.hidden_modules
+        setModules(off?.length ? MODULES.map((m) => m.key).filter((k) => !off.includes(k)) : null)
         setDealLabels(w.settings.deal_stage_labels ?? null)
-        setNeedType(!w.settings.business_type)
+        setGoal(w.settings.first_goal ?? null)
         setSpaces(s)
         setNotes([...n, ...sh.roots, ...sh.extra])
         setMembers(m)
@@ -375,6 +389,7 @@ export function ShellView({ ws, children }: { ws: string; children: React.ReactN
     shared,
     members,
     modules,
+    goal,
     dealLabels,
     reload,
     newPage,
@@ -604,6 +619,23 @@ export function ShellView({ ws, children }: { ws: string; children: React.ReactN
                       <br />
                       {me.user.email}
                     </div>
+                    {isAdmin && homeWidgets && (
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className={menuItem}
+                        onClick={async () => {
+                          close()
+                          // best effort: Home still opens if the layout cannot be saved
+                          await prependWidget(ws, 'home', { id: 'setup', type: 'setup', size: 'l' }).catch(
+                            () => {},
+                          )
+                          router.push(base)
+                        }}
+                      >
+                        Setup guide
+                      </button>
+                    )}
                     <Link href={`${base}/settings`} onClick={close} role="menuitem" className={menuItem}>
                       Settings
                     </Link>
@@ -632,9 +664,6 @@ export function ShellView({ ws, children }: { ws: string; children: React.ReactN
         <AskPanel open={ask} onClose={() => setAsk(false)} seed={askSeed} />
         <Palette open={palette} onClose={() => setPalette(false)} />
         <PersonHoverLayer />
-        {needType && isAdmin && !skipType && (
-          <BusinessTypeChooser ws={ws} onDone={reload} onClose={() => setSkipType(true)} />
-        )}
       </FoldCtx.Provider>
     </Ctx.Provider>
   )

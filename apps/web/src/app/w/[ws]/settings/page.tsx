@@ -53,7 +53,7 @@ const SECTIONS: { group: string; tabs: SettingsTab[] }[] = [
         key: 'Workspace',
         icon: Settings2,
         label: 'General',
-        desc: 'Workspace name, business type and modules.',
+        desc: 'Workspace name and business type.',
       },
       {
         key: 'Company',
@@ -210,7 +210,7 @@ function WorkspaceTab({ ws }: { ws: string }) {
       <section className="max-w-2xl space-y-2">
         <h2 className="text-[14px] font-semibold">Business type</h2>
         <p className="text-[13px] text-muted">
-          Changing this re-applies the modules shown in the sidebar and the CRM deal stage names.
+          Changing this renames the CRM deal stages. It does not hide any module.
         </p>
         <CompanyProfile
           ws={ws}

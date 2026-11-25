@@ -254,3 +254,27 @@ export function useScreenConfig<T extends { v: number }>(
     clearError,
   }
 }
+
+/**
+ * Puts one widget at the top of a screen's saved layout without touching the rest, and updates any open copy of that
+ * layout. Does nothing when the person has no saved layout (they see the default, which the caller owns), when the
+ * widget is already in it, or when the layout is from a newer app version.
+ */
+export async function prependWidget(
+  ws: string,
+  screen: string,
+  widget: { id: string; type: string; size: string },
+) {
+  const cfg = (await server.get(ws, screen)).config as { v?: number; widgets?: { type?: string }[] } | null
+  if (!cfg || cfg.v !== 1 || !Array.isArray(cfg.widgets) || cfg.widgets.some((w) => w?.type === widget.type))
+    return
+  const next = { ...cfg, widgets: [widget, ...cfg.widgets] }
+  await server.set(ws, screen, next)
+  for (const e of entries.values()) {
+    if (e.ws !== ws || e.screen !== screen) continue
+    e.seq++
+    e.config = e.saved = next
+    e.customised = true
+    emit(e)
+  }
+}

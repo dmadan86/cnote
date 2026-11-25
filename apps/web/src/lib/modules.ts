@@ -27,7 +27,10 @@ export const MODULES: ModuleDef[] = [
   { key: 'site', label: 'Website', icon: Globe },
 ]
 
-/** settings.modules: missing = all enabled. Home and Reports are always on (Reports hides datasets of switched-off modules itself). */
+/**
+ * `enabled` is every module except those the person uninstalled in the Marketplace (settings.hidden_modules, see the
+ * shell). The old settings.modules list written by business-type presets hides nothing any more.
+ */
 export const moduleOn = (enabled: string[] | null | undefined, key: string) =>
   !key || key === 'reports' || !enabled || enabled.includes(key)
 
