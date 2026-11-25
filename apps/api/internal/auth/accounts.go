@@ -308,6 +308,10 @@ func (a *Auth) CreateWorkspace(ctx context.Context, userID, name, slug string) (
 		return "", command.DB(err)
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	// The trash retention clock starts at creation (docs C1 13.3.2); NULL would disable the purge sweep.
+	if _, err := tx.Exec(ctx, "update core.workspaces set trash_purge_from = now() where id = $1::uuid", id); err != nil {
+		return "", command.DB(err)
+	}
 	if _, err := tx.Exec(ctx, "insert into core.spaces (workspace_id, key, name, template) values ($1::uuid, 'GEN', 'General', 'blank')", id); err != nil {
 		return "", command.DB(err)
 	}

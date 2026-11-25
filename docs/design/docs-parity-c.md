@@ -320,7 +320,7 @@ An inline comment anchored to replaced text loses its anchor, as it does after a
 5. A live child of a purged page (possible only for deletes older than A2) gets `parent_id` null through the existing foreign key and shows at the space root.
 6. Emit one `note.purged` event.
 
-**File objects.** Migration 1345 recreates the trigger `attachments_gc` so it also fires for page files in object storage. Each cascaded attachment row puts its key into `core.file_gc`. `files.RecordSweep` (hourly, exists) deletes the object, treats "already gone" as done, retries with a growing delay, logs from the tenth failure and never drops a row. Without object storage the bytes are in the deleted row. `file.delete` keeps deleting its object inline; the queue entry it now also makes is harmless.
+**File objects.** Migration 1345 recreates the trigger `attachments_gc` so it also fires for page files in object storage. Each cascaded attachment row puts its key into `core.file_gc`. `files.RecordSweep` (hourly, exists) deletes the object, treats "already gone" as done, retries with a growing delay, logs from the tenth failure and never drops a row. Without object storage the bytes are in the deleted row. `file.delete` no longer deletes its object inline (13.3.1): it queues the key through the same trigger and the sweep removes the object.
 
 **Audit.** `core.events` is the audit trail. Because `events.note_id` is nulled by the purge, the `note.purged` event carries everything in its payload:
 
@@ -865,7 +865,7 @@ Whole-space export (6.5) moves out of Phase C to a later phase with its own desi
    - Changing the retention to a shorter period never purges sooner than one full new period after the change. Store `trash_purge_from = now()` whenever the setting changes.
 3. **Purge safety** (review 3).
    - Under the space lock, re-read the full deletion set and every eligibility rule: still deleted, same deletion_id, plain page, no pending updates.
-   - Step 0 lists every incoming FK and every non-FK reference to `core.notes`, with what each means. Records owned independently of the page are preserved or refused. Example: a page that is the source of a template (`core.templates.source_id` cascades) is skipped, not purged.
+   - Step 0 lists every incoming FK and every non-FK reference to `core.notes`, with what each means. Records owned independently of the page are preserved or refused. Example: a page that is the source of a template binding (`docs.template_bindings.source_id` cascades) is skipped, not purged. See 13.5 for the inventory and for the table name, which the first text had wrong.
    - Tests: restore wins before purge takes the lock, purge wins before restore, and a template source survives.
 4. **Lazy tree with access** (review 9).
    - The full access predicate runs before LIMIT, before the cursor is built, and before `has_children` is computed.
@@ -912,3 +912,116 @@ Whole-space export (6.5) moves out of Phase C to a later phase with its own desi
 | R4 | Purge and retention |
 
 Tabnine writes fixtures and test data. Codex reviews the PR.
+
+### 13.5 Step 0 findings: reference inventory, query plans, index files
+
+Measured on a scratch database with migrations 1345 to 1347 applied (PostgreSQL 17.11): 31 workspaces, 15,540 pages, 4,500 of them in the trash; the main space has 5,000 live pages in a fan-out of 8, one page with about 1,000 children, 300 roots, 40 live pages under trashed parents, every 50th page view-restricted, every 997th archived, and a reader with 40 direct shares.
+
+**File deletion (13.3.1) is done.** `file.delete` now only deletes the row. Migration 1345 recreates `attachments_gc` without the `field_id IS NOT NULL` condition, so a page file in object storage queues `workspace/id` in `core.file_gc` through the trigger, in the same transaction as the delete (a rollback queues nothing). The existing sweep (`files.sweepWorkspace`) already skips any key whose id still has a row in `core.attachments`, which is the same table for page files, so a rolled-back or re-created id keeps its object. The cascade of a future purge goes through the same trigger. Tests: `docs_c1_step0_test.go` (rollback keeps the object; delete queues and the sweep removes; eight files deleted twice at once, then three racing sweeps).
+
+**The inventory of incoming foreign keys to `core.notes`** (48 constraints, read from `pg_constraint`). "Purge" is what `DELETE FROM core.notes` does to the row. Typed pages are never purged (5.6), so the typed-record groups are listed for completeness: a deletion that holds a typed page is skipped whole before the delete runs.
+
+| Group | Tables (column) | Delete rule | Meaning | What purge does |
+|---|---|---|---|---|
+| Page body and history | `core.note_revisions`, `core.note_updates` (note_id) | CASCADE | Versions and logged collab updates | Removed with the page. A pending update (unfolded edit) makes the deletion ineligible first |
+| Page chrome and social | `core.comments`, `core.note_labels`, `core.note_stars`, `core.note_views`, `core.note_watches`, `core.note_permissions`, `core.notifications`, `core.relations` (from_id, to_id) | CASCADE | Things about the page | Removed |
+| Task and mention indexes | `core.note_tasks`, `core.note_task_state`, `core.note_task_notified`, `core.note_mention_state` | CASCADE | Derived indexes | Removed |
+| Files | `core.attachments` (note_id) | CASCADE | Page files | Rows removed; the `attachments_gc` trigger queues each S3 key; the sweep deletes the objects |
+| Sharing | `core.public_links` | CASCADE | Page links, already dead while trashed | Removed; counted in the audit event |
+| Search and AI | `ai.chunks` | CASCADE | Embeddings of the body | Removed |
+| Freshness and capture | `docs.freshness_flags` (note_id), `docs.edit_proposals`, `docs.external_bindings` | CASCADE | Living-page state | Removed |
+| Freshness and capture, pointing at another page | `docs.freshness_flags.source_note_id`, `docs.capture_requests.answer_note_id` | SET NULL | The flag or capture survives | Pointer cleared |
+| **Template provenance** | `docs.template_bindings.note_id` | CASCADE | This page was made from a template | Removed |
+| **Template provenance, as source** | `docs.template_bindings.source_id` | CASCADE | Other pages are bound to this page as their source; cascading deletes **their** binding rows | **Skipped**: a deletion that holds a page which is the `source_id` of a binding whose `note_id` is outside the deletion is not purged (13.3.3). The design text called this `core.templates.source_id`; there is no such table. Saved templates (`docs.templates`) hold their own copy of the text and have no foreign key to a page |
+| Tree | `core.notes.parent_id` | SET NULL (parent_id) | Live child of a purged page | Child moves to the space root (5.6 step 5) |
+| Audit | `core.events.note_id`, `core.confirmations.note_id`, `core.data_requests.subject_note_id` | SET NULL | History that must outlive the page | Pointer cleared. **Events needed a trigger change, see below** |
+| Typed records, owned by the page | `crm.contacts`, `crm.deals`, `crm.tickets`, `crm.activities`, `billing.invoices`, `billing.quotations`, `billing.recurring_invoices`, `billing.purchase_bills`, `billing.receipts`, `billing.expenses`, `billing.reminder_prefs`, `projects.items`, `projects.time_entries`, `projects.evidence` | CASCADE | Business records | Never reached: typed pages are not purged. If one were, the cascade would destroy money and CRM data, so `purgeDeletion` must re-check `types = '{}'` under the row lock |
+| Typed records that point at an item page | `billing.invoice_lines`, `quotation_lines`, `recurring_invoice_lines`, `purchase_bill_lines` (item_note_id), `billing.quotations.converted_item_id` | SET NULL | A line keeps its text and price, loses the item link | Not reached (items are typed) |
+
+**Non-FK references.** None of these blocks a purge; each is a dangling id after it.
+
+| Reference | Meaning | After purge |
+|---|---|---|
+| `core.notes.deleted_parent_id` (other trashed pages) | Where a restore puts the page back | Dangling; restore goes to the space root (7.10.5) |
+| `core.notes.cover_file_id` | A file, not a page | Not a page reference; the cover goes with its page |
+| `core.agent_runs.note_id`, `billing.reminder_attempts.invoice_note_id`, `billing.reminder_log.invoice_note_id`, `billing.journal_entries.source_id` | Run and ledger history | Kept as history; the last three are invoices (typed, never purged) |
+| Page ids inside JSON: `core.events.payload`, `core.dashboards.tiles`, `core.views.options`, `core.hooks.arguments`, `core.spaces.config`, `core.ui_configs.config`, `core.agent_runs.context`, `projects.*` and `tables.*` config | Saved views, tiles and hooks that name a page | Not enumerated; a page that cannot be found renders as missing, as a trashed page does today |
+| `/n/<id>` links and `[[page]]` mentions in other pages' bodies | Text links | Dead link, as for a trashed page today |
+
+**Finding that changes the plan: events cannot be nulled.** `core.events` has an append-only trigger on UPDATE and DELETE (`forbid_mutation`), and `events.note_id` is `ON DELETE SET NULL`, which is an UPDATE. So today any `DELETE FROM core.notes` of a page with a single event fails with `events is append-only` (tested on the scratch database; `qa_integrity_test.go` already notes that "a note with history cannot be hard-deleted"). Purge could never have worked. Migration 1345 replaces the trigger function for `core.events` with one that allows exactly the foreign key's own update, `note_id` from a value to NULL with every other column unchanged. DELETE and every other UPDATE stay refused (test `TestC1EventsStayAppendOnlyExceptTheForeignKeyNulling`). The weakening is that someone with UPDATE on the table could now detach an event from its page; `cnote_app` already had UPDATE and the previous trigger was the only guard, so this is accepted and noted for the security review.
+
+**Migration 1345** is online-safe: `SET LOCAL lock_timeout = '5s'`; nullable `cover_file_id`, `cover_y` (no rewrite) and a `NOT VALID` range check; nullable `trash_purge_from` filled once for the existing workspaces (one small table); the `attachments_gc` and `events_append_only` triggers swapped in one transaction. It adds no table, so there is no RLS, composite key or grant to add. `trash_purge_from` is stamped in Go: `auth.CreateWorkspace` sets it to `now()`. A workspace created by an older build during the rollout keeps NULL, which disables its purge and is the safe direction. There is no column default on purpose. The retention itself is `settings.trash_retention_days` (absent means 30, 0 means never) and is changed only through `trash.retention_set`; `workspace.update` refuses that key, so the clock cannot be bypassed.
+
+**Query plans** (cnote_app role with the tenant setting, so the row-level-security condition is in the plan; the reader holds no space access unless stated; `note_access` is the page access function and is the dominant cost: about 7 microseconds per page, a recursive walk up the ancestors).
+
+*Tree level.* The rule of 13.3.4 is that the access predicate runs before LIMIT, so a level costs one `note_access` per candidate page until 101 have passed.
+
+| Query | Plan | Time |
+|---|---|---|
+| Root level, first form (`has_children` as a correlated EXISTS in the select list) | The planner hashed the EXISTS and ran `note_access` on every page of the space (4,824 calls, 48,202 buffers); the roots came from `notes_ws_space` (6,540 rows read) | 155 ms |
+| Root level, page-first form: an inner `ORDER BY position, created_at, id LIMIT 101` with the predicate, and `has_children` computed only for those 101 rows | Bitmap scan on `notes_ws_space`, top-N sort of 334 candidates, 101 index probes for the arrows; trashed and archived parents through `notes_hidden_parents` (208 down to 65 buffers) | 32 to 46 ms, 2,500 buffers |
+| Root level, two ordered branches (roots by `notes_siblings`; children of hidden parents by `notes_hidden_parents` joined to `notes_siblings`), `UNION ALL`, merge append, LIMIT 101 | Both branches stop early | 21 ms |
+| Children of the page with about 1,000 children, keyset page 2 | Page-first form: bitmap scan on `notes_tree_level`, sort, `note_access` on 641 rows | 34 ms |
+| Same, with the planner pushed to the ordered index scan (`enable_bitmapscan = off`, or `note_access` declared `COST 2000`) | Index scan on `notes_tree_level`, no sort, stops after 101 | 7 to 15 ms |
+| Shared level (the synthetic root), candidates from the reader's own rows in `core.note_permissions` | Seq scan of the 40 share rows, primary-key probes, `note_access` twice per candidate | 3.5 ms |
+| Shared existence by scanning the space (`note_access` on every page and its parent) | 4,740 rows, 44,384 buffers | 94 ms, **rejected** |
+
+What R3 must do with this:
+
+1. Always write the level as an inner page query with the predicate and the LIMIT, and add `has_children` in an outer query over at most 101 rows. The first form is 5 times slower.
+2. The ordered plan wins only when `note_access` looks expensive to the planner. Step 0 does not change the function's cost (it would change every caller's plans). R3 should either set `COST` in a migration of its own after measuring the other callers, or keep the sort, which is 15 to 35 ms at 1,000 siblings and grows linearly with the sibling count. The e2e test with 600 pages and the API test with 1,200 siblings must record the time.
+3. **The Shared root needs no space scan.** A page can be readable while its parent is not only when the reader has a direct row in `core.note_permissions` for that page itself: every ancestor of the parent is also an ancestor of the child, so any restriction that hides the parent hides the child, and a share on an ancestor makes the parent readable too. The Shared with you level is therefore the reader's own permission rows (index `note_permissions_user`), filtered to the space, with the child readable and the parent not. The root response's `shared` flag comes from the same query with LIMIT 1. R3 must test the invariant (a share on a grandchild, on a child under a view-restricted parent, and on a page under an archived parent).
+
+*Purge due sweep.* `SELECT deletion_id, min(deleted_at) ... WHERE workspace_id = $1 AND deletion_id IS NOT NULL AND deleted_at < now() - retention GROUP BY deletion_id ORDER BY min(deleted_at) LIMIT 200` is an index-only scan on `notes_deletion` (`workspace_id, deletion_id, deleted_at`): 1,111 entries of 1,500, 18 buffers, 0.2 ms, no heap fetch. The check "which workspaces have anything due" is a semi-join through the same index: 0.013 ms per workspace. No index is added. The scan reads every trashed entry of the workspace because `deleted_at` is not the leading column after the equality; that is fine up to tens of thousands of trashed pages per workspace and is the number to watch.
+
+**Staged index files** (each `-- no-transaction`, one statement, `CONCURRENTLY IF NOT EXISTS`; an invalid leftover index is dropped and the file rerun, as in docs/deploy.md). Deploy order: 1345 first (the app can run on it alone), then 1346 and 1347 before the R3 release.
+
+| File | Index | Why |
+|---|---|---|
+| `1346_docs_c1_tree_level_index.sql` | `notes_tree_level (space_id, parent_id, position, created_at, id) WHERE deleted_at IS NULL` | Keyset order of a level without a sort, and the arrow probes |
+| `1347_docs_c1_hidden_parents_index.sql` | `notes_hidden_parents (space_id) INCLUDE (id) WHERE deleted_at IS NOT NULL OR freshness = 'archived'` | Finds the trashed and archived parents of a space without reading the space |
+
+`notes_siblings` stays: other queries use it. Dropping it later is a separate decision.
+
+**Registered sweeps.** The purge sweep (R4) is registered in `worker/wire.go` explicitly. Sweeps run once at worker start, so a restart runs it at once; the per-deletion lock timeout and the 200-deletion cap keep that safe.
+
+### 13.6 C1 shared attribute interfaces
+
+C1 keeps schema 2. `textStyle` carries both `color` and `highlight`; highlight is one of yellow, green, blue, purple, red, orange and grey, stored as `<mark data-color="yellow">text</mark>` around the colour span. A bare mark reads as yellow; an unknown tint keeps its text. `tableCell` and `tableHeader` carry `background`, stored as `data-bg` on the cell. `table` carries boolean `numbered`, stored as `data-numbered` on the HTML table. Sticky headers are always on and have no stored attribute. A coloured or numbered table uses HTML storage. Covers are page chrome: nullable `cover_file_id` and nullable `cover_y` (0–100); the file must be an image attached to that page, and an absent file does not render.
+
+**Attribute names and stored forms (fixed in step 0; R1 builds to them).**
+
+| Feature | Editor (Yjs, TipTap) attribute | Stored Markdown |
+|---|---|---|
+| Highlight | `textStyle.highlight`: one of `yellow`, `green`, `blue`, `purple`, `red`, `orange`, `grey`; absent or null for none. `textStyle.color` is unchanged and may be set on the same mark | `<mark data-color="yellow">text</mark>`, outside the colour span: `<mark data-color="yellow"><span style="color: #c0392b">text</span></mark>`. A bare `<mark>` reads as `yellow`; an unknown `data-color` keeps its text and no tint |
+| Cell colour | `tableCell.background` and `tableHeader.background`, same seven names, default null | `data-bg="green"` on the `<td>` or `<th>`; the table is stored as HTML |
+| Numbered column | `table.numbered`, boolean, default false | `data-numbered="true"` on the `<table>`; the table is stored as HTML. The number column is drawn, never stored as cells |
+| Sticky header | none | none; always on |
+| Cover | `core.notes.cover_file_id uuid`, `cover_y smallint` (0 to 100); `Note.cover` is `{file_id, y} \| null` | Not in the body |
+
+Fixtures: `apps/collab/test/fixtures/blocks.json`, seven entries marked `"pending": "c1"` (every tint; colour plus highlight; bare and unknown marks; highlight beside bold, link and italic; coloured cells; numbered table; numbered, coloured, merged table with a highlight inside). Today the text and second-pass-stability assertions run for them in both `apps/collab/test/fixtures.test.ts` and `apps/web/src/test/fixtures.test.ts`; the byte-for-byte assertion is skipped until `C1_LANDED` is set to true in both files by R1.
+
+**Command contracts (stubs registered, answer "not implemented" until the owning package lands).** Contract test: `modules/c1_contract_test.go`. Web types: `apps/web/src/lib/docs.ts`.
+
+| Command | Group (AI scope) | Minimum role and guest rule | Owner |
+|---|---|---|---|
+| `note.tree {space_id, parent_id \| null \| "shared", after, limit}` or `{reveal}` | `read` (in the read-only AI scope) | Guest; access predicate in the query | R3 |
+| `note.cover_set {note_id, file_id \| null, y}` | `write_notes` (not read-only) | Guest, edit access on the page checked in the handler; archived pages refused | R2 |
+| `note.purge {deletion_id}` | `destructive`, `Confirm` (never read-only; an agent or API key waits for a person) | Member; the handler requires workspace admin or admin of the deletion's space and that the caller could list it in Trash; guests never | R4 |
+| `trash.retention_get` | `read` | Member | R4 |
+| `trash.retention_set {days: 0 \| 30 \| 90 \| 365}` | `admin` | Admin; resets `trash_purge_from` | R4 |
+
+Two differences from the earlier text: the cover is its own command `note.cover_set` instead of a field of `note.update` (so its schema, scope and error cases are separate and `note.update` stays unchanged); and the retention has a get and a set command, with `workspace.update` refusing the key `trash_retention_days`. `note.trash` rows still gain `purge_at` and `can_purge` (R4). The tree's synthetic root is a request value (`parent_id: "shared"`) and a `shared` flag on the root level, not a fake row.
+
+**Compatibility result (13.3.5), observed.** `apps/web/src/test/c1-compat.test.ts` joins a client with the new attributes (A) to a client with today's editor extensions (B) over Yjs, B edits inside the block, the result syncs back:
+
+| Old tab edits | Text lost? | What is lost |
+|---|---|---|
+| Highlighted text | No | The highlight on the edited block |
+| Colour and highlight on one mark | No | The highlight; the colour stays |
+| A coloured cell | No | The background of the edited cell; cells nobody touched keep theirs |
+| A numbered table (and a coloured cell in it) | No | `numbered` on the table, and the edited cell's background |
+
+`apps/collab/test/c1-step0.test.ts` shows today's gateway folding a document that already holds these attributes to Markdown without losing text; it drops the attributes, as expected before R1. **No feature moves to C2 on the evidence of these tests.**
+
+**One finding, text-preserving but not clean.** The fixture `highlight-next-to-other-marks` (a link inside a `<mark>`) is not stable in today's browser Markdown converter: the editor has no `<mark>`, so the Markdown inside it is escaped and the link's URL is wrapped again, `[a link](url)` becoming `[a link]([url](url))`, at every save by an old web tab. No word is lost. It is the same defect the status mark had before A1 (7.8). It affects only links and other Markdown inside a highlight, in a tab that has not reloaded, and stops once the tab reloads and R1 is live. The fixtures test skips that one stability assertion until `C1_LANDED`. If the lead wants zero risk, R1 can refuse to apply highlight over a link until the rollout window ends; otherwise it is accepted with the other formatting losses.

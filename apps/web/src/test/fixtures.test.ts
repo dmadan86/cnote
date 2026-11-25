@@ -16,13 +16,23 @@ import { blockExtensions } from '../components/editor/blocks'
 import { AlignHeading, AlignParagraph, ColorText, HtmlTable, SafeImage } from '../components/editor/formats'
 import { inlineHtml } from '../components/editor/html-inline'
 
-type Fixture = { id: string; covers: string[]; md: string; plain: string; refused?: boolean }
+type Fixture = {
+  id: string
+  covers: string[]
+  md: string
+  plain: string
+  refused?: boolean
+  pending?: string
+}
 // `pnpm --filter @cnote/web test` runs in apps/web
 const fixtures: Fixture[] = JSON.parse(readFileSync('../collab/test/fixtures/blocks.json', 'utf8'))
 
 /** Flip to true in the commit that adds the A1 extensions and teaches inlineHtml the status mark. */
 const BLOCKS_LANDED = true
 const blockIt = BLOCKS_LANDED ? it : it.skip
+/** Flip to true in the commit that adds the C1 extensions (highlight, cell colour, numbered tables); see the collab copy. */
+const C1_LANDED = false
+const c1It = (f: Fixture) => (f.pending === 'c1' && !C1_LANDED ? it.skip : blockIt)
 /** Found by this test before the blocks landed (both fixed by W1, so they are asserted now). Skipped only while BLOCKS_LANDED is false.
  * image-upload-and-external: SafeImage stored only http(s) images, so an uploaded /api/w/<ws>/files/<id> image and its alt text vanished.
  * status-next-to-other-marks: the unknown <span> was dropped, the link inside it escaped as \[review\](url) and each
@@ -33,6 +43,10 @@ const brokenToday: Record<string, ('text' | 'stable')[]> = {
 }
 const checkIt = (id: string, what: 'text' | 'stable') =>
   !BLOCKS_LANDED && brokenToday[id]?.includes(what) ? it.skip : it
+/** C1 step 0 finding: before R1 the editor has no <mark>, so markdown inside it (a link) is escaped and the URL is wrapped
+ * again at every save of an old tab. No text is lost. R1 lands the mark and removes this entry. */
+const c1Unstable = new Set(['highlight-next-to-other-marks'])
+const stableIt = (id: string) => (c1Unstable.has(id) && !C1_LANDED ? it.skip : checkIt(id, 'stable'))
 
 // The extension list of components/note-editor.tsx, without the UI-only ones (slash menu, mentions, comments).
 function rt(md: string): string {
@@ -71,11 +85,11 @@ describe('block fixtures through TipTap Markdown', () => {
         const out = words(rt(f.md))
         for (const w of words(f.plain)) expect(out, `lost "${w}"`).toContain(w)
       })
-      checkIt(f.id, 'stable')('is stable on a second pass', () => {
+      stableIt(f.id)('is stable on a second pass', () => {
         const once = rt(f.md)
         expect(rt(once)).toBe(once)
       })
-      blockIt('round-trips byte for byte (block-specific)', () => {
+      c1It(f)('round-trips byte for byte (block-specific)', () => {
         // The table writer wraps a table in blank lines; the gateway's contract ignores blank-line runs and the ends.
         const norm = (t: string) => t.trim().replace(/\n{3,}/g, '\n\n')
         // A refused image keeps its alt text and loses its URL here; the gateway keeps the inert text as it was.

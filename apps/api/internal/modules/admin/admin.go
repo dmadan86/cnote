@@ -376,6 +376,9 @@ func workspaceUpdate(c *command.Ctx, b json.RawMessage) (any, error) {
 	}
 	var obj map[string]json.RawMessage
 	_ = json.Unmarshal(settings, &obj)
+	if _, set := obj["trash_retention_days"]; set {
+		return nil, command.ErrInvalid("trash retention is changed only by trash.retention_set")
+	}
 	if _, set := obj["onboarding"]; set {
 		return nil, command.ErrInvalid("onboarding is changed only by onboarding.complete")
 	}

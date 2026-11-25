@@ -10,7 +10,7 @@ import (
 // PlainText turns stored page Markdown into the text that search snippets and AI context should show
 // (docs-parity 7.4). It removes only the markers of the editor's HTML subset and block forms, so older pages are
 // unchanged apart from tags: panel marker lines ([!INFO] ...) and quote prefixes, <details> and <summary> tags
-// (the title and the body are kept), a line holding only [[toc]], <span data-status> and <time> wrappers, HTML table
+// (the title and the body are kept), a line holding only [[toc]], <span data-status>, <mark> and <time> wrappers, HTML table
 // tags, and ![alt](url) becomes alt. Code fences keep their lines verbatim (fence lines go) and so do code spans. Other
 // Markdown (headings, **bold**, links, pipe tables) is left alone. Lines are trimmed, blanks dropped, joined by "\n".
 //
@@ -64,7 +64,7 @@ func PlainText(md string) string {
 var (
 	panelMarker = regexp.MustCompile(`(?i)^\[!(info|note|success|warning|error)\]$`)
 	summaryLine = regexp.MustCompile(`^<details>\s*<summary>(.*)</summary>$`)
-	tagRe       = regexp.MustCompile(`</?(details|summary|span|time|a|table|thead|tbody|tr|th|td|p|br)(\s[^>]*)?/?>`)
+	tagRe       = regexp.MustCompile(`</?(details|summary|span|time|a|table|thead|tbody|tr|th|td|p|br|mark)(\s[^>]*)?/?>`)
 	cellEnd     = regexp.MustCompile(`</(td|th|tr|p|summary)>|<br\s*/?>`)
 	// ![alt](src "title"): alt and title may hold backslash escapes (\] \[ \\ \"), which the editor writes.
 	imageRe  = regexp.MustCompile(`!\[((?:\\.|[^\]\\])*)\]\([^)\s]*(?:\s+"(?:\\.|[^"\\])*")?\)`)

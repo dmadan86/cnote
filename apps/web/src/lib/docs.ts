@@ -265,3 +265,39 @@ export const importDocx = (
   ws: string,
   input: { space_id: string; parent_id?: string; filename: string; data_base64: string },
 ) => cmd<DocxImportResult>(ws, 'import.docx', input)
+
+/** A readable page in a lazily loaded tree level; bodies are fetched separately. */
+export type TreeRow = {
+  id: string
+  space_id: string
+  parent_id: string | null
+  title: string
+  icon: string | null
+  position: number
+  status: PageStatus | null
+  has_children: boolean
+}
+/** parent_id is a page id, null for the space root, or "shared" for the synthetic "Shared with you" root. */
+export type TreeLevel = { parent_id: string | null; rows: TreeRow[]; next: string | null; shared?: boolean }
+export type Cover = { file_id: string; y?: number } | null
+export type TrashRetention = { days: number; purge_from: string | null }
+
+export const treeLevel = (
+  ws: string,
+  input: { space_id: string; parent_id?: string | null; after?: string; limit?: number },
+) => cmd<TreeLevel>(ws, 'note.tree', input)
+export const revealInTree = (ws: string, noteId: string) =>
+  cmd<{ levels: TreeLevel[] }>(ws, 'note.tree', { reveal: noteId })
+export const setCover = (ws: string, noteId: string, cover: Cover) =>
+  cmd<{ cover: Cover }>(ws, 'note.cover_set', {
+    note_id: noteId,
+    file_id: cover?.file_id ?? null,
+    y: cover?.y,
+  })
+export const purgeDeletion = (ws: string, deletionId: string) =>
+  cmd<{ purged: boolean; pages?: number; files?: number; bytes?: number }>(ws, 'note.purge', {
+    deletion_id: deletionId,
+  })
+export const getTrashRetention = (ws: string) => cmd<TrashRetention>(ws, 'trash.retention_get', {})
+export const setTrashRetention = (ws: string, days: 0 | 30 | 90 | 365) =>
+  cmd<TrashRetention>(ws, 'trash.retention_set', { days })

@@ -6,7 +6,14 @@ import { describe, expect, it } from 'vitest'
 import * as Y from 'yjs'
 import { seed, toMarkdown } from '../src/md.ts'
 
-type Fixture = { id: string; covers: string[]; md: string; plain: string; refused?: boolean }
+type Fixture = {
+  id: string
+  covers: string[]
+  md: string
+  plain: string
+  refused?: boolean
+  pending?: string
+}
 const fixtures: Fixture[] = JSON.parse(
   readFileSync(new URL('./fixtures/blocks.json', import.meta.url), 'utf8'),
 )
@@ -14,6 +21,10 @@ const fixtures: Fixture[] = JSON.parse(
 /** Flip to true in the commit that teaches md.ts the A1 blocks. */
 const BLOCKS_LANDED = true
 const blockIt = BLOCKS_LANDED ? it : it.skip
+/** Flip to true in the commit that teaches md.ts highlight, cell colour and numbered tables (C1 R1). Until then the
+ * `pending: "c1"` fixtures only assert what an older converter must keep: no lost text, stable second pass. */
+const C1_LANDED = false
+const c1It = (f: Fixture) => (f.pending === 'c1' && !C1_LANDED ? it.skip : blockIt)
 
 const rt = (md: string) => {
   const doc = new Y.Doc()
@@ -37,6 +48,10 @@ describe('block fixtures through md.ts', () => {
       'table',
       'merged',
       'lookalike',
+      'highlight',
+      'colour',
+      'cell-colour',
+      'numbered',
     ])
       expect(covered, c).toContain(c)
     expect(new Set(fixtures.map((f) => f.id)).size).toBe(fixtures.length)
@@ -53,7 +68,7 @@ describe('block fixtures through md.ts', () => {
         const once = rt(f.md)
         expect(rt(once)).toBe(once)
       })
-      blockIt('round-trips byte for byte (block-specific)', () => {
+      c1It(f)('round-trips byte for byte (block-specific)', () => {
         expect(rt(f.md)).toBe(f.md)
       })
     })

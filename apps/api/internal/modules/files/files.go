@@ -299,17 +299,9 @@ func remove(c *command.Ctx, input json.RawMessage) (any, error) {
 	if err := guard(c, note, true); err != nil {
 		return nil, err
 	}
-	var key string
-	if err := c.Tx.QueryRow(c.Context, "delete from core.attachments where id = $1::uuid returning storage_key", v.ID).Scan(&key); err != nil {
+	var deletedID string
+	if err := c.Tx.QueryRow(c.Context, "delete from core.attachments where id = $1::uuid returning id::text", v.ID).Scan(&deletedID); err != nil {
 		return nil, command.DB(err)
-	}
-	if key == "s3" {
-		if store == nil {
-			return nil, fmt.Errorf("file is in object storage but FILES_S3_* is not configured")
-		}
-		if err := store.Delete(c.Context, c.WorkspaceID()+"/"+v.ID); err != nil {
-			return nil, fmt.Errorf("file storage: %w", err)
-		}
 	}
 	if _, err := c.Emit("file.deleted", &note, map[string]any{"file_id": v.ID}); err != nil {
 		return nil, err
