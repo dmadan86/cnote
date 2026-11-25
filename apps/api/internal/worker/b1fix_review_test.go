@@ -12,6 +12,7 @@ import (
 
 	"github.com/cnote/api/internal/command"
 	"github.com/cnote/api/internal/db"
+	"github.com/cnote/api/internal/modules/notes"
 )
 
 // Review fixes for docs Phase B1 (PR 23): mail after a revocation, seed and backfill racing events, reordered mention events,
@@ -413,5 +414,29 @@ func TestDigestTakesAllOfOnePersonsRowsAndSurvivesConcurrentSweeps(t *testing.T)
 	}
 	if jobs, got := f.digestJobs(t); jobs != 1 || got != rows {
 		t.Fatalf("one digest holding every row: %d jobs, %d rows, want 1 and %d", jobs, got, rows)
+	}
+}
+
+// ---- task assignments use the same version author (lead's follow-up to fix 4) ----
+
+func TestReorderedEventsAttributeTaskAssignmentsToTheVersionAuthor(t *testing.T) {
+	_, alice, bob, g, note := mentionFixture(t)
+	carol := e2(t, g, alice)
+	g.drain(100)
+	g.gatewaySaveAs(note, "hi from Alice", alice.userID)                                                                               // v2, Alice
+	g.gatewaySaveAs(note, taskLine(alice.ws, carol, "Ship it", "")+"\n"+taskLine(alice.ws, alice.userID, "Review it", ""), bob.userID) // v3, Bob assigns Carol and Alice
+	// Alice's stale event runs first: the index is built from Bob's version with Alice as the dispatching actor.
+	if err := notes.IndexTasks(context.Background(), g.c.Tx, alice.ws, note, &alice.userID, false); err != nil {
+		t.Fatal(err)
+	}
+	var actor string
+	if err := g.c.Tx.QueryRow(g.c.Context, "select actor_user_id::text from core.notifications where note_id = $1::uuid and user_id = $2::uuid and kind = 'assigned'", note, carol).Scan(&actor); err != nil {
+		t.Fatalf("Carol must be notified as assigned: %v", err)
+	}
+	if actor != bob.userID {
+		t.Fatalf("Carol was assigned by Bob, not by the actor of the event being dispatched: %q", actor)
+	}
+	if c := g.assignedCount(note, alice.userID); c != 1 {
+		t.Fatalf("Bob assigned Alice, so Alice's own stale event must not skip her, got %d", c)
 	}
 }

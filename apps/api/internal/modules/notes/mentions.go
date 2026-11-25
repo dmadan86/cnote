@@ -1,6 +1,7 @@
 package notes
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -71,7 +72,7 @@ func NotifyPageMentions(c *command.Ctx, noteID string, baseline *string) error {
 			seen[strings.ToLower(u)] = true
 		}
 	}
-	author, err := versionAuthor(c, noteID, version)
+	author, err := versionAuthor(c.Context, c.Tx, noteID, version, c.Principal.UserID)
 	if err != nil {
 		return command.DB(err)
 	}
@@ -95,15 +96,15 @@ func NotifyPageMentions(c *command.Ctx, noteID string, baseline *string) error {
 // versionAuthor is who wrote the version being handled: the person (or the person an agent acted for) on the newest note.updated
 // event that carries this version. Events can run out of order and be folded (a stale event of Alice's can run after Bob's newer
 // version exists), so the actor of the event being dispatched says nothing about who typed a mention; the version's own event does.
-// With no such event (an unusual writer) the dispatching principal is the best answer there is. A system or import author is nil.
-func versionAuthor(c *command.Ctx, noteID string, version int) (*string, error) {
+// With no such event (an unusual writer) fallback (the dispatching principal) is the best answer there is. Task assignments use it too. A system or import author is nil.
+func versionAuthor(ctx context.Context, tx pgx.Tx, noteID string, version int, fallback *string) (*string, error) {
 	var author *string
-	err := c.Tx.QueryRow(c.Context,
+	err := tx.QueryRow(ctx,
 		`select coalesce(on_behalf_of::text, case when actor_type = 'user' and actor_id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' then actor_id end)
 		 from core.events where note_id = $1::uuid and kind = 'note.updated' and payload->>'version' = $2::text order by id desc limit 1`,
 		noteID, fmt.Sprint(version)).Scan(&author)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return c.Principal.UserID, nil
+		return fallback, nil
 	}
 	return author, err
 }

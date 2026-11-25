@@ -167,6 +167,10 @@ func IndexTasks(ctx context.Context, tx pgx.Tx, ws, noteID string, actor *string
 	if err := rows.Err(); err != nil {
 		return err
 	}
+	// The assignment is by whoever wrote this version, not by the actor of the event being dispatched (see versionAuthor).
+	if actor, err = versionAuthor(ctx, tx, noteID, version, actor); err != nil {
+		return err
+	}
 	loud := seen || notifyFirst
 	key := fmt.Sprintf("note:%s:v%d", noteID, version)
 	for _, p := range assigned {
